@@ -34,15 +34,25 @@ export function makeDraggable(panel: HTMLElement, handle: HTMLElement) {
   });
 }
 
-/** A closable, draggable floating panel — unlike buildModal(), has no backdrop and doesn't block interacting with the rest of the screen. */
-export function buildFloatingPanel(title: string): {
+/**
+ * A draggable floating panel with a uniform title-bar header — unlike
+ * buildModal(), has no backdrop and doesn't block interacting with the rest
+ * of the screen. Used for both the always-visible corner Goals panel
+ * (closable: false — no ×, caller opens it once and never closes it) and
+ * the toggleable Dashboard, so their headers/drag behavior stay identical
+ * rather than each hand-rolling their own.
+ */
+export function buildFloatingPanel(
+  title: string,
+  options?: { closable?: boolean; className?: string },
+): {
   body: HTMLElement;
   open: () => void;
   close: () => void;
   onClose(cb: () => void): void;
 } {
   const panel = document.createElement("div");
-  panel.className = "floating-panel";
+  panel.className = "floating-panel" + (options?.className ? ` ${options.className}` : "");
   document.body.appendChild(panel);
 
   const header = document.createElement("div");
@@ -54,23 +64,25 @@ export function buildFloatingPanel(title: string): {
   titleEl.textContent = title;
   header.appendChild(titleEl);
 
-  const closeBtn = document.createElement("button");
-  closeBtn.className = "floating-panel-close";
-  closeBtn.textContent = "×";
-  header.appendChild(closeBtn);
+  const closeListeners = new Set<() => void>();
+  function close() {
+    panel.classList.remove("open");
+    for (const cb of closeListeners) cb();
+  }
+
+  if (options?.closable ?? true) {
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "floating-panel-close";
+    closeBtn.textContent = "×";
+    closeBtn.onclick = close;
+    header.appendChild(closeBtn);
+  }
 
   const body = document.createElement("div");
   body.className = "floating-panel-body";
   panel.appendChild(body);
 
   makeDraggable(panel, header);
-
-  const closeListeners = new Set<() => void>();
-  function close() {
-    panel.classList.remove("open");
-    for (const cb of closeListeners) cb();
-  }
-  closeBtn.onclick = close;
 
   return {
     body,

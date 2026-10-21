@@ -5,7 +5,7 @@ import { isScheduledOn } from "./recurrence";
 import { Recurrence } from "./types";
 import { getBroadcastHealth, onBroadcastHealthChange } from "../broadcast/client";
 import { getSettings } from "../settings/state";
-import { makeDraggable } from "../ui/draggablePanel";
+import { buildFloatingPanel } from "../ui/draggablePanel";
 
 const REFRESH_INTERVAL_MS = 30_000;
 
@@ -28,21 +28,13 @@ function describeScheduleForToday(recurrence: Recurrence): string {
 
 /** Read-only view of today's goals and progress — all editing lives in the manage modal (opened from the top-right "Goals" button). */
 export async function setupGoalsPanel(): Promise<void> {
-  const panel = document.createElement("div");
-  panel.id = "goals-panel";
-  document.body.appendChild(panel);
-
-  // No close button — this panel is always visible, unlike the floating
-  // Dashboard — just a title, which doubles as the drag handle.
-  const header = document.createElement("div");
-  header.id = "goals-panel-header";
-  header.textContent = "Today Overview";
-  panel.appendChild(header);
-  makeDraggable(panel, header);
+  // Same title-bar/drag-handle component the Dashboard uses, just not
+  // closable — this one is always visible, there's no button that opens it.
+  const panel = buildFloatingPanel("Today Overview", { closable: false, className: "goals-panel" });
 
   const list = document.createElement("div");
   list.id = "goals-list";
-  panel.appendChild(list);
+  panel.body.appendChild(list);
 
   // Only shown once broadcasting is actually configured — a failed push
   // used to go completely unnoticed (fetch() doesn't reject on HTTP error
@@ -50,7 +42,7 @@ export async function setupGoalsPanel(): Promise<void> {
   // needing devtools open.
   const broadcastStatusEl = document.createElement("div");
   broadcastStatusEl.id = "broadcast-status";
-  panel.appendChild(broadcastStatusEl);
+  panel.body.appendChild(broadcastStatusEl);
 
   function renderBroadcastStatus() {
     if (!getSettings().broadcastUrl) {
@@ -124,4 +116,6 @@ export async function setupGoalsPanel(): Promise<void> {
   onBroadcastHealthChange(renderBroadcastStatus);
   renderBroadcastStatus();
   setInterval(renderBroadcastStatus, REFRESH_INTERVAL_MS);
+
+  panel.open();
 }
