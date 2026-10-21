@@ -797,8 +797,17 @@ body {
   margin-top: 0;
 }
 
-#dashboard-today-goals-list,
 #dashboard-alltime-goals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+/* Shared container for the "Today's Goals" / "Today's Activity" lists —
+   used by both the desktop Dashboard panel and the viewer's equivalent
+   section, via dashboard/render.ts's buildDashboardSections(). */
+.dashboard-list {
   display: flex;
   flex-direction: column;
   gap: 6px;

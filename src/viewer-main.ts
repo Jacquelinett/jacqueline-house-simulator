@@ -1,9 +1,10 @@
 import { Application } from "pixi.js";
 import { HouseViewer, preloadRoomAssets } from "./scene/viewer";
-import { isScheduledOn, localDateString } from "./goals/recurrence";
-import { Goal, Recurrence } from "./goals/types";
-import { describeRecurrence } from "./goals/ui";
+import { Goal } from "./goals/types";
+import { describeScheduleForToday, groupTodaysGoals } from "./goals/todayGroups";
 import { buildModal } from "./ui/modal";
+import { buildDashboardSections, renderActivityList, renderGoalList } from "./dashboard/render";
+import { renderCurrentActivity, renderSyncStatus } from "./status/render";
 
 // Edit this to your own deployed val.town status val before building/hosting
 // this page — it's the only thing that needs to change per-deployment.
@@ -52,42 +53,10 @@ function toCssColor(color: number): string {
   return `#${color.toString(16).padStart(6, "0")}`;
 }
 
-function formatElapsed(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const hh = Math.floor(totalSeconds / 3600);
-  const mm = Math.floor((totalSeconds % 3600) / 60)
-    .toString()
-    .padStart(hh > 0 ? 2 : 1, "0");
-  const ss = (totalSeconds % 60).toString().padStart(2, "0");
-  return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
-function formatClock(date: Date): string {
-  const hh = date.getHours().toString().padStart(2, "0");
-  const mm = date.getMinutes().toString().padStart(2, "0");
-  return `${hh}:${mm}`;
-}
-
-function formatRelativeTime(date: Date): string {
-  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  return `${Math.floor(minutes / 60)}h ago`;
-}
-
 function formatMinutes(min: number): string {
   const h = Math.floor(min / 60);
   const m = Math.round(min % 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
-// This panel only ever shows goals scheduled for today, so a one-off goal's
-// literal date is always just... today — showing it plainly is clearer than
-// the generic "once (2026-10-21)" phrasing describeRecurrence() uses
-// elsewhere (mirrors the same helper in goals/panel.ts and dashboard/panel.ts).
-function describeScheduleForToday(recurrence: Recurrence): string {
-  return recurrence.type === "once" ? "Today" : describeRecurrence(recurrence);
 }
 
 function setupFloorButtons(viewer: HouseViewer) {
@@ -185,11 +154,10 @@ async function main() {
   setupFloorButtons(viewer);
   setupSettings(viewer, viewerSettings);
 
-  const activityEl = document.querySelector<HTMLDivElement>("#viewer-activity")!;
-  const elapsedEl = document.querySelector<HTMLDivElement>("#viewer-elapsed")!;
+  const statusEl = document.querySelector<HTMLDivElement>("#viewer-status")!;
   const syncEl = document.querySelector<HTMLDivElement>("#viewer-sync")!;
-  const goalsEl = document.querySelector<HTMLDivElement>("#viewer-goals")!;
-  const todayActivityEl = document.querySelector<HTMLDivElement>("#viewer-today-activity")!;
+  const dashboardEl = document.querySelector<HTMLDivElement>("#viewer-dashboard")!;
+  const { goalList, activityList } = buildDashboardSections(dashboardEl);
   const statsPieEl = document.querySelector<HTMLDivElement>("#viewer-stats-pie")!;
   const statsListEl = document.querySelector<HTMLDivElement>("#viewer-stats-list")!;
 
@@ -199,12 +167,24 @@ async function main() {
   let latestGoals: Goal[] = [];
   let latestStats: ActivityStat[] = [];
   let lastSyncAt: Date | null = null;
+  let lastSyncError: string | null = null;
+
+  function renderCurrent() {
+    renderCurrentActivity(statusEl, {
+      label: latestActivityLabel,
+      startedAt: startedAtMs ? new Date(startedAtMs) : null,
+    });
+  }
 
   // "Synced" here means "last successfully fetched data from val.town" —
   // the viewer only ever polls, it never pushes, so this is the mirror
-  // image of the desktop app's own VT sync indicator.
+  // image of the desktop app's own VT sync indicator. No AW line at all,
+  // since the viewer has no AW access regardless of connection state.
   function renderSync() {
-    syncEl.textContent = lastSyncAt ? `VT: Synced ${formatRelativeTime(lastSyncAt)}` : "VT: Not yet synced";
+    renderSyncStatus(syncEl, {
+      showAw: false,
+      vt: { configured: true, lastSuccessAt: lastSyncAt, lastError: lastSyncError },
+    });
   }
 
   async function refreshStatus() {
@@ -223,17 +203,20 @@ async function main() {
       latestStats = stats;
       startedAtMs = data.startedAt ? new Date(data.startedAt).getTime() : null;
 
-      activityEl.textContent = `I'm currently: ${data.activityLabel ?? "idle"}`;
+      renderCurrent();
       viewer.showActivity(data.activityLabel ? { label: data.activityLabel } : null);
 
       lastSyncAt = new Date();
+      lastSyncError = null;
       renderSync();
       renderGoals();
       renderTodayActivity();
       renderStats(stats);
     } catch (err) {
       console.error("[viewer] failed to fetch status", err);
-      activityEl.textContent = "Couldn't load status";
+      statusEl.textContent = "Couldn't load status";
+      lastSyncError = (err as Error).message;
+      renderSync();
     }
   }
 
@@ -280,58 +263,31 @@ async function main() {
   // from the separately-pushed per-label map, and whichever label matches
   // the currently running activity gets its live elapsed time added here,
   // same as the elapsed-time clock below. So neither goal edits nor ticking
-  // progress need a fresh fetch to stay accurate.
+  // progress need a fresh fetch to stay accurate. Shared with the desktop
+  // Dashboard's rendering, just sourced from polled data instead of AW.
   function renderGoals() {
-    const today = new Date();
-    const todayStr = localDateString(today);
-    const scheduled = latestGoals.filter(
-      (g) => isScheduledOn(g.recurrence, today) && !g.skipDates?.includes(todayStr),
+    const groups = groupTodaysGoals(latestGoals, new Date());
+    renderGoalList(
+      goalList,
+      groups.map(({ activityLabel, targetMinutes, goals }) => {
+        const baselineMinutes = latestTodayMinutesByLabel[activityLabel] ?? 0;
+        const liveMinutes =
+          baselineMinutes + (activityLabel === latestActivityLabel && startedAtMs ? (Date.now() - startedAtMs) / 60000 : 0);
+        return {
+          activityLabel,
+          minutes: liveMinutes,
+          targetMinutes,
+          done: liveMinutes >= targetMinutes,
+          subRows: goals.map((g) => `${describeScheduleForToday(g.recurrence)} — ${formatMinutes(g.targetMinutes)}`),
+        };
+      }),
     );
-
-    const groups = new Map<string, Goal[]>();
-    for (const g of scheduled) {
-      const group = groups.get(g.activityLabel);
-      if (group) group.push(g);
-      else groups.set(g.activityLabel, [g]);
-    }
-
-    goalsEl.textContent = "";
-    if (groups.size === 0) {
-      const empty = document.createElement("div");
-      empty.className = "goals-empty";
-      empty.textContent = "No goals today";
-      goalsEl.appendChild(empty);
-      return;
-    }
-
-    for (const [activityLabel, group] of groups) {
-      const targetMinutes = group.reduce((sum, g) => sum + g.targetMinutes, 0);
-      const baselineMinutes = latestTodayMinutesByLabel[activityLabel] ?? 0;
-      const liveMinutes =
-        baselineMinutes + (activityLabel === latestActivityLabel && startedAtMs ? (Date.now() - startedAtMs) / 60000 : 0);
-      const done = liveMinutes >= targetMinutes;
-
-      const row = document.createElement("div");
-      row.className = "viewer-goal-row" + (done ? " viewer-goal-done" : "");
-      row.textContent = `${done ? "☑" : "☐"} ${activityLabel} — ${formatMinutes(liveMinutes)} / ${formatMinutes(targetMinutes)}`;
-      goalsEl.appendChild(row);
-
-      // group is already exactly today's contributing goals for this label
-      // (filtered + grouped above), so no need to re-derive it from scratch.
-      for (const goal of group) {
-        const subRow = document.createElement("div");
-        subRow.className = "viewer-goal-subrow";
-        subRow.textContent = `${describeScheduleForToday(goal.recurrence)} — ${formatMinutes(goal.targetMinutes)}`;
-        goalsEl.appendChild(subRow);
-      }
-    }
   }
 
   // Mirrors the desktop Dashboard's "Today's Activity" list — same
   // todayMinutesByLabel the goal progress above uses, just not filtered
   // down to activities with a goal attached.
   function renderTodayActivity() {
-    todayActivityEl.textContent = "";
     const colorByLabel = new Map(latestStats.map((s) => [s.label, s.color] as const));
     const entries = Object.entries(latestTodayMinutesByLabel)
       .map(([label, minutes]) => ({
@@ -342,35 +298,11 @@ async function main() {
       .filter((e) => e.minutes > 0)
       .sort((a, b) => b.minutes - a.minutes);
 
-    if (entries.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "goals-empty";
-      empty.textContent = "Nothing tracked today";
-      todayActivityEl.appendChild(empty);
-      return;
-    }
-
-    for (const e of entries) {
-      const row = document.createElement("div");
-      row.className = "viewer-stat-row";
-
-      const swatch = document.createElement("span");
-      swatch.className = "viewer-stat-swatch";
-      swatch.style.background = toCssColor(e.color);
-      row.appendChild(swatch);
-
-      const text = document.createElement("span");
-      text.textContent = `${e.label} — ${formatMinutes(e.minutes)}`;
-      row.appendChild(text);
-
-      todayActivityEl.appendChild(row);
-    }
+    renderActivityList(activityList, entries, "Nothing tracked today");
   }
 
   function tickElapsed() {
-    elapsedEl.textContent = startedAtMs
-      ? `Started: ${formatClock(new Date(startedAtMs))} | ${formatElapsed(Date.now() - startedAtMs)}`
-      : "";
+    renderCurrent();
     renderGoals();
     renderTodayActivity();
     renderSync();

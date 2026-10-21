@@ -65,25 +65,21 @@ body {
   box-sizing: border-box;
 }
 
-#viewer-activity {
+/* The "I'm currently" line is the container's own bold/16px style; the
+   "Started: ..." line underneath (built by the same shared
+   renderCurrentActivity() the desktop Jacqueline panel uses) gets the
+   dimmer/smaller override instead, same idea as that panel's
+   .overview-started but sized for this bigger sidebar panel. */
+#viewer-status {
   font-size: 16px;
   font-weight: 600;
 }
 
-#viewer-elapsed {
+#viewer-status .overview-started {
+  font-size: 13px;
+  font-weight: 400;
   opacity: 0.7;
-  font-size: 13px;
   margin-top: 2px;
-}
-
-.viewer-goal-row {
-  font-size: 13px;
-  margin-top: 6px;
-}
-
-.viewer-goal-done {
-  text-decoration: line-through;
-  opacity: 0.6;
 }
 
 .goals-empty {
@@ -91,10 +87,60 @@ body {
   font-style: italic;
 }
 
-.viewer-goal-subrow {
+/* Shared with the desktop app (styles.css) — same class names, since both
+   now render "Today's Goals"/"Today's Activity" via the same functions in
+   dashboard/render.ts. */
+.goal-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.goal-check {
+  flex-shrink: 0;
+}
+
+.goal-text {
+  flex: 1;
+}
+
+.goal-done .goal-text {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.goal-subrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding-left: 18px;
   opacity: 0.75;
   font-size: 11px;
+}
+
+.goal-subtext {
+  flex: 1;
+}
+
+.dashboard-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.dashboard-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.dashboard-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
 }
 
 #viewer-panel h2 {
