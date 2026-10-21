@@ -1,17 +1,15 @@
-import { BaseDirectory } from "@tauri-apps/api/path";
-import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { createJsonFileStore } from "../lib/jsonFileStore";
 import { DEFAULT_SETTINGS, Settings } from "./types";
 
-const FILE_NAME = "settings.json";
-const OPTS = { baseDir: BaseDirectory.AppData };
+const fileStore = createJsonFileStore<Partial<Settings>>("settings.json", {});
 
-export async function loadSettings(): Promise<Settings> {
-  if (!(await exists(FILE_NAME, OPTS))) return { ...DEFAULT_SETTINGS };
-  const text = await readTextFile(FILE_NAME, OPTS);
-  return { ...DEFAULT_SETTINGS, ...(JSON.parse(text) as Partial<Settings>) };
-}
-
-export async function saveSettings(settings: Settings): Promise<void> {
-  await mkdir("", { ...OPTS, recursive: true });
-  await writeTextFile(FILE_NAME, JSON.stringify(settings, null, 2), OPTS);
-}
+// Settings specifically needs a merge-with-defaults on load (not just
+// handled by jsonFileStore's "file missing" case) so a settings.json saved
+// before a new field existed (e.g. devMode/scale added after broadcastUrl)
+// still comes back with that field populated instead of undefined.
+export const settingsFileStore = {
+  async load(): Promise<Settings> {
+    return { ...DEFAULT_SETTINGS, ...(await fileStore.load()) };
+  },
+  save: fileStore.save,
+};

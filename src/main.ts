@@ -14,10 +14,6 @@ import { pushGoals, pushStatus } from "./broadcast/client";
 
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
 
-let connectionStatus = "connecting to AW…";
-let roomName = "";
-let activity: RunningActivity | null = null;
-
 function formatClock(date: Date): string {
   const hh = date.getHours().toString().padStart(2, "0");
   const mm = date.getMinutes().toString().padStart(2, "0");
@@ -32,6 +28,73 @@ function formatElapsed(ms: number): string {
     .padStart(hh > 0 ? 2 : 1, "0");
   const ss = (totalSeconds % 60).toString().padStart(2, "0");
   return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/** Owns the #status debug text (AW connection state, current room, current activity) and the House callbacks that feed it. */
+function setupStatusDisplay() {
+  let connectionStatus = "connecting to AW…";
+  let roomName = "";
+  let activity: RunningActivity | null = null;
+
+  function render() {
+    const lines = [connectionStatus, roomName];
+    if (activity) {
+      const elapsed = formatElapsed(Date.now() - activity.startedAt.getTime());
+      lines.push(
+        `tracking: ${activity.label}`,
+        `started: ${formatClock(activity.startedAt)}`,
+        `elapsed time: ${elapsed}`,
+      );
+    } else {
+      lines.push("idle");
+    }
+    statusEl.textContent = lines.join("\n");
+  }
+
+  return {
+    setConnectionStatus(status: string) {
+      connectionStatus = status;
+    },
+    /** Only call once AW connection is confirmed — starting the 1s tick earlier risks it overwriting a connection-failure message. */
+    start() {
+      render();
+      setInterval(render, 1000);
+    },
+    onActivityChange(current: RunningActivity | null) {
+      activity = current;
+      render();
+      pushStatus();
+    },
+    onRoomChange(name: string) {
+      roomName = name;
+      render();
+    },
+  };
+}
+
+async function setupPixiApp(): Promise<Application> {
+  const app = new Application();
+  await app.init({
+    background: "#1a1a1a",
+    resolution: window.devicePixelRatio || 1,
+    autoDensity: true,
+  });
+  document.querySelector<HTMLDivElement>("#app")!.appendChild(app.canvas);
+
+  // Pixi's `resizeTo` option has a known bug where it can leave the backing
+  // buffer subtly stretched/mismatched after a resize instead of cleanly
+  // re-syncing (https://github.com/pixijs/pixijs/issues/6510) — driving
+  // resolution + resize together ourselves, on every resize, avoids it.
+  // Not perfect (occasional stretch still happens on some resizes) — good
+  // enough for now, revisit later.
+  function syncRendererSize() {
+    app.renderer.resolution = window.devicePixelRatio || 1;
+    app.renderer.resize(window.innerWidth, window.innerHeight);
+  }
+  syncRendererSize();
+  window.addEventListener("resize", syncRendererSize);
+
+  return app;
 }
 
 function setupFloorButtons(house: House) {
@@ -64,71 +127,12 @@ function setupTopButtons(buttons: { label: string; onclick: () => void }[]) {
   document.body.appendChild(container);
 }
 
-function renderStatus() {
-  const lines = [connectionStatus, roomName];
-  if (activity) {
-    const elapsed = formatElapsed(Date.now() - activity.startedAt.getTime());
-    lines.push(
-      `tracking: ${activity.label}`,
-      `started: ${formatClock(activity.startedAt)}`,
-      `elapsed time: ${elapsed}`,
-    );
-  } else {
-    lines.push("idle");
-  }
-  statusEl.textContent = lines.join("\n");
-}
-
-async function main() {
-  const app = new Application();
-  await app.init({
-    background: "#1a1a1a",
-    resolution: window.devicePixelRatio || 1,
-    autoDensity: true,
-  });
-  document.querySelector<HTMLDivElement>("#app")!.appendChild(app.canvas);
-
-  // Pixi's `resizeTo` option has a known bug where it can leave the backing
-  // buffer subtly stretched/mismatched after a resize instead of cleanly
-  // re-syncing (https://github.com/pixijs/pixijs/issues/6510) — driving
-  // resolution + resize together ourselves, on every resize, avoids it.
-  // Not perfect (occasional stretch still happens on some resizes) — good
-  // enough for now, revisit later.
-  function syncRendererSize() {
-    app.renderer.resolution = window.devicePixelRatio || 1;
-    app.renderer.resize(window.innerWidth, window.innerHeight);
-  }
-  syncRendererSize();
-  window.addEventListener("resize", syncRendererSize);
-
-  try {
-    const info = await getServerInfo();
-    await ensureStopwatchBucket();
-    connectionStatus = `connected: ${info.hostname} (aw-server ${info.version})`;
-  } catch (err) {
-    statusEl.textContent = `AW connection failed: ${(err as Error).message}`;
-    console.error(err);
-    return;
-  }
-
-  renderStatus();
-  setInterval(renderStatus, 1000);
-
-  await initGoalsState();
-  await initSettingsState();
-
+async function setupHouse(app: Application, statusDisplay: ReturnType<typeof setupStatusDisplay>): Promise<House> {
   await preloadRoomAssets();
   const house = new House(
     app,
-    (current) => {
-      activity = current;
-      renderStatus();
-      pushStatus();
-    },
-    (name) => {
-      roomName = name;
-      renderStatus();
-    },
+    statusDisplay.onActivityChange,
+    statusDisplay.onRoomChange,
     { devMode: getSettings().devMode, scale: getSettings().scale },
   );
   setupFloorButtons(house);
@@ -138,6 +142,11 @@ async function main() {
     house.setScale(getSettings().scale);
   });
 
+  return house;
+}
+
+/** Wires up every feature modal (goals/todos/timer/messages/settings) and the top-right button row that opens them. */
+async function setupModals(): Promise<void> {
   const goalsModal = setupGoalsManageModal();
   await setupGoalsPanel();
   onGoalsChange(pushGoals);
@@ -156,6 +165,28 @@ async function main() {
     { label: "Messages", onclick: messagesModal.open },
     { label: "Settings", onclick: settingsModal.open },
   ]);
+}
+
+async function main() {
+  const app = await setupPixiApp();
+  const statusDisplay = setupStatusDisplay();
+
+  try {
+    const info = await getServerInfo();
+    await ensureStopwatchBucket();
+    statusDisplay.setConnectionStatus(`connected: ${info.hostname} (aw-server ${info.version})`);
+  } catch (err) {
+    statusEl.textContent = `AW connection failed: ${(err as Error).message}`;
+    console.error(err);
+    return;
+  }
+  statusDisplay.start();
+
+  await initGoalsState();
+  await initSettingsState();
+
+  const house = await setupHouse(app, statusDisplay);
+  await setupModals();
 
   const resumed = await resumeActivity().catch((err) => {
     console.error("[aw] failed to resume previous activity", err);

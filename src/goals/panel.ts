@@ -2,8 +2,18 @@ import { getGoals, onGoalsChange, todayDateString } from "./state";
 import { getTodayGoalProgress } from "./progress";
 import { formatMinutes, describeRecurrence } from "./ui";
 import { isScheduledOn } from "./recurrence";
+import { getBroadcastHealth, onBroadcastHealthChange } from "../broadcast/client";
+import { getSettings } from "../settings/state";
 
 const REFRESH_INTERVAL_MS = 30_000;
+
+function formatRelativeTime(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
+}
 
 /** Read-only view of today's goals and progress — all editing lives in the manage modal (opened from the top-right "Goals" button). */
 export async function setupGoalsPanel(): Promise<void> {
@@ -14,6 +24,28 @@ export async function setupGoalsPanel(): Promise<void> {
   const list = document.createElement("div");
   list.id = "goals-list";
   panel.appendChild(list);
+
+  // Only shown once broadcasting is actually configured — a failed push
+  // used to go completely unnoticed (fetch() doesn't reject on HTTP error
+  // statuses), so this is the one place that's always visible without
+  // needing devtools open.
+  const broadcastStatusEl = document.createElement("div");
+  broadcastStatusEl.id = "broadcast-status";
+  panel.appendChild(broadcastStatusEl);
+
+  function renderBroadcastStatus() {
+    if (!getSettings().broadcastUrl) {
+      broadcastStatusEl.textContent = "";
+      return;
+    }
+    const { lastSuccessAt, lastError } = getBroadcastHealth();
+    broadcastStatusEl.classList.toggle("broadcast-status-error", !!lastError);
+    broadcastStatusEl.textContent = lastError
+      ? `⚠ Sync failed: ${lastError}`
+      : lastSuccessAt
+        ? `Synced ${formatRelativeTime(lastSuccessAt)}`
+        : "Not yet synced";
+  }
 
   async function render() {
     const progress = await getTodayGoalProgress();
@@ -69,4 +101,8 @@ export async function setupGoalsPanel(): Promise<void> {
   onGoalsChange(render);
   await render();
   setInterval(render, REFRESH_INTERVAL_MS);
+
+  onBroadcastHealthChange(renderBroadcastStatus);
+  renderBroadcastStatus();
+  setInterval(renderBroadcastStatus, REFRESH_INTERVAL_MS);
 }

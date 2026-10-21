@@ -14,7 +14,43 @@ function authHeaders(): HeadersInit {
   return { Authorization: `Bearer ${getSettings().broadcastSecret}` };
 }
 
-/** No-ops quietly if broadcasting isn't configured yet, or the request fails — this is a nice-to-have, never something that should disrupt the app. */
+export interface BroadcastHealth {
+  lastSuccessAt: Date | null;
+  lastError: string | null;
+}
+
+let health: BroadcastHealth = { lastSuccessAt: null, lastError: null };
+const healthListeners = new Set<() => void>();
+
+export function getBroadcastHealth(): BroadcastHealth {
+  return health;
+}
+
+/** Fires after every push attempt, success or failure — not just on change, since "still failing" is as worth re-showing as "just recovered." */
+export function onBroadcastHealthChange(cb: () => void): void {
+  healthListeners.add(cb);
+}
+
+function notifyHealth() {
+  for (const cb of healthListeners) cb();
+}
+
+// fetch() only rejects on network-level failures — an HTTP error status
+// (e.g. a 500 from a server-side bug) resolves normally and was previously
+// going completely undetected, not even reaching console.error.
+async function putJson(url: string, body: unknown): Promise<void> {
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${res.statusText}${text ? `: ${text}` : ""}`);
+  }
+}
+
+/** No-ops quietly if broadcasting isn't configured yet; a configured-but-failing push updates `getBroadcastHealth()` instead of disrupting the app. */
 export async function pushStatus(): Promise<void> {
   const { broadcastUrl } = getSettings();
   if (!broadcastUrl) return;
@@ -28,18 +64,17 @@ export async function pushStatus(): Promise<void> {
   const todayMinutesByLabel = await getTodayMinutesByLabel();
 
   try {
-    await fetch(`${broadcastUrl}/api/status`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({
-        activityLabel: current?.label ?? null,
-        startedAt: current?.startedAt.toISOString() ?? null,
-        todayMinutesByLabel,
-      }),
+    await putJson(`${broadcastUrl}/api/status`, {
+      activityLabel: current?.label ?? null,
+      startedAt: current?.startedAt.toISOString() ?? null,
+      todayMinutesByLabel,
     });
+    health = { lastSuccessAt: new Date(), lastError: null };
   } catch (err) {
     console.error("[broadcast] failed to push status", err);
+    health = { ...health, lastError: (err as Error).message };
   }
+  notifyHealth();
 }
 
 /**
@@ -53,14 +88,13 @@ export async function pushGoals(): Promise<void> {
   if (!broadcastUrl) return;
 
   try {
-    await fetch(`${broadcastUrl}/api/goals`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify(getGoals()),
-    });
+    await putJson(`${broadcastUrl}/api/goals`, getGoals());
+    health = { lastSuccessAt: new Date(), lastError: null };
   } catch (err) {
     console.error("[broadcast] failed to push goals", err);
+    health = { ...health, lastError: (err as Error).message };
   }
+  notifyHealth();
 }
 
 export async function fetchMessages(): Promise<InboxMessage[]> {

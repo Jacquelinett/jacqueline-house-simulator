@@ -99,6 +99,16 @@ body {
   font-style: italic;
 }
 
+#broadcast-status {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+#broadcast-status.broadcast-status-error {
+  opacity: 1;
+  color: #f88;
+}
+
 .goal-row {
   display: flex;
   align-items: center;

@@ -1,39 +1,23 @@
-import { loadTodos, saveTodos } from "./store";
-import { Todo } from "./types";
+import { createPersistedState } from "../lib/persistedState";
+import { todosFileStore } from "./store";
 
-let todos: Todo[] = [];
-const listeners = new Set<() => void>();
+const todosState = createPersistedState(todosFileStore.load, todosFileStore.save);
 
-export async function initTodosState(): Promise<void> {
-  todos = await loadTodos();
-}
-
-export function getTodos(): Todo[] {
-  return todos;
-}
-
-export function onTodosChange(cb: () => void): void {
-  listeners.add(cb);
-}
-
-async function persist() {
-  await saveTodos(todos);
-  for (const cb of listeners) cb();
-}
+export const initTodosState = todosState.init;
+export const getTodos = todosState.get;
+export const onTodosChange = todosState.onChange;
 
 export async function addTodo(text: string) {
-  todos.push({ id: crypto.randomUUID(), text, done: false });
-  await persist();
+  await todosState.persist([...getTodos(), { id: crypto.randomUUID(), text, done: false }]);
 }
 
 export async function toggleTodo(id: string) {
-  const todo = todos.find((t) => t.id === id);
+  const todo = getTodos().find((t) => t.id === id);
   if (!todo) return;
   todo.done = !todo.done;
-  await persist();
+  await todosState.persist(getTodos());
 }
 
 export async function deleteTodo(id: string) {
-  todos = todos.filter((t) => t.id !== id);
-  await persist();
+  await todosState.persist(getTodos().filter((t) => t.id !== id));
 }

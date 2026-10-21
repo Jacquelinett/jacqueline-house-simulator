@@ -1,30 +1,17 @@
+import { createPersistedState } from "../lib/persistedState";
 import { localDateString } from "./recurrence";
-import { loadGoals, saveGoals } from "./store";
+import { goalsFileStore } from "./store";
 import { Goal, Recurrence } from "./types";
 
-let goals: Goal[] = [];
-const listeners = new Set<() => void>();
+const goalsState = createPersistedState(goalsFileStore.load, goalsFileStore.save);
 
-export async function initGoalsState(): Promise<void> {
-  goals = await loadGoals();
-}
-
-export function getGoals(): Goal[] {
-  return goals;
-}
-
+export const initGoalsState = goalsState.init;
+export const getGoals = goalsState.get;
 /** Called after every mutation — subscribe to keep a view in sync with the shared list. */
-export function onGoalsChange(cb: () => void): void {
-  listeners.add(cb);
-}
+export const onGoalsChange = goalsState.onChange;
 
 export function todayDateString(): string {
   return localDateString(new Date());
-}
-
-async function persist() {
-  await saveGoals(goals);
-  for (const cb of listeners) cb();
 }
 
 function recurrenceEquals(a: Recurrence, b: Recurrence): boolean {
@@ -40,6 +27,7 @@ function recurrenceEquals(a: Recurrence, b: Recurrence): boolean {
 }
 
 export async function addGoal(activityLabel: string, targetMinutes: number, recurrence: Recurrence) {
+  const goals = getGoals();
   // Re-adding the same activity on the same schedule shouldn't create a
   // second entry — extend the existing goal's target instead, which also
   // naturally un-checks it if it had already been marked done.
@@ -48,31 +36,30 @@ export async function addGoal(activityLabel: string, targetMinutes: number, recu
   );
   if (existing) {
     existing.targetMinutes += targetMinutes;
+    await goalsState.persist(goals);
   } else {
-    goals.push({ id: crypto.randomUUID(), activityLabel, targetMinutes, recurrence });
+    await goalsState.persist([...goals, { id: crypto.randomUUID(), activityLabel, targetMinutes, recurrence }]);
   }
-  await persist();
 }
 
 export async function deleteGoal(id: string) {
-  goals = goals.filter((g) => g.id !== id);
-  await persist();
+  await goalsState.persist(getGoals().filter((g) => g.id !== id));
 }
 
 export async function skipGoalToday(goal: Goal) {
   goal.skipDates = [...(goal.skipDates ?? []), todayDateString()];
-  await persist();
+  await goalsState.persist(getGoals());
 }
 
 export async function unskipGoalToday(goal: Goal) {
   goal.skipDates = (goal.skipDates ?? []).filter((d) => d !== todayDateString());
-  await persist();
+  await goalsState.persist(getGoals());
 }
 
 export async function updateGoal(id: string, targetMinutes: number, recurrence: Recurrence) {
-  const goal = goals.find((g) => g.id === id);
+  const goal = getGoals().find((g) => g.id === id);
   if (!goal) return;
   goal.targetMinutes = targetMinutes;
   goal.recurrence = recurrence;
-  await persist();
+  await goalsState.persist(getGoals());
 }
