@@ -1,4 +1,4 @@
-import { getAllActivityLabels } from "../scene/rooms";
+import { getAllActivityLabels } from "../scene/activities";
 import { Recurrence, Weekday } from "./types";
 
 export const WEEKDAYS: Weekday[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

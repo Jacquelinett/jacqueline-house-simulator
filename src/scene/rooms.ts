@@ -389,19 +389,6 @@ const roomSpecs: RoomSpec[] = [
 
 export const rooms: RoomDef[] = resolveRooms(roomSpecs);
 
-/** Every distinct activity label trackable across all rooms' objects, sorted. */
-export function getAllActivityLabels(): string[] {
-  const labels = new Set<string>();
-  for (const room of rooms) {
-    for (const obj of room.objects) {
-      for (const action of obj.actions ?? []) {
-        if (action.kind === "activity") labels.add(action.label);
-      }
-    }
-  }
-  return [...labels].sort();
-}
-
 /** The id of the room containing the object whose action matches this activity label, if any. */
 export function findRoomForActivityLabel(label: string): string | undefined {
   for (const room of rooms) {
