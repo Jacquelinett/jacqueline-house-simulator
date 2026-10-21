@@ -1,8 +1,12 @@
-import { Container, Polygon, Text } from "pixi.js";
+import { Container, Graphics, Polygon, Text } from "pixi.js";
 import { findRoomForActivityLabel, gridToScreen, ObjectDef, RoomDef } from "./rooms";
 import { SceneRenderer } from "./renderer";
 
 export { preloadRoomAssets } from "./renderer";
+
+const LABEL_PADDING_X = 6;
+const LABEL_PADDING_Y = 3;
+const LABEL_GAP = 4; // above the object's own top edge
 
 /**
  * Read-only house view for the public status page. Room navigation (click a
@@ -13,7 +17,7 @@ export { preloadRoomAssets } from "./renderer";
  * access and shouldn't be able to change what's running regardless.
  */
 export class HouseViewer extends SceneRenderer {
-  private activeLabel: Text | null = null;
+  private activeLabel: Container | null = null;
 
   /** Highlights whichever activity is currently running and follows its room. */
   public showActivity(current: { label: string } | null) {
@@ -60,12 +64,31 @@ export class HouseViewer extends SceneRenderer {
     }
     this.activeLabel?.parent?.removeChild(this.activeLabel);
 
-    const label = new Text({
+    // The label sits inside `world`, which the current zoom scales up — a
+    // text texture rendered at the default 1x resolution then gets stretched
+    // by that transform, which is what was reading as blurry. Rendering it
+    // at a resolution matching the zoom (and the display's own pixel ratio)
+    // keeps it crisp at any scale.
+    const text = new Text({
       text: obj.name,
       style: { fontSize: 12, fill: 0xffffff, fontFamily: "sans-serif" },
+      resolution: this.scale * (window.devicePixelRatio || 1),
     });
-    label.anchor.set(0.5, 1);
-    label.position.set(obj.width / 2, -4);
+    text.anchor.set(0.5, 0.5);
+
+    const background = new Graphics()
+      .roundRect(
+        -text.width / 2 - LABEL_PADDING_X,
+        -text.height / 2 - LABEL_PADDING_Y,
+        text.width + LABEL_PADDING_X * 2,
+        text.height + LABEL_PADDING_Y * 2,
+        4,
+      )
+      .fill({ color: 0x000000, alpha: 0.6 });
+
+    const label = new Container();
+    label.addChild(background, text);
+    label.position.set(obj.width / 2, -(text.height / 2 + LABEL_PADDING_Y + LABEL_GAP));
     container.addChild(label);
     this.activeLabel = label;
   }

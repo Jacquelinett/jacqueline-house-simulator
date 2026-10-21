@@ -109,11 +109,6 @@ export class House extends SceneRenderer {
     this.menuEl = null;
   }
 
-  /** For external UI (e.g. a floor-switcher) — same path as clicking a room/object. */
-  public goToRoom(roomId: string) {
-    this.setViewedRoom(roomId);
-  }
-
   /** Re-applies a running activity recovered from AW on startup — same visual effects as clicking its object. */
   public resumeActivity(current: RunningActivity) {
     this.updateActiveOverlays(current);

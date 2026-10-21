@@ -292,6 +292,11 @@ export class SceneRenderer {
     this.onRoomChange(roomDefs.find((r) => r.id === roomId)!.name);
   }
 
+  /** For external UI (e.g. a floor-switcher) — same path as clicking a room/object. */
+  public goToRoom(roomId: string) {
+    this.setViewedRoom(roomId);
+  }
+
   protected applyFocus() {
     const viewedLevel = roomDefs.find((r) => r.id === this.viewedRoomId)!.level;
     for (const [id, filter] of this.roomAlphaFilters) {

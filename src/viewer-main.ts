@@ -2,12 +2,37 @@ import { Application } from "pixi.js";
 import { HouseViewer, preloadRoomAssets } from "./scene/viewer";
 import { isScheduledOn, localDateString } from "./goals/recurrence";
 import { Goal } from "./goals/types";
+import { buildModal } from "./ui/modal";
 
 // Edit this to your own deployed val.town status val before building/hosting
 // this page — it's the only thing that needs to change per-deployment.
 const STATUS_API_BASE = "https://jacquelinett--6dc86500cd6211f1876a1607ee4eb77e.web.val.run";
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
+
+interface ViewerSettings {
+  scale: number;
+  devMode: boolean;
+}
+
+const VIEWER_SETTINGS_KEY = "houseSimulatorViewerSettings";
+
+// No desktop-app-style Tauri fs here — this is a public static page, so
+// localStorage is the whole persistence story (per-browser, not per-person;
+// fine for "remember how I like to view this on my own screen").
+function loadViewerSettings(): ViewerSettings {
+  try {
+    const raw = localStorage.getItem(VIEWER_SETTINGS_KEY);
+    if (raw) return { scale: 2, devMode: false, ...JSON.parse(raw) };
+  } catch {
+    // ignore corrupt/inaccessible storage, just fall through to defaults
+  }
+  return { scale: 2, devMode: false };
+}
+
+function saveViewerSettings(settings: ViewerSettings) {
+  localStorage.setItem(VIEWER_SETTINGS_KEY, JSON.stringify(settings));
+}
 
 interface StatusResponse {
   activityLabel: string | null;
@@ -31,6 +56,74 @@ function formatMinutes(min: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+function setupFloorButtons(viewer: HouseViewer) {
+  const container = document.createElement("div");
+  container.id = "floor-buttons";
+  const floors: { label: string; roomId: string }[] = [
+    { label: "2F", roomId: "bedroom" },
+    { label: "1F", roomId: "office" },
+    { label: "B", roomId: "basement" },
+  ];
+  for (const { label, roomId } of floors) {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.onclick = () => viewer.goToRoom(roomId);
+    container.appendChild(btn);
+  }
+  document.body.appendChild(container);
+}
+
+/** Zoom + dev-mode outlines, independent of the desktop app's own Settings — lets anyone viewing on a bigger/smaller screen adjust to taste (and is handy for testing the viewer itself). */
+function setupSettings(viewer: HouseViewer, settings: ViewerSettings) {
+  const modal = buildModal("Settings");
+
+  const devModeLabel = document.createElement("label");
+  devModeLabel.className = "settings-checkbox-row";
+  const devModeCheckbox = document.createElement("input");
+  devModeCheckbox.type = "checkbox";
+  devModeCheckbox.checked = settings.devMode;
+  devModeLabel.appendChild(devModeCheckbox);
+  devModeLabel.appendChild(document.createTextNode(" Dev mode (show hitbox outlines)"));
+  modal.body.appendChild(devModeLabel);
+  devModeCheckbox.onchange = () => {
+    settings.devMode = devModeCheckbox.checked;
+    viewer.setDevMode(settings.devMode);
+    saveViewerSettings(settings);
+  };
+
+  const scaleRow = document.createElement("label");
+  scaleRow.className = "settings-scale-row";
+  scaleRow.textContent = "Zoom";
+  const scaleInput = document.createElement("input");
+  scaleInput.type = "range";
+  scaleInput.min = "1";
+  scaleInput.max = "4";
+  scaleInput.step = "0.25";
+  scaleInput.value = String(settings.scale);
+  scaleRow.appendChild(scaleInput);
+  const scaleValue = document.createElement("span");
+  scaleValue.className = "settings-scale-value";
+  scaleValue.textContent = `${settings.scale}×`;
+  scaleRow.appendChild(scaleValue);
+  modal.body.appendChild(scaleRow);
+  scaleInput.oninput = () => {
+    scaleValue.textContent = `${scaleInput.value}×`;
+  };
+  scaleInput.onchange = () => {
+    settings.scale = Number(scaleInput.value);
+    viewer.setScale(settings.scale);
+    saveViewerSettings(settings);
+  };
+
+  const topButtons = document.createElement("div");
+  topButtons.id = "top-buttons";
+  const settingsBtn = document.createElement("button");
+  settingsBtn.textContent = "Settings";
+  settingsBtn.onclick = modal.open;
+  topButtons.appendChild(settingsBtn);
+  document.body.appendChild(topButtons);
+}
+
 async function main() {
   const app = new Application();
   await app.init({ background: "#1a1a1a", resolution: window.devicePixelRatio || 1, autoDensity: true });
@@ -43,8 +136,13 @@ async function main() {
   syncRendererSize();
   window.addEventListener("resize", syncRendererSize);
 
+  const viewerSettings = loadViewerSettings();
+
   await preloadRoomAssets();
-  const viewer = new HouseViewer(app, () => {}, { devMode: false, scale: 2 });
+  const viewer = new HouseViewer(app, () => {}, viewerSettings);
+
+  setupFloorButtons(viewer);
+  setupSettings(viewer, viewerSettings);
 
   const activityEl = document.querySelector<HTMLDivElement>("#viewer-activity")!;
   const elapsedEl = document.querySelector<HTMLDivElement>("#viewer-elapsed")!;
