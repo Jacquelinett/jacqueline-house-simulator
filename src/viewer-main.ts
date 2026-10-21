@@ -9,6 +9,8 @@ import { buildDashboardSections, renderActivityList, renderAllTimeActivity, rend
 import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "./status/render";
 import type { ActivityStat } from "./dashboard/stats";
 import { setupFloorButtons } from "./ui/floorButtons";
+import { Theme } from "./settings/types";
+import { THEME_BACKGROUND } from "./settings/themes";
 
 // Edit this to your own deployed val.town status val before building/hosting
 // this page — it's the only thing that needs to change per-deployment.
@@ -16,9 +18,12 @@ const STATUS_API_BASE = "https://jacquelinett--6dc86500cd6211f1876a1607ee4eb77e.
 
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
 
+const DEFAULT_VIEWER_THEME: Theme = "pink";
+
 interface ViewerSettings {
   scale: number;
   devMode: boolean;
+  theme: Theme;
 }
 
 const VIEWER_SETTINGS_KEY = "houseSimulatorViewerSettings";
@@ -29,11 +34,11 @@ const VIEWER_SETTINGS_KEY = "houseSimulatorViewerSettings";
 function loadViewerSettings(): ViewerSettings {
   try {
     const raw = localStorage.getItem(VIEWER_SETTINGS_KEY);
-    if (raw) return { scale: 2, devMode: false, ...JSON.parse(raw) };
+    if (raw) return { scale: 2, devMode: false, theme: DEFAULT_VIEWER_THEME, ...JSON.parse(raw) };
   } catch {
     // ignore corrupt/inaccessible storage, just fall through to defaults
   }
-  return { scale: 2, devMode: false };
+  return { scale: 2, devMode: false, theme: DEFAULT_VIEWER_THEME };
 }
 
 function saveViewerSettings(settings: ViewerSettings) {
@@ -60,7 +65,11 @@ function setupTopButtons(buttons: { label: string; onclick: () => void }[]) {
 }
 
 /** Zoom + dev-mode outlines, independent of the desktop app's own Settings — lets anyone viewing on a bigger/smaller screen adjust to taste (and is handy for testing the viewer itself). */
-function setupSettings(viewer: HouseViewer, settings: ViewerSettings): { open: () => void } {
+function setupSettings(
+  viewer: HouseViewer,
+  settings: ViewerSettings,
+  applyTheme: (theme: Theme) => void,
+): { open: () => void } {
   const modal = buildModal("Settings");
 
   const devModeLabel = document.createElement("label");
@@ -74,6 +83,28 @@ function setupSettings(viewer: HouseViewer, settings: ViewerSettings): { open: (
   devModeCheckbox.onchange = () => {
     settings.devMode = devModeCheckbox.checked;
     viewer.setDevMode(settings.devMode);
+    saveViewerSettings(settings);
+  };
+
+  const themeRow = document.createElement("label");
+  themeRow.className = "settings-scale-row";
+  themeRow.textContent = "Theme";
+  const themeSelect = document.createElement("select");
+  for (const [value, label] of [
+    ["dark", "Dark"],
+    ["pink", "Pink"],
+  ] as const) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    themeSelect.appendChild(opt);
+  }
+  themeSelect.value = settings.theme;
+  themeRow.appendChild(themeSelect);
+  modal.body.appendChild(themeRow);
+  themeSelect.onchange = () => {
+    settings.theme = themeSelect.value as Theme;
+    applyTheme(settings.theme);
     saveViewerSettings(settings);
   };
 
@@ -105,9 +136,25 @@ function setupSettings(viewer: HouseViewer, settings: ViewerSettings): { open: (
 }
 
 async function main() {
+  // Unlike the desktop app (where settings load async from Tauri fs, so
+  // the initial Pixi/CSS theme has to guess the default and get corrected
+  // once settings actually load), localStorage here is synchronous — the
+  // real saved theme is already known before anything renders, no flash.
+  const viewerSettings = loadViewerSettings();
+  document.documentElement.dataset.theme = viewerSettings.theme;
+
   const app = new Application();
-  await app.init({ background: "#1a1a1a", resolution: window.devicePixelRatio || 1, autoDensity: true });
+  await app.init({
+    background: THEME_BACKGROUND[viewerSettings.theme],
+    resolution: window.devicePixelRatio || 1,
+    autoDensity: true,
+  });
   document.querySelector<HTMLDivElement>("#app")!.appendChild(app.canvas);
+
+  function applyTheme(theme: Theme) {
+    document.documentElement.dataset.theme = theme;
+    app.renderer.background.color = THEME_BACKGROUND[theme];
+  }
 
   function syncRendererSize() {
     app.renderer.resolution = window.devicePixelRatio || 1;
@@ -115,8 +162,6 @@ async function main() {
   }
   syncRendererSize();
   window.addEventListener("resize", syncRendererSize);
-
-  const viewerSettings = loadViewerSettings();
 
   const roomLabelEl = document.querySelector<HTMLDivElement>("#room-label")!;
 
@@ -143,7 +188,7 @@ async function main() {
   updateFloorButtons = setupFloorButtons((roomId) => viewer.goToRoom(roomId));
   updateFloorButtons(initialRoomName);
 
-  const settingsModal = setupSettings(viewer, viewerSettings);
+  const settingsModal = setupSettings(viewer, viewerSettings, applyTheme);
 
   // --- Jacqueline panel: same corner panel the desktop app has, minus the
   // AW line (no AW access here) and plus "Leave a note" (viewer-only). ---
