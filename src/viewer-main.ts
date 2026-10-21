@@ -1,4 +1,3 @@
-import { Application } from "pixi.js";
 import { HouseViewer, preloadRoomAssets } from "./scene/viewer";
 import { Goal } from "./goals/types";
 import { describeScheduleForToday, groupTodaysGoals } from "./goals/todayGroups";
@@ -9,8 +8,11 @@ import { buildDashboardSections, renderActivityList, renderAllTimeActivity, rend
 import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "./status/render";
 import type { ActivityStat } from "./dashboard/stats";
 import { setupFloorButtons } from "./ui/floorButtons";
+import { setupTopButtons } from "./ui/topButtons";
+import { setupPixiApp } from "./ui/pixiApp";
+import { buildDisplaySettingsSection } from "./ui/displaySettings";
 import { Theme } from "./settings/types";
-import { THEME_BACKGROUND } from "./settings/themes";
+import { applyTheme, THEME_BACKGROUND } from "./settings/themes";
 
 // Edit this to your own deployed val.town status val before building/hosting
 // this page — it's the only thing that needs to change per-deployment.
@@ -51,19 +53,6 @@ interface StatusResponse {
   todayMinutesByLabel: Record<string, number>;
 }
 
-/** Top-right row of page-level actions — mirrors the desktop app's own setupTopButtons(). */
-function setupTopButtons(buttons: { label: string; onclick: () => void }[]) {
-  const container = document.createElement("div");
-  container.id = "top-buttons";
-  for (const { label, onclick } of buttons) {
-    const btn = document.createElement("button");
-    btn.textContent = label;
-    btn.onclick = onclick;
-    container.appendChild(btn);
-  }
-  document.body.appendChild(container);
-}
-
 /** Zoom + dev-mode outlines, independent of the desktop app's own Settings — lets anyone viewing on a bigger/smaller screen adjust to taste (and is handy for testing the viewer itself). */
 function setupSettings(
   viewer: HouseViewer,
@@ -72,65 +61,23 @@ function setupSettings(
 ): { open: () => void } {
   const modal = buildModal("Settings");
 
-  const devModeLabel = document.createElement("label");
-  devModeLabel.className = "settings-checkbox-row";
-  const devModeCheckbox = document.createElement("input");
-  devModeCheckbox.type = "checkbox";
-  devModeCheckbox.checked = settings.devMode;
-  devModeLabel.appendChild(devModeCheckbox);
-  devModeLabel.appendChild(document.createTextNode(" Dev mode (show hitbox outlines)"));
-  modal.body.appendChild(devModeLabel);
-  devModeCheckbox.onchange = () => {
-    settings.devMode = devModeCheckbox.checked;
-    viewer.setDevMode(settings.devMode);
-    saveViewerSettings(settings);
-  };
-
-  const themeRow = document.createElement("label");
-  themeRow.className = "settings-scale-row";
-  themeRow.textContent = "Theme";
-  const themeSelect = document.createElement("select");
-  for (const [value, label] of [
-    ["dark", "Dark"],
-    ["pink", "Pink"],
-  ] as const) {
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = label;
-    themeSelect.appendChild(opt);
-  }
-  themeSelect.value = settings.theme;
-  themeRow.appendChild(themeSelect);
-  modal.body.appendChild(themeRow);
-  themeSelect.onchange = () => {
-    settings.theme = themeSelect.value as Theme;
-    applyTheme(settings.theme);
-    saveViewerSettings(settings);
-  };
-
-  const scaleRow = document.createElement("label");
-  scaleRow.className = "settings-scale-row";
-  scaleRow.textContent = "Zoom";
-  const scaleInput = document.createElement("input");
-  scaleInput.type = "range";
-  scaleInput.min = "1";
-  scaleInput.max = "4";
-  scaleInput.step = "0.25";
-  scaleInput.value = String(settings.scale);
-  scaleRow.appendChild(scaleInput);
-  const scaleValue = document.createElement("span");
-  scaleValue.className = "settings-scale-value";
-  scaleValue.textContent = `${settings.scale}×`;
-  scaleRow.appendChild(scaleValue);
-  modal.body.appendChild(scaleRow);
-  scaleInput.oninput = () => {
-    scaleValue.textContent = `${scaleInput.value}×`;
-  };
-  scaleInput.onchange = () => {
-    settings.scale = Number(scaleInput.value);
-    viewer.setScale(settings.scale);
-    saveViewerSettings(settings);
-  };
+  buildDisplaySettingsSection(modal.body, settings, {
+    onDevModeChange: (value) => {
+      settings.devMode = value;
+      viewer.setDevMode(value);
+      saveViewerSettings(settings);
+    },
+    onThemeChange: (value) => {
+      settings.theme = value;
+      applyTheme(value);
+      saveViewerSettings(settings);
+    },
+    onScaleChange: (value) => {
+      settings.scale = value;
+      viewer.setScale(value);
+      saveViewerSettings(settings);
+    },
+  });
 
   return { open: modal.open };
 }
@@ -143,52 +90,30 @@ async function main() {
   const viewerSettings = loadViewerSettings();
   document.documentElement.dataset.theme = viewerSettings.theme;
 
-  const app = new Application();
-  await app.init({
-    background: THEME_BACKGROUND[viewerSettings.theme],
-    resolution: window.devicePixelRatio || 1,
-    autoDensity: true,
-  });
-  document.querySelector<HTMLDivElement>("#app")!.appendChild(app.canvas);
-
-  function applyTheme(theme: Theme) {
-    document.documentElement.dataset.theme = theme;
-    app.renderer.background.color = THEME_BACKGROUND[theme];
-  }
-
-  function syncRendererSize() {
-    app.renderer.resolution = window.devicePixelRatio || 1;
-    app.renderer.resize(window.innerWidth, window.innerHeight);
-  }
-  syncRendererSize();
-  window.addEventListener("resize", syncRendererSize);
+  const app = await setupPixiApp(THEME_BACKGROUND[viewerSettings.theme]);
 
   const roomLabelEl = document.querySelector<HTMLDivElement>("#room-label")!;
 
-  // The room-change callback fires synchronously inside the HouseViewer
-  // constructor (for the initial room), before setupFloorButtons() below
-  // even runs — this placeholder captures that first name so it can be
-  // applied once the real updater exists, instead of the floor buttons
-  // just not reflecting the starting room until the next navigation.
-  let initialRoomName = "";
-  let updateFloorButtons: (name: string) => void = (name) => {
-    initialRoomName = name;
-  };
+  // Building the floor buttons before the HouseViewer needs no viewer at
+  // all (bindGoToRoom happens after) — so the HouseViewer's own
+  // onRoomChange callback, which fires synchronously inside its
+  // constructor for the initial room, can just call
+  // floorButtons.onRoomChange directly instead of needing a deferred
+  // placeholder for the "button doesn't exist yet" ordering problem.
+  const floorButtons = setupFloorButtons();
 
   await preloadRoomAssets();
   const viewer = new HouseViewer(
     app,
     (name) => {
       roomLabelEl.textContent = name;
-      updateFloorButtons(name);
+      floorButtons.onRoomChange(name);
     },
     viewerSettings,
   );
+  floorButtons.bindGoToRoom((roomId) => viewer.goToRoom(roomId));
 
-  updateFloorButtons = setupFloorButtons((roomId) => viewer.goToRoom(roomId));
-  updateFloorButtons(initialRoomName);
-
-  const settingsModal = setupSettings(viewer, viewerSettings, applyTheme);
+  const settingsModal = setupSettings(viewer, viewerSettings, (theme) => applyTheme(app, theme));
 
   // --- Jacqueline panel: same corner panel the desktop app has, minus the
   // AW line (no AW access here) and plus "Leave a note" (viewer-only). ---

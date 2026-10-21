@@ -15,15 +15,12 @@ import { pushGoals, pushStats, pushStatus } from "./broadcast/client";
 import { setupDashboardPanel } from "./dashboard/panel";
 import { setupStatisticModal } from "./dashboard/statisticModal";
 import { setupFloorButtons } from "./ui/floorButtons";
-import { DEFAULT_SETTINGS, Theme } from "./settings/types";
-import { THEME_BACKGROUND } from "./settings/themes";
+import { setupTopButtons } from "./ui/topButtons";
+import { setupPixiApp } from "./ui/pixiApp";
+import { DEFAULT_SETTINGS } from "./settings/types";
+import { applyTheme, THEME_BACKGROUND } from "./settings/themes";
 
 const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
-
-function applyTheme(app: Application, theme: Theme) {
-  document.documentElement.dataset.theme = theme;
-  app.renderer.background.color = THEME_BACKGROUND[theme];
-}
 
 // Only ever holds the boot-time "connecting…"/fatal-error text now —
 // ongoing AW connection, activity, and elapsed time all live in the Today
@@ -32,72 +29,27 @@ function applyTheme(app: Application, theme: Theme) {
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
 const roomLabelEl = document.querySelector<HTMLDivElement>("#room-label")!;
 
-async function setupPixiApp(): Promise<Application> {
-  const app = new Application();
-  await app.init({
-    // applyTheme() overrides this once settings load, but this is what's
-    // visible for the brief window before that, so it should already
-    // match DEFAULT_SETTINGS.theme rather than flashing some other
-    // theme's background first.
-    background: THEME_BACKGROUND[DEFAULT_SETTINGS.theme],
-    resolution: window.devicePixelRatio || 1,
-    autoDensity: true,
-  });
-  document.querySelector<HTMLDivElement>("#app")!.appendChild(app.canvas);
-
-  // Pixi's `resizeTo` option has a known bug where it can leave the backing
-  // buffer subtly stretched/mismatched after a resize instead of cleanly
-  // re-syncing (https://github.com/pixijs/pixijs/issues/6510) — driving
-  // resolution + resize together ourselves, on every resize, avoids it.
-  // Not perfect (occasional stretch still happens on some resizes) — good
-  // enough for now, revisit later.
-  function syncRendererSize() {
-    app.renderer.resolution = window.devicePixelRatio || 1;
-    app.renderer.resize(window.innerWidth, window.innerHeight);
-  }
-  syncRendererSize();
-  window.addEventListener("resize", syncRendererSize);
-
-  return app;
-}
-
-/** Top-right row of app-level actions (goals, and whatever else joins it later). */
-function setupTopButtons(buttons: { label: string; onclick: () => void }[]) {
-  const container = document.createElement("div");
-  container.id = "top-buttons";
-  for (const { label, onclick } of buttons) {
-    const btn = document.createElement("button");
-    btn.textContent = label;
-    btn.onclick = onclick;
-    container.appendChild(btn);
-  }
-  document.body.appendChild(container);
-}
-
 async function setupHouse(app: Application): Promise<House> {
   await preloadRoomAssets();
 
-  // The room-change callback fires synchronously inside the House
-  // constructor (for the initial room), before setupFloorButtons() below
-  // even runs — this placeholder captures that first name so it can be
-  // applied once the real updater exists, instead of the floor buttons
-  // just not reflecting the starting room until the next navigation.
-  let initialRoomName = "";
-  let updateFloorButtons: (name: string) => void = (name) => {
-    initialRoomName = name;
-  };
+  // Building the floor buttons before the House needs no House at all
+  // (bindGoToRoom happens after) — so the House's own onRoomChange
+  // callback, which fires synchronously inside its constructor for the
+  // initial room, can just call floorButtons.onRoomChange directly
+  // instead of needing a deferred placeholder for the "button doesn't
+  // exist yet" ordering problem.
+  const floorButtons = setupFloorButtons();
 
   const house = new House(
     app,
     () => pushStatus(),
     (name) => {
       roomLabelEl.textContent = name;
-      updateFloorButtons(name);
+      floorButtons.onRoomChange(name);
     },
     { devMode: getSettings().devMode, scale: getSettings().scale },
   );
-  updateFloorButtons = setupFloorButtons((roomId) => house.goToRoom(roomId));
-  updateFloorButtons(initialRoomName);
+  floorButtons.bindGoToRoom((roomId) => house.goToRoom(roomId));
 
   onSettingsChange(() => {
     house.setDevMode(getSettings().devMode);
@@ -133,7 +85,11 @@ async function setupModals(): Promise<void> {
 }
 
 async function main() {
-  const app = await setupPixiApp();
+  // applyTheme() overrides this once settings load, but this is what's
+  // visible for the brief window before that, so it should already match
+  // DEFAULT_SETTINGS.theme rather than flashing some other theme's
+  // background first.
+  const app = await setupPixiApp(THEME_BACKGROUND[DEFAULT_SETTINGS.theme]);
 
   try {
     await getServerInfo();

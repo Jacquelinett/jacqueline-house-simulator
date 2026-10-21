@@ -1,79 +1,36 @@
 import { buildModal } from "../ui/modal";
+import { buildDisplaySettingsSection } from "../ui/displaySettings";
 import { getSettings, updateSettings } from "./state";
-import { Theme } from "./types";
 
 export function setupSettingsModal(): { open: () => void } {
   const modal = buildModal("Settings");
 
-  const displaySection = document.createElement("div");
-  displaySection.id = "settings-display-section";
-  modal.body.appendChild(displaySection);
-
-  const displayHeading = document.createElement("h3");
-  displayHeading.textContent = "Display";
-  displaySection.appendChild(displayHeading);
-
-  const devModeLabel = document.createElement("label");
-  devModeLabel.className = "settings-checkbox-row";
-  const devModeCheckbox = document.createElement("input");
-  devModeCheckbox.type = "checkbox";
-  devModeLabel.appendChild(devModeCheckbox);
-  devModeLabel.appendChild(document.createTextNode(" Dev mode (show hitbox outlines)"));
-  displaySection.appendChild(devModeLabel);
-  devModeCheckbox.onchange = async () => {
-    try {
-      await updateSettings({ devMode: devModeCheckbox.checked });
-    } catch (err) {
-      console.error("[settings] failed to save dev mode", err);
-    }
-  };
-
-  const themeRow = document.createElement("label");
-  themeRow.className = "settings-scale-row";
-  themeRow.textContent = "Theme";
-  const themeSelect = document.createElement("select");
-  for (const [value, label] of [
-    ["dark", "Dark"],
-    ["pink", "Pink"],
-  ] as const) {
-    const opt = document.createElement("option");
-    opt.value = value;
-    opt.textContent = label;
-    themeSelect.appendChild(opt);
-  }
-  themeRow.appendChild(themeSelect);
-  displaySection.appendChild(themeRow);
-  themeSelect.onchange = async () => {
-    try {
-      await updateSettings({ theme: themeSelect.value as Theme });
-    } catch (err) {
-      console.error("[settings] failed to save theme", err);
-    }
-  };
-
-  const scaleRow = document.createElement("label");
-  scaleRow.className = "settings-scale-row";
-  scaleRow.textContent = "Zoom";
-  const scaleInput = document.createElement("input");
-  scaleInput.type = "range";
-  scaleInput.min = "1";
-  scaleInput.max = "4";
-  scaleInput.step = "0.25";
-  scaleRow.appendChild(scaleInput);
-  const scaleValue = document.createElement("span");
-  scaleValue.className = "settings-scale-value";
-  scaleRow.appendChild(scaleValue);
-  displaySection.appendChild(scaleRow);
-  scaleInput.oninput = () => {
-    scaleValue.textContent = `${scaleInput.value}×`;
-  };
-  scaleInput.onchange = async () => {
-    try {
-      await updateSettings({ scale: Number(scaleInput.value) });
-    } catch (err) {
-      console.error("[settings] failed to save scale", err);
-    }
-  };
+  // Applying devMode/scale back onto the house isn't this modal's job —
+  // setupHouse()'s own onSettingsChange subscription reacts to the saved
+  // value instead, same as before this was extracted.
+  buildDisplaySettingsSection(modal.body, getSettings(), {
+    onDevModeChange: async (value) => {
+      try {
+        await updateSettings({ devMode: value });
+      } catch (err) {
+        console.error("[settings] failed to save dev mode", err);
+      }
+    },
+    onThemeChange: async (value) => {
+      try {
+        await updateSettings({ theme: value });
+      } catch (err) {
+        console.error("[settings] failed to save theme", err);
+      }
+    },
+    onScaleChange: async (value) => {
+      try {
+        await updateSettings({ scale: value });
+      } catch (err) {
+        console.error("[settings] failed to save scale", err);
+      }
+    },
+  });
 
   const section = document.createElement("div");
   section.id = "settings-broadcast-section";
@@ -118,10 +75,6 @@ export function setupSettingsModal(): { open: () => void } {
     const settings = getSettings();
     urlInput.value = settings.broadcastUrl;
     secretInput.value = settings.broadcastSecret;
-    devModeCheckbox.checked = settings.devMode;
-    themeSelect.value = settings.theme;
-    scaleInput.value = String(settings.scale);
-    scaleValue.textContent = `${settings.scale}×`;
   }
 
   saveBtn.onclick = async () => {
