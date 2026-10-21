@@ -12,6 +12,8 @@
  *   PUT  /api/status    -> (secret required) House Simulator pushes this on activity change
  *   GET  /api/goals     -> public JSON: your raw goal definitions (targets/schedules, not progress)
  *   PUT  /api/goals     -> (secret required) House Simulator pushes this whenever goals change
+ *   GET  /api/stats     -> public JSON: per-activity all-time totals + rolling daily averages (color-coded)
+ *   PUT  /api/stats     -> (secret required) House Simulator pushes this on a slow cadence (startup + hourly)
  *   GET  /api/messages  -> (secret required) your in-app inbox reads these
  *   POST /api/messages  -> public: a viewer leaves you a note
  *   DELETE /api/messages/:id -> (secret required) dismiss a message from your inbox
@@ -50,6 +52,11 @@ async function ensureSchema() {
   await sqlite.execute(`create table if not exists goals_blob (
     id integer primary key check (id = 1),
     goals_json text not null,
+    updated_at text not null
+  )`);
+  await sqlite.execute(`create table if not exists stats_blob (
+    id integer primary key check (id = 1),
+    stats_json text not null,
     updated_at text not null
   )`);
   await sqlite.execute(`create table if not exists messages (
@@ -134,6 +141,28 @@ async function handlePutGoals(req: Request): Promise<Response> {
   return Response.json({ ok: true });
 }
 
+async function handleGetStats(): Promise<Response> {
+  const result = await sqlite.execute("select * from stats_blob where id = 1");
+  const row = result.rows[0] as { stats_json: string } | undefined;
+  return Response.json(row ? JSON.parse(row.stats_json) : []);
+}
+
+async function handlePutStats(req: Request): Promise<Response> {
+  const body = await req.json().catch(() => null);
+  if (!Array.isArray(body)) return Response.json({ error: "expected a JSON array of stats" }, { status: 400 });
+
+  await sqlite.execute({
+    sql: `insert into stats_blob (id, stats_json, updated_at)
+          values (1, :statsJson, :updatedAt)
+          on conflict(id) do update set
+            stats_json = excluded.stats_json,
+            updated_at = excluded.updated_at`,
+    args: { statsJson: JSON.stringify(body), updatedAt: new Date().toISOString() },
+  });
+
+  return Response.json({ ok: true });
+}
+
 async function handleGetMessages(): Promise<Response> {
   const result = await sqlite.execute("select * from messages order by id desc limit 200");
   return Response.json(result.rows);
@@ -192,6 +221,15 @@ export default async function (req: Request): Promise<Response> {
   if (method === "PUT" && pathname === "/api/goals") {
     if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     return handlePutGoals(req);
+  }
+
+  if (method === "GET" && pathname === "/api/stats") {
+    return handleGetStats();
+  }
+
+  if (method === "PUT" && pathname === "/api/stats") {
+    if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handlePutStats(req);
   }
 
   if (method === "GET" && pathname === "/api/messages") {

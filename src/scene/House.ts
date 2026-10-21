@@ -8,6 +8,12 @@ export { preloadRoomAssets } from "./renderer";
 /** Adds click/interaction handling (and AW integration) on top of the shared scene renderer — the desktop app's interactive view. */
 export class House extends SceneRenderer {
   private menuEl: HTMLDivElement | null = null;
+  // Which object actually started the currently-running activity — distinct
+  // from the activity's label, since two different objects (e.g. a second
+  // piano elsewhere) can share a label. null means "unknown" (e.g. right
+  // after resuming from AW on startup), treated as "assume it's this one"
+  // rather than refusing to stop an activity we can't otherwise attribute.
+  private currentActivitySource: { roomId: string; objectId: string } | null = null;
 
   constructor(
     app: Application,
@@ -47,28 +53,44 @@ export class House extends SceneRenderer {
     container.on("pointertap", (e) => {
       e.stopPropagation(); // otherwise this bubbles to the room's own click handler too
       if (obj.actions!.length === 1) {
-        this.runAction(roomId, obj.actions![0]);
+        this.runAction(roomId, obj.id, obj.actions![0]);
       } else {
         const native = e.nativeEvent as MouseEvent;
-        this.openMenu(roomId, obj.actions!, native.clientX, native.clientY);
+        this.openMenu(roomId, obj.id, obj.actions!, native.clientX, native.clientY);
       }
     });
     container.on("rightclick", (e) => {
       e.stopPropagation();
       const native = e.nativeEvent as MouseEvent;
-      this.openMenu(roomId, obj.actions!, native.clientX, native.clientY);
+      this.openMenu(roomId, obj.id, obj.actions!, native.clientX, native.clientY);
     });
   }
 
-  private runAction(roomId: string, action: ObjectAction) {
+  private runAction(roomId: string, objectId: string, action: ObjectAction) {
     if (action.kind === "navigate") {
       this.setViewedRoom(action.roomId);
       return;
     }
 
     const current = getCurrentActivity();
-    const op = current?.label === action.label ? stopActivity() : startActivity(action.label);
+    const isSameLabel = current?.label === action.label;
+    // A different object representing the same ongoing activity (e.g. a
+    // second piano elsewhere) shouldn't stop it just by being clicked —
+    // only the object that's actually running it (or an unattributed
+    // source) toggles it off; anything else just looks at it.
+    const isDifferentSource =
+      isSameLabel &&
+      this.currentActivitySource !== null &&
+      (this.currentActivitySource.roomId !== roomId || this.currentActivitySource.objectId !== objectId);
+
+    if (isDifferentSource) {
+      this.setViewedRoom(roomId);
+      return;
+    }
+
+    const op = isSameLabel ? stopActivity() : startActivity(action.label);
     op.then(() => {
+      this.currentActivitySource = isSameLabel ? null : { roomId, objectId };
       this.setViewedRoom(roomId);
       const current = getCurrentActivity();
       this.updateActiveOverlays(current);
@@ -76,7 +98,7 @@ export class House extends SceneRenderer {
     }).catch((err) => console.error("[house] action failed", err));
   }
 
-  private openMenu(roomId: string, actions: ObjectAction[], clientX: number, clientY: number) {
+  private openMenu(roomId: string, objectId: string, actions: ObjectAction[], clientX: number, clientY: number) {
     this.closeMenu();
 
     const menu = document.createElement("div");
@@ -88,7 +110,7 @@ export class House extends SceneRenderer {
       const btn = document.createElement("button");
       btn.textContent = action.kind === "activity" ? action.label : `Go to ${action.roomId}`;
       btn.onclick = () => {
-        this.runAction(roomId, action);
+        this.runAction(roomId, objectId, action);
         this.closeMenu();
       };
       menu.appendChild(btn);

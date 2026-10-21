@@ -8,6 +8,7 @@
 // files: public/objects/<object-id>.png, referenced via `texture` in
 // `below`/`overlay`/`above`.
 import { FloorVariant, TileOverride, WallVariant, floor1, wall1 } from "./tileset";
+import { ACTIVITIES } from "./activities";
 
 export interface SpriteLayer {
   texture?: string; // path to art asset; omitted -> rendered as a placeholder color box
@@ -43,6 +44,111 @@ export interface ObjectDef {
   // now typically just one entry. offsetX/offsetY relative to the object's
   // own (0,0) top-left, same as any other SpriteLayer.
   overlay?: SpriteLayer[];
+}
+
+// --- Object types: what an object looks like + what it does, independent
+// of where it's placed. A room's `objects` list below is a list of
+// *placements* (type + x/y) that get resolved into the full ObjectDef shape
+// above — the same spec->resolved split resolveRooms() already does for
+// rooms themselves (see RoomSpec/RoomDef). Two placements referencing the
+// same type (e.g. a second piano somewhere) are then guaranteed to share
+// identical sprites/actions by construction, not by coincidentally
+// duplicating the same fields twice.
+export interface ObjectTypeDef {
+  name: string;
+  width: number;
+  height: number;
+  below?: SpriteLayer[];
+  overlay?: SpriteLayer[];
+  above?: SpriteLayer[];
+  // Default actions for this type. A placement can override this entirely
+  // (see ObjectPlacement.actions) — needed for things like a staircase,
+  // where every placement has its own destination and there's nothing
+  // sensible to default to.
+  actions?: ObjectAction[];
+}
+
+export const objectTypes = {
+  piano: {
+    name: "Piano",
+    width: 64,
+    height: 64,
+    below: [{ texture: "/objects/piano_base.png" }],
+    above: [{ texture: "/objects/piano_top.png" }],
+    overlay: [{ texture: "/characters/playing_piano.png", offsetX: 32, offsetY: 0 }],
+    actions: [{ kind: "activity", label: ACTIVITIES.practicingPiano.label }],
+  },
+  workLaptop: {
+    name: "Work Laptop",
+    width: 32,
+    height: 32,
+    below: [{ color: 0x5a5a6a }],
+    actions: [{ kind: "activity", label: ACTIVITIES.working.label }],
+  },
+  personalLaptop: {
+    name: "Personal Laptop",
+    width: 32,
+    height: 32,
+    below: [{ color: 0x4a6a5a }],
+    actions: [
+      { kind: "activity", label: ACTIVITIES.programming.label },
+      { kind: "activity", label: ACTIVITIES.administrativeWork.label },
+    ],
+  },
+  pc: {
+    name: "PC",
+    width: 48,
+    height: 32,
+    below: [{ color: 0x4a4a4a }],
+    actions: [
+      { kind: "activity", label: ACTIVITIES.gaming.label },
+      { kind: "activity", label: ACTIVITIES.streaming.label },
+    ],
+  },
+  ddrCabinet: {
+    name: "DDR Cabinet",
+    width: 48,
+    height: 64,
+    below: [{ color: 0x7a2b5a }],
+    actions: [{ kind: "activity", label: ACTIVITIES.ddr.label }],
+  },
+  stairs: {
+    name: "Stairs",
+    width: 32,
+    height: 32,
+    below: [{ color: 0x8a8a8a }],
+    // No default actions — every placement supplies its own destination.
+  },
+} satisfies Record<string, ObjectTypeDef>;
+
+export interface ObjectPlacement {
+  type: keyof typeof objectTypes;
+  id?: string; // disambiguates multiple instances of the same type in one room; defaults to `type`
+  enabled?: boolean;
+  x: number;
+  y: number;
+  actions?: ObjectAction[]; // overrides the type's default actions (e.g. a staircase's per-placement destination)
+}
+
+function resolveObjectPlacement(placement: ObjectPlacement): ObjectDef {
+  // `satisfies` (used on objectTypes, below) preserves each entry's own
+  // narrow literal type for authoring/autocomplete purposes, so the indexed
+  // result is a union of per-type shapes rather than ObjectTypeDef itself —
+  // widen it explicitly, since every entry is already confirmed assignable.
+  const type: ObjectTypeDef = objectTypes[placement.type];
+  return {
+    id: placement.id ?? placement.type,
+    name: type.name,
+    enabled: placement.enabled,
+    x: placement.x,
+    y: placement.y,
+    width: type.width,
+    height: type.height,
+    below: type.below,
+    overlay: type.overlay,
+    above: type.above,
+    actions: placement.actions ?? type.actions,
+  };
 }
 
 // --- Isometric tile math -------------------------------------------------
@@ -85,7 +191,7 @@ interface RoomSpec {
   // positions — e.g. a gap in a wall run for a doorway between rooms.
   floorOverrides?: TileOverride[];
   wallOverrides?: TileOverride[];
-  objects: ObjectDef[];
+  objects: ObjectPlacement[];
   // Placement relative to another room's edge, instead of an absolute pixel
   // offset — stays correct if either room's size changes. Exactly one room
   // should omit this (the anchor, placed at the grid origin).
@@ -96,7 +202,8 @@ interface RoomSpec {
   };
 }
 
-export interface RoomDef extends RoomSpec {
+export interface RoomDef extends Omit<RoomSpec, "objects"> {
+  objects: ObjectDef[]; // resolved from RoomSpec's placements
   x: number;
   y: number;
   width: number;
@@ -155,6 +262,7 @@ function resolveRooms(specs: RoomSpec[]): RoomDef[] {
       level,
       width: (spec.cols + spec.rows) * (TILE_WIDTH / 2),
       height: (spec.cols + spec.rows) * (TILE_HEIGHT / 2),
+      objects: spec.objects.map(resolveObjectPlacement),
     };
   });
 }
@@ -173,59 +281,10 @@ const roomSpecs: RoomSpec[] = [
     // to more than one tile once you see how it looks.
     wallOverrides: [{ u: 0, v: 5, tile: null }],
     objects: [
-      {
-        id: "piano",
-        name: "Piano",
-        x: 48,
-        y: 48,
-        width: 64,
-        height: 64,
-        below: [{ texture: "/objects/piano_base.png" }],
-        above: [{ texture: "/objects/piano_top.png" }],
-        actions: [{ kind: "activity", label: "Practicing Piano" }],
-        overlay: [
-          { texture: "/characters/playing_piano.png", offsetX: 32, offsetY: 0 },
-        ],
-      },
-      {
-        id: "work-laptop",
-        name: "Work Laptop",
-        enabled: false,
-        x: 64,
-        y: 40,
-        width: 32,
-        height: 32,
-        below: [{ color: 0x5a5a6a }],
-        actions: [{ kind: "activity", label: "Working" }],
-      },
-      {
-        id: "personal-laptop",
-        name: "Personal Laptop",
-        enabled: false,
-        x: 80,
-        y: 48,
-        width: 32,
-        height: 32,
-        below: [{ color: 0x4a6a5a }],
-        actions: [
-          { kind: "activity", label: "Programming" },
-          { kind: "activity", label: "Administrative Work" },
-        ],
-      },
-      {
-        id: "pc",
-        name: "PC",
-        enabled: false,
-        x: 24,
-        y: 56,
-        width: 48,
-        height: 32,
-        below: [{ color: 0x4a4a4a }],
-        actions: [
-          { kind: "activity", label: "Gaming" },
-          { kind: "activity", label: "Streaming" },
-        ],
-      },
+      { type: "piano", id: "piano", x: 48, y: 48 },
+      { type: "workLaptop", id: "work-laptop", enabled: false, x: 64, y: 40 },
+      { type: "personalLaptop", id: "personal-laptop", enabled: false, x: 80, y: 48 },
+      { type: "pc", id: "pc", enabled: false, x: 24, y: 56 },
     ],
   },
   {
@@ -236,18 +295,7 @@ const roomSpecs: RoomSpec[] = [
     floor: floor1,
     wall: wall1,
     connectedTo: { roomId: "office", direction: "behindLeft", gapTiles: 1 },
-    objects: [
-      {
-        id: "ddr-cabinet",
-        name: "DDR Cabinet",
-        x: 8,
-        y: 0,
-        width: 48,
-        height: 64,
-        below: [{ color: 0x7a2b5a }],
-        actions: [{ kind: "activity", label: "DDR" }],
-      },
-    ],
+    objects: [{ type: "ddrCabinet", id: "ddr-cabinet", x: 8, y: 0 }],
   },
   {
     id: "living-room",
@@ -262,13 +310,10 @@ const roomSpecs: RoomSpec[] = [
     wallOverrides: [{ u: 5, v: 0, tile: null }],
     objects: [
       {
+        type: "stairs",
         id: "stairs-down",
-        name: "Stairs Down",
         x: 32,
         y: 48,
-        width: 32,
-        height: 32,
-        below: [{ color: 0x8a8a8a }],
         actions: [{ kind: "navigate", roomId: "basement" }],
       },
     ],
@@ -294,13 +339,10 @@ const roomSpecs: RoomSpec[] = [
     ],
     objects: [
       {
+        type: "stairs",
         id: "stairs-up",
-        name: "Stairs Up",
         x: 16,
         y: 16,
-        width: 32,
-        height: 32,
-        below: [{ color: 0x8a8a8a }],
         actions: [{ kind: "navigate", roomId: "bedroom" }],
       },
     ],
@@ -317,13 +359,10 @@ const roomSpecs: RoomSpec[] = [
     // needed — level is a pure vertical offset, not a horizontal relationship).
     objects: [
       {
+        type: "stairs",
         id: "stairs-down",
-        name: "Stairs Down",
         x: -112,
         y: 48,
-        width: 32,
-        height: 32,
-        below: [{ color: 0x8a8a8a }],
         actions: [{ kind: "navigate", roomId: "entrance" }],
       },
     ],
@@ -338,13 +377,10 @@ const roomSpecs: RoomSpec[] = [
     wall: wall1,
     objects: [
       {
+        type: "stairs",
         id: "stairs-up",
-        name: "Stairs Up",
         x: -112,
         y: 48,
-        width: 32,
-        height: 32,
-        below: [{ color: 0x8a8a8a }],
         actions: [{ kind: "navigate", roomId: "living-room" }],
       },
     ],

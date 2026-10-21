@@ -38,7 +38,10 @@ export async function addGoal(activityLabel: string, targetMinutes: number, recu
     existing.targetMinutes += targetMinutes;
     await goalsState.persist(goals);
   } else {
-    await goalsState.persist([...goals, { id: crypto.randomUUID(), activityLabel, targetMinutes, recurrence }]);
+    await goalsState.persist([
+      ...goals,
+      { id: crypto.randomUUID(), activityLabel, targetMinutes, recurrence, createdAt: todayDateString() },
+    ]);
   }
 }
 

@@ -40,6 +40,17 @@ interface StatusResponse {
   todayMinutesByLabel: Record<string, number>;
 }
 
+interface ActivityStat {
+  label: string;
+  color: number;
+  totalMinutesAllTime: number;
+  averageMinutesPerDay: number;
+}
+
+function toCssColor(color: number): string {
+  return `#${color.toString(16).padStart(6, "0")}`;
+}
+
 function formatElapsed(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const hh = Math.floor(totalSeconds / 3600);
@@ -147,6 +158,8 @@ async function main() {
   const activityEl = document.querySelector<HTMLDivElement>("#viewer-activity")!;
   const elapsedEl = document.querySelector<HTMLDivElement>("#viewer-elapsed")!;
   const goalsEl = document.querySelector<HTMLDivElement>("#viewer-goals")!;
+  const statsPieEl = document.querySelector<HTMLDivElement>("#viewer-stats-pie")!;
+  const statsListEl = document.querySelector<HTMLDivElement>("#viewer-stats-list")!;
 
   let startedAtMs: number | null = null;
   let latestActivityLabel: string | null = null;
@@ -155,12 +168,14 @@ async function main() {
 
   async function refreshStatus() {
     try {
-      const [statusRes, goalsRes] = await Promise.all([
+      const [statusRes, goalsRes, statsRes] = await Promise.all([
         fetch(`${STATUS_API_BASE}/api/status`),
         fetch(`${STATUS_API_BASE}/api/goals`),
+        fetch(`${STATUS_API_BASE}/api/stats`),
       ]);
       const data: StatusResponse = await statusRes.json();
       latestGoals = await goalsRes.json();
+      const stats: ActivityStat[] = await statsRes.json();
 
       latestActivityLabel = data.activityLabel;
       latestTodayMinutesByLabel = data.todayMinutesByLabel;
@@ -172,9 +187,49 @@ async function main() {
       viewer.showActivity(data.activityLabel ? { label: data.activityLabel } : null);
 
       renderGoals();
+      renderStats(stats);
     } catch (err) {
       console.error("[viewer] failed to fetch status", err);
       activityEl.textContent = "Couldn't load status";
+    }
+  }
+
+  // Stats are color-coded by activity (same colors the in-app Dashboard
+  // uses) — pushed on a slow cadence by the app itself, so this is just
+  // rendering whatever was last pushed, same as the goals/status above.
+  function renderStats(stats: ActivityStat[]) {
+    const dailyTotal = stats.reduce((sum, s) => sum + s.averageMinutesPerDay, 0);
+    if (dailyTotal > 0) {
+      let cursor = 0;
+      const stops: string[] = [];
+      for (const s of stats) {
+        if (s.averageMinutesPerDay <= 0) continue;
+        const start = (cursor / dailyTotal) * 100;
+        cursor += s.averageMinutesPerDay;
+        const end = (cursor / dailyTotal) * 100;
+        stops.push(`${toCssColor(s.color)} ${start}% ${end}%`);
+      }
+      statsPieEl.style.background = `conic-gradient(${stops.join(", ")})`;
+    } else {
+      statsPieEl.style.background = "rgba(255, 255, 255, 0.1)";
+    }
+
+    statsListEl.textContent = "";
+    for (const s of stats) {
+      if (s.totalMinutesAllTime <= 0) continue;
+      const row = document.createElement("div");
+      row.className = "viewer-stat-row";
+
+      const swatch = document.createElement("span");
+      swatch.className = "viewer-stat-swatch";
+      swatch.style.background = toCssColor(s.color);
+      row.appendChild(swatch);
+
+      const text = document.createElement("span");
+      text.textContent = `${s.label} — ${formatMinutes(s.totalMinutesAllTime)} total`;
+      row.appendChild(text);
+
+      statsListEl.appendChild(row);
     }
   }
 

@@ -12,4 +12,11 @@ export interface Goal {
   recurrence: Recurrence;
   /** "YYYY-MM-DD" dates this recurring goal is skipped on, without deleting the series. */
   skipDates?: string[];
+  /**
+   * "YYYY-MM-DD" the goal was added — bounds how far back history-settling
+   * ever looks for this goal. Optional only because goals created before
+   * this field existed don't have one; treated as "no history before now"
+   * rather than guessed.
+   */
+  createdAt?: string;
 }

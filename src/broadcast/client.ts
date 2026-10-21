@@ -1,6 +1,7 @@
 import { getCurrentActivity } from "../aw/client";
 import { getGoals } from "../goals/state";
 import { getTodayMinutesByLabel } from "../goals/progress";
+import { getActivityStats } from "../dashboard/stats";
 import { getSettings } from "../settings/state";
 
 export interface InboxMessage {
@@ -51,10 +52,21 @@ async function putJson(url: string, body: unknown): Promise<void> {
 }
 
 /** No-ops quietly if broadcasting isn't configured yet; a configured-but-failing push updates `getBroadcastHealth()` instead of disrupting the app. */
-export async function pushStatus(): Promise<void> {
+async function pushWithHealth(path: string, body: unknown, errorContext: string): Promise<void> {
   const { broadcastUrl } = getSettings();
   if (!broadcastUrl) return;
 
+  try {
+    await putJson(`${broadcastUrl}${path}`, body);
+    health = { lastSuccessAt: new Date(), lastError: null };
+  } catch (err) {
+    console.error(`[broadcast] failed to push ${errorContext}`, err);
+    health = { ...health, lastError: (err as Error).message };
+  }
+  notifyHealth();
+}
+
+export async function pushStatus(): Promise<void> {
   const current = getCurrentActivity();
   // Excludes whatever's currently running — the viewer adds that session's
   // live elapsed time itself from `startedAt`, the same way it already
@@ -62,19 +74,11 @@ export async function pushStatus(): Promise<void> {
   // re-pushed on a timer just to keep a running goal's progress from
   // looking stale.
   const todayMinutesByLabel = await getTodayMinutesByLabel();
-
-  try {
-    await putJson(`${broadcastUrl}/api/status`, {
-      activityLabel: current?.label ?? null,
-      startedAt: current?.startedAt.toISOString() ?? null,
-      todayMinutesByLabel,
-    });
-    health = { lastSuccessAt: new Date(), lastError: null };
-  } catch (err) {
-    console.error("[broadcast] failed to push status", err);
-    health = { ...health, lastError: (err as Error).message };
-  }
-  notifyHealth();
+  await pushWithHealth(
+    "/api/status",
+    { activityLabel: current?.label ?? null, startedAt: current?.startedAt.toISOString() ?? null, todayMinutesByLabel },
+    "status",
+  );
 }
 
 /**
@@ -84,17 +88,17 @@ export async function pushStatus(): Promise<void> {
  * activity switch to piggyback a fresh push on.
  */
 export async function pushGoals(): Promise<void> {
-  const { broadcastUrl } = getSettings();
-  if (!broadcastUrl) return;
+  await pushWithHealth("/api/goals", getGoals(), "goals");
+}
 
-  try {
-    await putJson(`${broadcastUrl}/api/goals`, getGoals());
-    health = { lastSuccessAt: new Date(), lastError: null };
-  } catch (err) {
-    console.error("[broadcast] failed to push goals", err);
-    health = { ...health, lastError: (err as Error).message };
-  }
-  notifyHealth();
+/**
+ * Pushes per-activity all-time totals + rolling daily averages — meant to be
+ * called on a slow cadence (startup + hourly, not per activity-change),
+ * since computing it means scanning a much wider AW history than the
+ * today-only queries everything else here uses.
+ */
+export async function pushStats(): Promise<void> {
+  await pushWithHealth("/api/stats", await getActivityStats(), "stats");
 }
 
 export async function fetchMessages(): Promise<InboxMessage[]> {

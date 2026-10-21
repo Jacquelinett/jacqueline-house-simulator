@@ -4,13 +4,17 @@ import { House, preloadRoomAssets } from "./scene/House";
 import { setupGoalsPanel } from "./goals/panel";
 import { setupGoalsManageModal } from "./goals/manageModal";
 import { initGoalsState, onGoalsChange } from "./goals/state";
+import { initGoalHistoryState, settleGoalHistory } from "./goals/history";
 import { setupTodosModal } from "./todos/modal";
 import { initTodosState } from "./todos/state";
 import { setupTimerModal } from "./timer/modal";
 import { setupSettingsModal } from "./settings/modal";
 import { getSettings, initSettingsState, onSettingsChange } from "./settings/state";
 import { setupMessagesModal } from "./broadcast/messagesModal";
-import { pushGoals, pushStatus } from "./broadcast/client";
+import { pushGoals, pushStats, pushStatus } from "./broadcast/client";
+import { setupDashboardModal } from "./dashboard/modal";
+
+const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
 
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
 
@@ -157,11 +161,13 @@ async function setupModals(): Promise<void> {
   const timerModal = setupTimerModal();
   const settingsModal = setupSettingsModal();
   const messagesModal = setupMessagesModal();
+  const dashboardModal = setupDashboardModal();
 
   setupTopButtons([
     { label: "Goals", onclick: goalsModal.open },
     { label: "Todos", onclick: todosModal.open },
     { label: "Timer", onclick: timerModal.open },
+    { label: "Dashboard", onclick: dashboardModal.open },
     { label: "Messages", onclick: messagesModal.open },
     { label: "Settings", onclick: settingsModal.open },
   ]);
@@ -183,7 +189,13 @@ async function main() {
   statusDisplay.start();
 
   await initGoalsState();
+  await initGoalHistoryState();
   await initSettingsState();
+
+  // Backfills any scheduled day between each goal's creation (or last
+  // settle) and yesterday that hasn't been recorded yet — never blocks
+  // startup on this, since it's just gamification stats, not core function.
+  settleGoalHistory().catch((err) => console.error("[goals] failed to settle history", err));
 
   const house = await setupHouse(app, statusDisplay);
   await setupModals();
@@ -199,6 +211,11 @@ async function main() {
   // re-push whenever something that's actually displayed changes.
   pushStatus();
   pushGoals();
+
+  // Stats scan much more AW history than anything else pushed here, so they
+  // get their own slow timer instead of piggybacking on activity changes.
+  pushStats();
+  setInterval(pushStats, STATS_PUSH_INTERVAL_MS);
 }
 
 main().catch((err) => {

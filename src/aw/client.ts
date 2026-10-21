@@ -128,6 +128,24 @@ export async function resumeActivity(): Promise<RunningActivity | null> {
 }
 
 /**
+ * Sums tracked duration for an activity label within [start, end), in
+ * minutes — the general form behind getTodayDurationMinutes (today's one
+ * calendar day) and historical stats (all-time totals, rolling averages).
+ */
+export async function getDurationMinutes(label: string, range: { start: Date; end: Date }): Promise<number> {
+  const events = await client.getEvents(BUCKET_ID, range);
+  const totalSeconds = events
+    .filter((e) => e.data.label === label)
+    .reduce((sum, e) => sum + (e.duration ?? 0), 0);
+  return totalSeconds / 60;
+}
+
+/** "Since you started tracking anything in House Simulator" — epoch is a safe start, since nothing's labeled this way before the app existed. */
+export async function getAllTimeDurationMinutes(label: string): Promise<number> {
+  return getDurationMinutes(label, { start: new Date(0), end: new Date() });
+}
+
+/**
  * Sums today's (local midnight to now) tracked duration for an activity
  * label, in minutes. `excludeRunning` leaves out whatever's currently
  * running — useful for a caller that's going to add that session's live

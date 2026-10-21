@@ -9,6 +9,18 @@ export function localDateString(date: Date): string {
   return `${y}-${m}-${d}`;
 }
 
+/** Inverse of localDateString — parses as a local (not UTC) midnight. */
+export function parseDateString(dateStr: string): Date {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
+export function addDaysToDateString(dateStr: string, days: number): string {
+  const date = parseDateString(dateStr);
+  date.setDate(date.getDate() + days);
+  return localDateString(date);
+}
+
 function isLastOccurrenceOfWeekday(date: Date): boolean {
   const nextWeek = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7);
   return nextWeek.getMonth() !== date.getMonth();
