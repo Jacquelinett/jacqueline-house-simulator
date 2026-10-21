@@ -15,5 +15,5 @@ export const DEFAULT_SETTINGS: Settings = {
   broadcastSecret: "",
   devMode: false,
   scale: 2,
-  theme: "dark",
+  theme: "pink",
 };

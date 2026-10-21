@@ -1,9 +1,28 @@
 /* Theme palette — every color elsewhere in this file should be one of
    these variables, not a literal, so a new theme only ever means adding a
-   block here. `:root` (no attribute yet) mirrors "dark" so there's no
-   flash of unstyled content during the brief window before settings load
-   and main.ts stamps data-theme on <html>. */
+   block here. `:root` (no attribute yet) mirrors whichever theme is
+   DEFAULT_SETTINGS.theme ("pink") so there's no flash of the wrong theme
+   during the brief window before settings load and main.ts stamps
+   data-theme on <html>. */
 :root,
+:root[data-theme="pink"] {
+  --text: #5a3d4a;
+  --text-strong: #3d2430;
+  --error: #c0392b;
+  --success: #2e7d4f;
+  --border: rgba(214, 51, 108, 0.35);
+  --line: rgba(214, 51, 108, 0.22);
+  --line-strong: rgba(214, 51, 108, 0.32);
+  --surface: rgba(214, 51, 108, 0.1);
+  --surface-soft: rgba(214, 51, 108, 0.06);
+  --surface-strong: rgba(214, 51, 108, 0.16);
+  --chrome-bg: rgba(250, 214, 226, 0.85);
+  --backdrop: rgba(219, 112, 147, 0.3);
+  --panel-bg: rgba(250, 214, 226, 0.97);
+  --accent-bg: rgba(214, 51, 108, 0.25);
+  --accent-border: rgba(214, 51, 108, 0.7);
+}
+
 :root[data-theme="dark"] {
   --text: #eee;
   --text-strong: #fff;
@@ -20,24 +39,6 @@
   --panel-bg: rgba(20, 20, 20, 0.95);
   --accent-bg: rgba(120, 200, 255, 0.4);
   --accent-border: rgba(120, 200, 255, 0.8);
-}
-
-:root[data-theme="pink"] {
-  --text: #5a3d4a;
-  --text-strong: #3d2430;
-  --error: #c0392b;
-  --success: #2e7d4f;
-  --border: rgba(214, 51, 108, 0.35);
-  --line: rgba(214, 51, 108, 0.22);
-  --line-strong: rgba(214, 51, 108, 0.32);
-  --surface: rgba(214, 51, 108, 0.1);
-  --surface-soft: rgba(214, 51, 108, 0.06);
-  --surface-strong: rgba(214, 51, 108, 0.16);
-  --chrome-bg: rgba(255, 228, 235, 0.85);
-  --backdrop: rgba(219, 112, 147, 0.3);
-  --panel-bg: rgba(255, 240, 245, 0.97);
-  --accent-bg: rgba(214, 51, 108, 0.25);
-  --accent-border: rgba(214, 51, 108, 0.7);
 }
 
 html,

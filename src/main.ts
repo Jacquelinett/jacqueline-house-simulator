@@ -43,7 +43,11 @@ const roomLabelEl = document.querySelector<HTMLDivElement>("#room-label")!;
 async function setupPixiApp(): Promise<Application> {
   const app = new Application();
   await app.init({
-    background: "#1a1a1a",
+    // Matches DEFAULT_SETTINGS.theme ("pink") — applyTheme() overrides this
+    // once settings load, but this is what's visible for the brief window
+    // before that, so it should already match the default rather than
+    // flashing the other theme's background first.
+    background: "#ffe4ec",
     resolution: window.devicePixelRatio || 1,
     autoDensity: true,
   });
