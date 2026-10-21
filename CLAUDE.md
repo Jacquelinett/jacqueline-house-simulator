@@ -50,6 +50,34 @@ Hard-won correctness rules, each backed by a real bug this session:
 
 AW only measures time per activity **label**, not per goal — so the UI (`src/goals/progress.ts`) groups all of today's scheduled goals by activity label and sums their targets before comparing against tracked time, rather than tracking progress per-goal. Re-adding a goal for the same activity + identical schedule extends the existing one's target instead of creating a duplicate (so "I practiced piano, finished my 1hr goal, then added another 30min" correctly un-finishes it rather than showing two cards).
 
+### Three always-or-on-demand surfaces, split by time range
+
+Status/progress UI is split across three places, deliberately divided by **time range + audience** rather than by data type (goals vs. activity):
+
+- **Jacqueline panel** (`src/goals/panel.ts`, `buildFloatingPanel` title hardcoded to `CURRENT_USER_NAME`) — always visible, not closable, not draggable. Just "who's using the house, what they're doing right now, connection health" — no goal data here anymore.
+- **Dashboard panel** (`src/dashboard/panel.ts`) — always visible, not closable, draggable. **Today-only**: today's goal progress + today's activity breakdown.
+- **Statistic modal** (`src/dashboard/statisticModal.ts`) — opened on demand from the "Statistic" button. **All-time-only**: most completed/skipped activity, all-time activity pie.
+
+This came from Dashboard and Jacqueline originally overlapping (both showing goal info) and Dashboard itself originally being one tabbed panel mixing today-only and all-time data. If a new "status" need comes up, put it in whichever of these three already matches its time range rather than adding a fourth surface or reintroducing tabs — the overlap is what got fixed here. All-time stats are only computed when the Statistic modal is actually opened (`getActivityStats()` scans a much wider AW date range) — unlike Dashboard's today-only queries, which legitimately re-tick every 30s, there's no reason to keep re-scanning for a modal nobody has open.
+
+### Shared panel chrome (`src/ui/draggablePanel.ts`)
+
+`buildFloatingPanel(title, { closable?, draggable?, className? })` is the one implementation behind both Jacqueline and Dashboard's header/body/drag chrome — both default to `true` for `closable`/`draggable`; Jacqueline overrides both to `false` since it always lives in the same corner and is never meant to be dismissed.
+
+Dragging is done via a dedicated grip-icon button in the header (`.floating-panel-drag-handle`), not the whole header — grabbing the title text to move the panel used to fight with just trying to read it. The grip icon itself is drawn with CSS `box-shadow` (a 2×3 dot grid), not a Unicode glyph — a glyph's availability/rendering varies by platform font, a CSS shape doesn't.
+
+### Shared rendering between the desktop app and the viewer
+
+The viewer and the desktop app need to show the *same* sections (Dashboard's Today's Goals/Today's Activity, Jacqueline's current-activity/sync-status) but get their data from fundamentally different sources — the desktop app queries AW directly, the viewer only has whatever was last polled from val.town plus client-side live-elapsed math. The fix was splitting "compute the data" (stays separate per surface) from "render the data to DOM" (shared):
+
+- `src/goals/todayGroups.ts`'s `groupTodaysGoals()` — the one goal-grouping-by-label implementation. Before this, `goals/progress.ts`, `dashboard/panel.ts`, and `viewer-main.ts` each independently re-derived the same grouping.
+- `src/dashboard/render.ts` — `buildDashboardSections()`/`renderGoalList()`/`renderActivityList()`, called by both `dashboard/panel.ts` (fed by `getTodayGoalProgress()`/`getTodayActivityStats()`, local AW queries) and `viewer-main.ts` (fed by polled `/api/status`+`/api/goals` plus `startedAt`-based live elapsed, same trick used elsewhere).
+- `src/status/render.ts` — `renderCurrentActivity()`/`renderSyncStatus()` for the Jacqueline panel's content. `renderSyncStatus`'s `showAw` flag is why the viewer never shows an "AW: Connected"/"Disconnected" line at all — it has no AW access full stop, not merely "currently disconnected."
+
+**Gotcha if you add a new shared-rendering class:** `styles.css` and `viewer-styles.css` are two independent files — there's no import/sharing mechanism between the two Vite builds' CSS. The shared `render.ts` functions emit the same class names in both outputs by convention (`goal-row`, `goal-subrow`, `dashboard-row`, `dashboard-list`, etc.), but each stylesheet still needs its own copy of the CSS rule for that class. Add a class in one `render.ts` file and forget the other stylesheet, and it renders unstyled in whichever build you missed.
+
+One function's scope quietly broadened for this: `getTodayMinutesByLabel()` (`src/goals/progress.ts`) used to only cover activities that had a goal attached (its one caller was the goal-progress calc). It now covers every entry in `ACTIVITIES`, because the viewer's Today's Activity list needed full parity with the desktop Dashboard's — not just whatever happened to have a goal.
+
 ### Shared persistence (`src/lib/`)
 
 `jsonFileStore.ts` (load/save a JSON file under `$APPDATA`) and `persistedState.ts` (in-memory value + change-listener `Set`, backed by a store) are the two pieces every feature's `state.ts`/`store.ts` is built from (goals, todos, settings). Reuse these for any new local-persisted domain rather than copy-pasting a fourth near-identical pair.
@@ -69,7 +97,7 @@ The viewer joins these two itself — computes "is this goal scheduled today," s
 
 **Schema migration gotcha:** val.town's `ensureSchema()` uses `CREATE TABLE IF NOT EXISTS`, which is a no-op once a table already exists in the live val's database — it does **not** retroactively add new columns. Any future change to an existing table's shape needs an explicit `ALTER TABLE ... ADD COLUMN` (wrapped in a `.catch(() => {})`, since it only fails if the column's already there) alongside updating the `CREATE TABLE` statement for fresh deployments. This bit us once already (a renamed column silently never existed on the live table, so every status push was failing with no visible error — see `pushStatus`'s `res.ok` check below).
 
-**Never trust `fetch()` resolving as "it worked."** `fetch()` only rejects on network-level failures — an HTTP error response (e.g. the 500 from the schema bug above) resolves completely normally. `src/broadcast/client.ts` explicitly checks `res.ok` and tracks last-success/last-error, surfaced as a small status line in the goals panel (the one place in the app that's always visible without opening devtools).
+**Never trust `fetch()` resolving as "it worked."** `fetch()` only rejects on network-level failures — an HTTP error response (e.g. the 500 from the schema bug above) resolves completely normally. `src/broadcast/client.ts` explicitly checks `res.ok` and tracks last-success/last-error, surfaced as the "VT: Synced ..." half of the Jacqueline panel's status line (the one place in the app that's always visible without opening devtools) — and, symmetrically, as the viewer's own "VT: Synced ..." line for its last successful *poll* rather than push (see "Shared rendering" below).
 
 ### GitHub Pages deployment (`.github/workflows/deploy-viewer.yml`)
 
