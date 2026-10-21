@@ -1,45 +1,4 @@
-/* Theme palette — every color elsewhere in this file should be one of
-   these variables, not a literal, so a new theme only ever means adding a
-   block here. `:root` (no attribute yet) mirrors whichever theme is
-   DEFAULT_SETTINGS.theme ("pink") so there's no flash of the wrong theme
-   during the brief window before settings load and main.ts stamps
-   data-theme on <html>. */
-:root,
-:root[data-theme="pink"] {
-  --text: #5a3d4a;
-  --text-strong: #3d2430;
-  --error: #c0392b;
-  --success: #2e7d4f;
-  --border: rgba(214, 51, 108, 0.35);
-  --line: rgba(214, 51, 108, 0.22);
-  --line-strong: rgba(214, 51, 108, 0.32);
-  --surface: rgba(214, 51, 108, 0.1);
-  --surface-soft: rgba(214, 51, 108, 0.06);
-  --surface-strong: rgba(214, 51, 108, 0.16);
-  --chrome-bg: rgba(250, 214, 226, 0.85);
-  --backdrop: rgba(219, 112, 147, 0.3);
-  --panel-bg: rgba(250, 214, 226, 0.97);
-  --accent-bg: rgba(214, 51, 108, 0.25);
-  --accent-border: rgba(214, 51, 108, 0.7);
-}
-
-:root[data-theme="dark"] {
-  --text: #eee;
-  --text-strong: #fff;
-  --error: #f88;
-  --success: #8f8;
-  --border: rgba(255, 255, 255, 0.2);
-  --line: rgba(255, 255, 255, 0.15);
-  --line-strong: rgba(255, 255, 255, 0.18);
-  --surface: rgba(255, 255, 255, 0.1);
-  --surface-soft: rgba(255, 255, 255, 0.08);
-  --surface-strong: rgba(255, 255, 255, 0.12);
-  --chrome-bg: rgba(0, 0, 0, 0.55);
-  --backdrop: rgba(0, 0, 0, 0.5);
-  --panel-bg: rgba(20, 20, 20, 0.95);
-  --accent-bg: rgba(120, 200, 255, 0.4);
-  --accent-border: rgba(120, 200, 255, 0.8);
-}
+@import "./shared-chrome.css";
 
 html,
 body {
@@ -50,11 +9,6 @@ body {
   overflow: hidden;
   background: transparent;
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-}
-
-#app {
-  width: 100%;
-  height: 100vh;
 }
 
 /* Only ever holds boot-time connecting/fatal-error text now — once AW
@@ -77,272 +31,6 @@ body {
   display: none;
 }
 
-/* Mirrors the in-world object-click label's look (dark rounded box, small
-   white text) as a HUD element, since it's showing the same kind of info
-   (what room you're looking at) just not anchored to a specific object. */
-#room-label {
-  position: fixed;
-  top: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  font-size: 12px;
-  color: var(--text-strong);
-  background: var(--chrome-bg);
-  padding: 3px 8px;
-  border-radius: 4px;
-  pointer-events: none;
-}
-
-#floor-buttons {
-  position: fixed;
-  bottom: 8px;
-  right: 8px;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-}
-
-#floor-buttons button {
-  width: 40px;
-  height: 32px;
-  background: var(--chrome-bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-#floor-buttons button + button {
-  border-top: none;
-}
-
-#floor-buttons button:hover {
-  background: var(--line);
-}
-
-#floor-buttons button.active {
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-  font-weight: 600;
-}
-
-#top-buttons {
-  position: fixed;
-  top: 8px;
-  right: 8px;
-  z-index: 10;
-  display: flex;
-  gap: 4px;
-}
-
-#top-buttons button {
-  background: var(--chrome-bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 6px 12px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-#top-buttons button:hover {
-  background: var(--line);
-}
-
-.floating-panel.goals-panel {
-  bottom: 8px;
-  left: 8px;
-  top: auto;
-  right: auto;
-  width: auto;
-  min-width: 220px;
-  font-size: 12px;
-}
-
-.floating-panel.dashboard-panel {
-  top: 48px;
-  right: 8px;
-  left: auto;
-}
-
-.floating-panel {
-  display: none;
-  position: fixed;
-  top: 80px;
-  left: 80px;
-  z-index: 15;
-  width: min(420px, 90vw);
-  max-height: 70vh;
-  background: var(--panel-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  flex-direction: column;
-}
-
-.floating-panel.open {
-  display: flex;
-}
-
-.floating-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--line);
-  flex-shrink: 0;
-}
-
-.floating-panel-title {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.floating-panel-header-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-/* Grip icon (a 2x3 dot grid) drawn with box-shadow instead of a font glyph,
-   so it looks the same everywhere instead of depending on which Unicode
-   symbols a given platform's font happens to render. */
-.floating-panel-drag-handle {
-  width: 22px;
-  height: 22px;
-  background: var(--surface);
-  border: none;
-  border-radius: 4px;
-  cursor: move;
-  position: relative;
-  flex-shrink: 0;
-  padding: 0;
-}
-
-.floating-panel-drag-handle::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
-  background: var(--text);
-  box-shadow:
-    -5px -5px 0 0 var(--text),
-    0 -5px 0 0 var(--text),
-    5px -5px 0 0 var(--text),
-    -5px 5px 0 0 var(--text),
-    0 5px 0 0 var(--text),
-    5px 5px 0 0 var(--text);
-  transform: translate(-50%, -50%);
-}
-
-.floating-panel-drag-handle:hover {
-  background: var(--line-strong);
-}
-
-.floating-panel-close {
-  background: transparent;
-  border: none;
-  color: var(--text);
-  font-size: 20px;
-  cursor: pointer;
-  line-height: 1;
-  padding: 0 4px;
-}
-
-.floating-panel-close:hover {
-  color: var(--error);
-}
-
-.floating-panel-body {
-  padding: 12px;
-  overflow-y: auto;
-}
-
-.goals-empty {
-  opacity: 0.6;
-  font-style: italic;
-}
-
-.overview-current {
-  font-size: 12px;
-  margin-bottom: 8px;
-}
-
-.overview-started {
-  opacity: 0.7;
-  margin-top: 2px;
-}
-
-.overview-status-line {
-  font-size: 11px;
-  opacity: 0.6;
-}
-
-.status-ok {
-  color: var(--success);
-}
-
-.status-error {
-  opacity: 1;
-  color: var(--error);
-}
-
-.panel-divider {
-  border-top: 1px solid var(--line);
-  margin: 12px 0;
-}
-
-.goal-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.goal-check {
-  flex-shrink: 0;
-}
-
-.goal-text {
-  flex: 1;
-}
-
-.goal-done .goal-text {
-  text-decoration: line-through;
-  opacity: 0.6;
-}
-
-.goal-subrow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-left: 18px;
-  opacity: 0.75;
-  font-size: 11px;
-}
-
-.goal-subtext {
-  flex: 1;
-}
-
-.modal-overlay {
-  display: none;
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-  background: var(--backdrop);
-  align-items: center;
-  justify-content: center;
-}
-
-.modal-overlay.open {
-  display: flex;
-}
-
 .modal-dialog {
   background: var(--panel-bg);
   border: 1px solid var(--border);
@@ -354,34 +42,11 @@ body {
   color: var(--text);
 }
 
-.modal-dialog-large {
-  width: min(640px, 90vw);
-}
-
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
-}
-
-.modal-header h2 {
-  margin: 0;
-  font-size: 16px;
-}
-
-.modal-close {
-  background: transparent;
-  border: none;
-  color: var(--text);
-  font-size: 18px;
-  cursor: pointer;
-  line-height: 1;
-  padding: 0 4px;
-}
-
-.modal-close:hover {
-  color: var(--error);
 }
 
 #goals-manage-list {
@@ -705,22 +370,6 @@ body {
   font-size: 13px;
 }
 
-.settings-scale-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-}
-
-.settings-scale-row input[type="range"] {
-  flex: 1;
-}
-
-.settings-scale-value {
-  font-variant-numeric: tabular-nums;
-  width: 32px;
-}
-
 #settings-broadcast-section {
   display: flex;
   flex-direction: column;
@@ -806,54 +455,9 @@ body {
   right: 4px;
 }
 
-#dashboard-pie {
-  width: 140px;
-  height: 140px;
-  border-radius: 50%;
-  margin: 0 auto 16px auto;
-  background: var(--surface);
-}
-
-.dashboard-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-}
-
-.dashboard-swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-.panel-section-heading {
-  font-size: 13px;
-  margin: 16px 0 8px 0;
-  opacity: 0.7;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.panel-section-heading:first-child {
-  margin-top: 0;
-}
-
 #dashboard-alltime-goals-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
   font-size: 13px;
 }
-
-/* Shared container for the "Today's Goals" / "Today's Activity" lists —
-   used by both the desktop Dashboard panel and the viewer's equivalent
-   section, via dashboard/render.ts's buildDashboardSections(). */
-.dashboard-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-}
-
