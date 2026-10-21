@@ -320,6 +320,12 @@ body {
   background: rgba(255, 255, 255, 0.15);
 }
 
+#floor-buttons button.active {
+  background: rgba(120, 200, 255, 0.4);
+  border-color: rgba(120, 200, 255, 0.8);
+  font-weight: 600;
+}
+
 #top-buttons {
   position: fixed;
   top: 8px;

@@ -14,8 +14,24 @@ import { setupMessagesModal } from "./broadcast/messagesModal";
 import { pushGoals, pushStats, pushStatus } from "./broadcast/client";
 import { setupDashboardPanel } from "./dashboard/panel";
 import { setupStatisticModal } from "./dashboard/statisticModal";
+import { setupFloorButtons } from "./ui/floorButtons";
+import { Theme } from "./settings/types";
 
 const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
+
+// Pixi's own canvas background (visible wherever no room tile covers, e.g.
+// letterboxing around the isometric scene) isn't CSS — has to be set
+// directly on the renderer, and re-set on every theme change since it's
+// not something a stylesheet can reach.
+const THEME_BACKGROUND: Record<Theme, number> = {
+  dark: 0x1a1a1a,
+  pink: 0xffe4ec,
+};
+
+function applyTheme(app: Application, theme: Theme) {
+  document.documentElement.dataset.theme = theme;
+  app.renderer.background.color = THEME_BACKGROUND[theme];
+}
 
 // Only ever holds the boot-time "connecting…"/fatal-error text now —
 // ongoing AW connection, activity, and elapsed time all live in the Today
@@ -49,23 +65,6 @@ async function setupPixiApp(): Promise<Application> {
   return app;
 }
 
-function setupFloorButtons(house: House) {
-  const container = document.createElement("div");
-  container.id = "floor-buttons";
-  const floors: { label: string; roomId: string }[] = [
-    { label: "2F", roomId: "bedroom" },
-    { label: "1F", roomId: "office" },
-    { label: "B", roomId: "basement" },
-  ];
-  for (const { label, roomId } of floors) {
-    const btn = document.createElement("button");
-    btn.textContent = label;
-    btn.onclick = () => house.goToRoom(roomId);
-    container.appendChild(btn);
-  }
-  document.body.appendChild(container);
-}
-
 /** Top-right row of app-level actions (goals, and whatever else joins it later). */
 function setupTopButtons(buttons: { label: string; onclick: () => void }[]) {
   const container = document.createElement("div");
@@ -81,15 +80,28 @@ function setupTopButtons(buttons: { label: string; onclick: () => void }[]) {
 
 async function setupHouse(app: Application): Promise<House> {
   await preloadRoomAssets();
+
+  // The room-change callback fires synchronously inside the House
+  // constructor (for the initial room), before setupFloorButtons() below
+  // even runs — this placeholder captures that first name so it can be
+  // applied once the real updater exists, instead of the floor buttons
+  // just not reflecting the starting room until the next navigation.
+  let initialRoomName = "";
+  let updateFloorButtons: (name: string) => void = (name) => {
+    initialRoomName = name;
+  };
+
   const house = new House(
     app,
     () => pushStatus(),
     (name) => {
       roomLabelEl.textContent = name;
+      updateFloorButtons(name);
     },
     { devMode: getSettings().devMode, scale: getSettings().scale },
   );
-  setupFloorButtons(house);
+  updateFloorButtons = setupFloorButtons((roomId) => house.goToRoom(roomId));
+  updateFloorButtons(initialRoomName);
 
   onSettingsChange(() => {
     house.setDevMode(getSettings().devMode);
@@ -140,6 +152,9 @@ async function main() {
   await initGoalsState();
   await initGoalHistoryState();
   await initSettingsState();
+
+  applyTheme(app, getSettings().theme);
+  onSettingsChange(() => applyTheme(app, getSettings().theme));
 
   // Backfills any scheduled day between each goal's creation (or last
   // settle) and yesterday that hasn't been recorded yet — never blocks

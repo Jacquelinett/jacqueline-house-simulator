@@ -8,6 +8,7 @@ import { buildFloatingPanel } from "./ui/draggablePanel";
 import { buildDashboardSections, renderActivityList, renderAllTimeActivity, renderGoalList } from "./dashboard/render";
 import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "./status/render";
 import type { ActivityStat } from "./dashboard/stats";
+import { setupFloorButtons } from "./ui/floorButtons";
 
 // Edit this to your own deployed val.town status val before building/hosting
 // this page — it's the only thing that needs to change per-deployment.
@@ -43,23 +44,6 @@ interface StatusResponse {
   activityLabel: string | null;
   startedAt: string | null;
   todayMinutesByLabel: Record<string, number>;
-}
-
-function setupFloorButtons(viewer: HouseViewer) {
-  const container = document.createElement("div");
-  container.id = "floor-buttons";
-  const floors: { label: string; roomId: string }[] = [
-    { label: "2F", roomId: "bedroom" },
-    { label: "1F", roomId: "office" },
-    { label: "B", roomId: "basement" },
-  ];
-  for (const { label, roomId } of floors) {
-    const btn = document.createElement("button");
-    btn.textContent = label;
-    btn.onclick = () => viewer.goToRoom(roomId);
-    container.appendChild(btn);
-  }
-  document.body.appendChild(container);
 }
 
 /** Top-right row of page-level actions — mirrors the desktop app's own setupTopButtons(). */
@@ -135,16 +119,30 @@ async function main() {
   const viewerSettings = loadViewerSettings();
 
   const roomLabelEl = document.querySelector<HTMLDivElement>("#room-label")!;
+
+  // The room-change callback fires synchronously inside the HouseViewer
+  // constructor (for the initial room), before setupFloorButtons() below
+  // even runs — this placeholder captures that first name so it can be
+  // applied once the real updater exists, instead of the floor buttons
+  // just not reflecting the starting room until the next navigation.
+  let initialRoomName = "";
+  let updateFloorButtons: (name: string) => void = (name) => {
+    initialRoomName = name;
+  };
+
   await preloadRoomAssets();
   const viewer = new HouseViewer(
     app,
     (name) => {
       roomLabelEl.textContent = name;
+      updateFloorButtons(name);
     },
     viewerSettings,
   );
 
-  setupFloorButtons(viewer);
+  updateFloorButtons = setupFloorButtons((roomId) => viewer.goToRoom(roomId));
+  updateFloorButtons(initialRoomName);
+
   const settingsModal = setupSettings(viewer, viewerSettings);
 
   // --- Jacqueline panel: same corner panel the desktop app has, minus the

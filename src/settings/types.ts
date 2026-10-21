@@ -1,3 +1,5 @@
+export type Theme = "dark" | "pink";
+
 export interface Settings {
   broadcastUrl: string;
   broadcastSecret: string;
@@ -5,6 +7,7 @@ export interface Settings {
   devMode: boolean;
   /** Scales the whole Pixi scene (art + hit boxes). */
   scale: number;
+  theme: Theme;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -12,4 +15,5 @@ export const DEFAULT_SETTINGS: Settings = {
   broadcastSecret: "",
   devMode: false,
   scale: 2,
+  theme: "dark",
 };

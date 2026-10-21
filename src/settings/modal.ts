@@ -1,5 +1,6 @@
 import { buildModal } from "../ui/modal";
 import { getSettings, updateSettings } from "./state";
+import { Theme } from "./types";
 
 export function setupSettingsModal(): { open: () => void } {
   const modal = buildModal("Settings");
@@ -24,6 +25,29 @@ export function setupSettingsModal(): { open: () => void } {
       await updateSettings({ devMode: devModeCheckbox.checked });
     } catch (err) {
       console.error("[settings] failed to save dev mode", err);
+    }
+  };
+
+  const themeRow = document.createElement("label");
+  themeRow.className = "settings-scale-row";
+  themeRow.textContent = "Theme";
+  const themeSelect = document.createElement("select");
+  for (const [value, label] of [
+    ["dark", "Dark"],
+    ["pink", "Pink"],
+  ] as const) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    themeSelect.appendChild(opt);
+  }
+  themeRow.appendChild(themeSelect);
+  displaySection.appendChild(themeRow);
+  themeSelect.onchange = async () => {
+    try {
+      await updateSettings({ theme: themeSelect.value as Theme });
+    } catch (err) {
+      console.error("[settings] failed to save theme", err);
     }
   };
 
@@ -95,6 +119,7 @@ export function setupSettingsModal(): { open: () => void } {
     urlInput.value = settings.broadcastUrl;
     secretInput.value = settings.broadcastSecret;
     devModeCheckbox.checked = settings.devMode;
+    themeSelect.value = settings.theme;
     scaleInput.value = String(settings.scale);
     scaleValue.textContent = `${settings.scale}×`;
   }
