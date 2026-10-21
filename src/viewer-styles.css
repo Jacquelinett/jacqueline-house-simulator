@@ -40,46 +40,13 @@ body {
   letter-spacing: 0.05em;
 }
 
+.panel-section-heading:first-child {
+  margin-top: 0;
+}
+
 .panel-divider {
   border-top: 1px solid rgba(255, 255, 255, 0.15);
   margin: 12px 0;
-}
-
-#viewer-sync {
-  font-size: 11px;
-  opacity: 0.6;
-}
-
-#viewer-panel {
-  position: fixed;
-  bottom: 16px;
-  left: 16px;
-  z-index: 10;
-  width: min(360px, calc(100vw - 32px));
-  max-height: 80vh;
-  overflow-y: auto;
-  background: rgba(0, 0, 0, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  padding: 16px;
-  box-sizing: border-box;
-}
-
-/* The "I'm currently" line is the container's own bold/16px style; the
-   "Started: ..." line underneath (built by the same shared
-   renderCurrentActivity() the desktop Jacqueline panel uses) gets the
-   dimmer/smaller override instead, same idea as that panel's
-   .overview-started but sized for this bigger sidebar panel. */
-#viewer-status {
-  font-size: 16px;
-  font-weight: 600;
-}
-
-#viewer-status .overview-started {
-  font-size: 13px;
-  font-weight: 400;
-  opacity: 0.7;
-  margin-top: 2px;
 }
 
 .goals-empty {
@@ -87,9 +54,150 @@ body {
   font-style: italic;
 }
 
+/* Jacqueline/Dashboard panel chrome — identical to the desktop app's
+   (styles.css), since both now use the same buildFloatingPanel() from
+   src/ui/draggablePanel.ts. Kept in sync by hand (two separate Vite builds,
+   no shared CSS import mechanism between them). */
+.floating-panel.goals-panel {
+  bottom: 8px;
+  left: 8px;
+  top: auto;
+  right: auto;
+  width: auto;
+  min-width: 220px;
+  font-size: 12px;
+}
+
+.floating-panel.dashboard-panel {
+  top: 48px;
+  right: 8px;
+  left: auto;
+}
+
+.floating-panel {
+  display: none;
+  position: fixed;
+  top: 80px;
+  left: 80px;
+  z-index: 15;
+  width: min(420px, 90vw);
+  max-height: 70vh;
+  background: rgba(20, 20, 20, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: #eee;
+  flex-direction: column;
+}
+
+.floating-panel.open {
+  display: flex;
+}
+
+.floating-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  flex-shrink: 0;
+}
+
+.floating-panel-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.floating-panel-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Grip icon (a 2x3 dot grid) drawn with box-shadow instead of a font glyph,
+   so it looks the same everywhere instead of depending on which Unicode
+   symbols a given platform's font happens to render. */
+.floating-panel-drag-handle {
+  width: 22px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 4px;
+  cursor: move;
+  position: relative;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.floating-panel-drag-handle::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: #eee;
+  box-shadow:
+    -5px -5px 0 0 #eee,
+    0 -5px 0 0 #eee,
+    5px -5px 0 0 #eee,
+    -5px 5px 0 0 #eee,
+    0 5px 0 0 #eee,
+    5px 5px 0 0 #eee;
+  transform: translate(-50%, -50%);
+}
+
+.floating-panel-drag-handle:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.floating-panel-close {
+  background: transparent;
+  border: none;
+  color: #eee;
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.floating-panel-close:hover {
+  color: #f88;
+}
+
+.floating-panel-body {
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.overview-current {
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.overview-started {
+  opacity: 0.7;
+  margin-top: 2px;
+}
+
+.overview-status-line {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.status-ok {
+  color: #8f8;
+}
+
+.status-error {
+  opacity: 1;
+  color: #f88;
+}
+
 /* Shared with the desktop app (styles.css) — same class names, since both
-   now render "Today's Goals"/"Today's Activity" via the same functions in
-   dashboard/render.ts. */
+   now render "Today's Goals"/"Today's Activity" (and the Statistic
+   modal's All-Time Activity) via the same functions in dashboard/render.ts. */
 .goal-row {
   display: flex;
   align-items: center;
@@ -143,53 +251,16 @@ body {
   font-size: 13px;
 }
 
-#viewer-panel h2 {
-  font-size: 14px;
-  margin: 20px 0 8px 0;
-}
-
-#viewer-panel h2:first-child {
-  margin-top: 0;
-}
-
-#viewer-stats {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-#viewer-stats-pie {
-  width: 64px;
-  height: 64px;
+#dashboard-pie {
+  width: 140px;
+  height: 140px;
   border-radius: 50%;
-  flex-shrink: 0;
+  margin: 0 auto 16px auto;
   background: rgba(255, 255, 255, 0.1);
 }
 
-#viewer-stats-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.viewer-stat-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-}
-
-.viewer-stat-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-#viewer-panel input,
-#viewer-panel textarea {
+#viewer-author,
+#viewer-text {
   width: 100%;
   box-sizing: border-box;
   background: rgba(255, 255, 255, 0.08);
@@ -292,8 +363,14 @@ body {
   border-radius: 8px;
   padding: 16px;
   width: min(360px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
   box-sizing: border-box;
   color: #eee;
+}
+
+.modal-dialog-large {
+  width: min(640px, 90vw);
 }
 
 .modal-header {

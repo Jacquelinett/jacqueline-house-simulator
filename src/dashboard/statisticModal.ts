@@ -1,7 +1,6 @@
 import { buildModal } from "../ui/modal";
 import { getActivityStats } from "./stats";
-import { formatMinutes } from "../goals/ui";
-import { toCssColor } from "../scene/activities";
+import { renderAllTimeActivity } from "./render";
 import { getGoalHistory, GoalHistoryEntry } from "../goals/history";
 
 /** All-time standouts — opened on demand from the "Statistic" button, as opposed to the always-visible Dashboard panel's today-only data. */
@@ -27,7 +26,7 @@ export function setupStatisticModal(): { open: () => void } {
   modal.body.appendChild(pie);
 
   const activityList = document.createElement("div");
-  activityList.id = "dashboard-list";
+  activityList.className = "dashboard-list";
   modal.body.appendChild(activityList);
 
   // Aggregated by activity label, not per-goal — "most completed/skipped
@@ -35,6 +34,10 @@ export function setupStatisticModal(): { open: () => void } {
   // recurring goal happens to track it (and skips showing e.g. a
   // Sunday-only goal's history on a random Wednesday, which a flat
   // per-goal list would otherwise do regardless of today's date).
+  //
+  // Goal history never leaves this app (nothing pushes it to val.town), so
+  // this section is desktop-only — the viewer's own Statistic modal only
+  // has the Activity half below.
   function renderGoals() {
     goalsList.textContent = "";
     const history = getGoalHistory();
@@ -92,8 +95,8 @@ export function setupStatisticModal(): { open: () => void } {
       return null;
     });
 
-    activityList.textContent = "";
     if (!stats) {
+      activityList.textContent = "";
       const error = document.createElement("div");
       error.className = "goals-empty";
       error.textContent = "Failed to load stats";
@@ -101,53 +104,7 @@ export function setupStatisticModal(): { open: () => void } {
       return;
     }
 
-    // Capped so this doesn't just grow forever as more activities get added
-    // — already sorted by all-time total, so "top 5" is the 5 biggest.
-    const topStats = stats.slice(0, 5);
-
-    // The pie represents each activity's share of average daily time (how a
-    // typical day splits up), not all-time totals — a newer activity
-    // shouldn't look negligible forever just because it started later.
-    const dailyTotal = topStats.reduce((sum, s) => sum + s.averageMinutesPerDay, 0);
-    if (dailyTotal > 0) {
-      let cursor = 0;
-      const stops: string[] = [];
-      for (const s of topStats) {
-        if (s.averageMinutesPerDay <= 0) continue;
-        const start = (cursor / dailyTotal) * 100;
-        cursor += s.averageMinutesPerDay;
-        const end = (cursor / dailyTotal) * 100;
-        stops.push(`${toCssColor(s.color)} ${start}% ${end}%`);
-      }
-      pie.style.background = `conic-gradient(${stops.join(", ")})`;
-    } else {
-      pie.style.background = "rgba(255, 255, 255, 0.1)";
-    }
-
-    if (topStats.every((s) => s.totalMinutesAllTime === 0)) {
-      const empty = document.createElement("div");
-      empty.className = "goals-empty";
-      empty.textContent = "No tracked time yet";
-      activityList.appendChild(empty);
-      return;
-    }
-
-    for (const s of topStats) {
-      const row = document.createElement("div");
-      row.className = "dashboard-row";
-
-      const swatch = document.createElement("span");
-      swatch.className = "dashboard-swatch";
-      swatch.style.background = toCssColor(s.color);
-      row.appendChild(swatch);
-
-      const text = document.createElement("span");
-      text.className = "dashboard-text";
-      text.textContent = `${s.label} — ${formatMinutes(s.totalMinutesAllTime)} total, ${formatMinutes(s.averageMinutesPerDay)}/day avg`;
-      row.appendChild(text);
-
-      activityList.appendChild(row);
-    }
+    renderAllTimeActivity(pie, activityList, stats);
   }
 
   return {

@@ -1,3 +1,9 @@
+// Hardcoded for now — becomes whichever name the active session belongs to
+// once there's a second household user, instead of a constant. Shared by
+// the desktop Jacqueline panel and the viewer's equivalent panel so the
+// name only needs to change in one place.
+export const CURRENT_USER_NAME = "Jacqueline";
+
 export function formatClock(date: Date): string {
   const hh = date.getHours().toString().padStart(2, "0");
   const mm = date.getMinutes().toString().padStart(2, "0");

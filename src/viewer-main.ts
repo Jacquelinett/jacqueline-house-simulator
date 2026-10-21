@@ -2,9 +2,12 @@ import { Application } from "pixi.js";
 import { HouseViewer, preloadRoomAssets } from "./scene/viewer";
 import { Goal } from "./goals/types";
 import { describeScheduleForToday, groupTodaysGoals } from "./goals/todayGroups";
+import { formatMinutes } from "./goals/ui";
 import { buildModal } from "./ui/modal";
-import { buildDashboardSections, renderActivityList, renderGoalList } from "./dashboard/render";
-import { renderCurrentActivity, renderSyncStatus } from "./status/render";
+import { buildFloatingPanel } from "./ui/draggablePanel";
+import { buildDashboardSections, renderActivityList, renderAllTimeActivity, renderGoalList } from "./dashboard/render";
+import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "./status/render";
+import type { ActivityStat } from "./dashboard/stats";
 
 // Edit this to your own deployed val.town status val before building/hosting
 // this page — it's the only thing that needs to change per-deployment.
@@ -42,23 +45,6 @@ interface StatusResponse {
   todayMinutesByLabel: Record<string, number>;
 }
 
-interface ActivityStat {
-  label: string;
-  color: number;
-  totalMinutesAllTime: number;
-  averageMinutesPerDay: number;
-}
-
-function toCssColor(color: number): string {
-  return `#${color.toString(16).padStart(6, "0")}`;
-}
-
-function formatMinutes(min: number): string {
-  const h = Math.floor(min / 60);
-  const m = Math.round(min % 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
 function setupFloorButtons(viewer: HouseViewer) {
   const container = document.createElement("div");
   container.id = "floor-buttons";
@@ -76,8 +62,21 @@ function setupFloorButtons(viewer: HouseViewer) {
   document.body.appendChild(container);
 }
 
+/** Top-right row of page-level actions — mirrors the desktop app's own setupTopButtons(). */
+function setupTopButtons(buttons: { label: string; onclick: () => void }[]) {
+  const container = document.createElement("div");
+  container.id = "top-buttons";
+  for (const { label, onclick } of buttons) {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.onclick = onclick;
+    container.appendChild(btn);
+  }
+  document.body.appendChild(container);
+}
+
 /** Zoom + dev-mode outlines, independent of the desktop app's own Settings — lets anyone viewing on a bigger/smaller screen adjust to taste (and is handy for testing the viewer itself). */
-function setupSettings(viewer: HouseViewer, settings: ViewerSettings) {
+function setupSettings(viewer: HouseViewer, settings: ViewerSettings): { open: () => void } {
   const modal = buildModal("Settings");
 
   const devModeLabel = document.createElement("label");
@@ -118,13 +117,7 @@ function setupSettings(viewer: HouseViewer, settings: ViewerSettings) {
     saveViewerSettings(settings);
   };
 
-  const topButtons = document.createElement("div");
-  topButtons.id = "top-buttons";
-  const settingsBtn = document.createElement("button");
-  settingsBtn.textContent = "Settings";
-  settingsBtn.onclick = modal.open;
-  topButtons.appendChild(settingsBtn);
-  document.body.appendChild(topButtons);
+  return { open: modal.open };
 }
 
 async function main() {
@@ -152,25 +145,98 @@ async function main() {
   );
 
   setupFloorButtons(viewer);
-  setupSettings(viewer, viewerSettings);
+  const settingsModal = setupSettings(viewer, viewerSettings);
 
-  const statusEl = document.querySelector<HTMLDivElement>("#viewer-status")!;
-  const syncEl = document.querySelector<HTMLDivElement>("#viewer-sync")!;
-  const dashboardEl = document.querySelector<HTMLDivElement>("#viewer-dashboard")!;
-  const { goalList, activityList } = buildDashboardSections(dashboardEl);
-  const statsPieEl = document.querySelector<HTMLDivElement>("#viewer-stats-pie")!;
-  const statsListEl = document.querySelector<HTMLDivElement>("#viewer-stats-list")!;
+  // --- Jacqueline panel: same corner panel the desktop app has, minus the
+  // AW line (no AW access here) and plus "Leave a note" (viewer-only). ---
+  const jacquelinePanel = buildFloatingPanel(CURRENT_USER_NAME, {
+    closable: false,
+    draggable: false,
+    className: "goals-panel",
+  });
+
+  const currentEl = document.createElement("div");
+  currentEl.className = "overview-current";
+  jacquelinePanel.body.appendChild(currentEl);
+
+  const noteHeading = document.createElement("h3");
+  noteHeading.className = "panel-section-heading";
+  noteHeading.textContent = "Leave a note";
+  jacquelinePanel.body.appendChild(noteHeading);
+
+  const authorInput = document.createElement("input");
+  authorInput.id = "viewer-author";
+  authorInput.placeholder = "Your name (optional)";
+  authorInput.maxLength = 50;
+  jacquelinePanel.body.appendChild(authorInput);
+
+  const textInput = document.createElement("textarea");
+  textInput.id = "viewer-text";
+  textInput.rows = 3;
+  textInput.placeholder = "wow you actually lifted today, nice";
+  textInput.maxLength = 500;
+  jacquelinePanel.body.appendChild(textInput);
+
+  const sendBtn = document.createElement("button");
+  sendBtn.id = "viewer-send";
+  sendBtn.textContent = "Send";
+  jacquelinePanel.body.appendChild(sendBtn);
+
+  const sendStatusEl = document.createElement("div");
+  sendStatusEl.id = "viewer-send-status";
+  jacquelinePanel.body.appendChild(sendStatusEl);
+
+  const jacquelineDivider = document.createElement("div");
+  jacquelineDivider.className = "panel-divider";
+  jacquelinePanel.body.appendChild(jacquelineDivider);
+
+  const syncEl = document.createElement("div");
+  syncEl.className = "overview-status-line";
+  jacquelinePanel.body.appendChild(syncEl);
+
+  jacquelinePanel.open();
+
+  // --- Dashboard panel: identical to the desktop app's, same position. ---
+  const dashboardPanel = buildFloatingPanel("Dashboard", { closable: false, className: "dashboard-panel" });
+  const { goalList, activityList } = buildDashboardSections(dashboardPanel.body);
+  dashboardPanel.open();
+
+  // --- Statistic modal: same all-time Activity section the desktop app's
+  // Statistic modal has. No All-Time Goals here — goal completion/skip
+  // history never leaves the desktop app (nothing pushes it to val.town). ---
+  const statisticModal = buildModal("Statistic", { size: "large" });
+  const statisticHeading = document.createElement("h3");
+  statisticHeading.className = "panel-section-heading";
+  statisticHeading.textContent = "All-Time Activity (top 5)";
+  statisticModal.body.appendChild(statisticHeading);
+  const statisticPie = document.createElement("div");
+  statisticPie.id = "dashboard-pie";
+  statisticModal.body.appendChild(statisticPie);
+  const statisticList = document.createElement("div");
+  statisticList.className = "dashboard-list";
+  statisticModal.body.appendChild(statisticList);
+
+  let latestStats: ActivityStat[] = [];
+  setupTopButtons([
+    {
+      label: "Statistic",
+      onclick: () => {
+        statisticModal.open();
+        renderAllTimeActivity(statisticPie, statisticList, latestStats);
+      },
+    },
+    { label: "Settings", onclick: settingsModal.open },
+  ]);
 
   let startedAtMs: number | null = null;
   let latestActivityLabel: string | null = null;
   let latestTodayMinutesByLabel: Record<string, number> = {};
   let latestGoals: Goal[] = [];
-  let latestStats: ActivityStat[] = [];
   let lastSyncAt: Date | null = null;
   let lastSyncError: string | null = null;
 
   function renderCurrent() {
-    renderCurrentActivity(statusEl, {
+    renderCurrentActivity(currentEl, {
       label: latestActivityLabel,
       startedAt: startedAtMs ? new Date(startedAtMs) : null,
     });
@@ -196,11 +262,10 @@ async function main() {
       ]);
       const data: StatusResponse = await statusRes.json();
       latestGoals = await goalsRes.json();
-      const stats: ActivityStat[] = await statsRes.json();
+      latestStats = await statsRes.json();
 
       latestActivityLabel = data.activityLabel;
       latestTodayMinutesByLabel = data.todayMinutesByLabel;
-      latestStats = stats;
       startedAtMs = data.startedAt ? new Date(data.startedAt).getTime() : null;
 
       renderCurrent();
@@ -211,51 +276,11 @@ async function main() {
       renderSync();
       renderGoals();
       renderTodayActivity();
-      renderStats(stats);
     } catch (err) {
       console.error("[viewer] failed to fetch status", err);
-      statusEl.textContent = "Couldn't load status";
+      currentEl.textContent = "Couldn't load status";
       lastSyncError = (err as Error).message;
       renderSync();
-    }
-  }
-
-  // Stats are color-coded by activity (same colors the in-app Dashboard
-  // uses) — pushed on a slow cadence by the app itself, so this is just
-  // rendering whatever was last pushed, same as the goals/status above.
-  function renderStats(stats: ActivityStat[]) {
-    const dailyTotal = stats.reduce((sum, s) => sum + s.averageMinutesPerDay, 0);
-    if (dailyTotal > 0) {
-      let cursor = 0;
-      const stops: string[] = [];
-      for (const s of stats) {
-        if (s.averageMinutesPerDay <= 0) continue;
-        const start = (cursor / dailyTotal) * 100;
-        cursor += s.averageMinutesPerDay;
-        const end = (cursor / dailyTotal) * 100;
-        stops.push(`${toCssColor(s.color)} ${start}% ${end}%`);
-      }
-      statsPieEl.style.background = `conic-gradient(${stops.join(", ")})`;
-    } else {
-      statsPieEl.style.background = "rgba(255, 255, 255, 0.1)";
-    }
-
-    statsListEl.textContent = "";
-    for (const s of stats) {
-      if (s.totalMinutesAllTime <= 0) continue;
-      const row = document.createElement("div");
-      row.className = "viewer-stat-row";
-
-      const swatch = document.createElement("span");
-      swatch.className = "viewer-stat-swatch";
-      swatch.style.background = toCssColor(s.color);
-      row.appendChild(swatch);
-
-      const text = document.createElement("span");
-      text.textContent = `${s.label} — ${formatMinutes(s.totalMinutesAllTime)} total`;
-      row.appendChild(text);
-
-      statsListEl.appendChild(row);
     }
   }
 
@@ -319,11 +344,6 @@ async function main() {
     }
   });
   setInterval(tickElapsed, 1000);
-
-  const authorInput = document.querySelector<HTMLInputElement>("#viewer-author")!;
-  const textInput = document.querySelector<HTMLTextAreaElement>("#viewer-text")!;
-  const sendBtn = document.querySelector<HTMLButtonElement>("#viewer-send")!;
-  const sendStatusEl = document.querySelector<HTMLDivElement>("#viewer-send-status")!;
 
   sendBtn.onclick = async () => {
     const text = textInput.value.trim();

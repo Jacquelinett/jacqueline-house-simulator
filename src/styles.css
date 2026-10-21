@@ -765,12 +765,6 @@ body {
   background: rgba(255, 255, 255, 0.1);
 }
 
-#dashboard-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .dashboard-row {
   display: flex;
   align-items: center;

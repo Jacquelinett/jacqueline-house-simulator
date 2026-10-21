@@ -1,5 +1,6 @@
 import { formatMinutes } from "../goals/ui";
 import { toCssColor } from "../scene/activities";
+import type { ActivityStat } from "./stats";
 
 /**
  * Builds the "Today's Goals" / divider / "Today's Activity" skeleton
@@ -117,5 +118,58 @@ export function renderActivityList(container: HTMLElement, entries: DashboardAct
     row.appendChild(text);
 
     container.appendChild(row);
+  }
+}
+
+/**
+ * All-time activity pie (share of average daily time, not raw totals — a
+ * newer activity shouldn't look negligible forever just because it started
+ * later) + legend, capped to the top 5 so this doesn't just grow forever as
+ * more activities get added. Shared by the desktop Statistic modal and the
+ * viewer's equivalent.
+ */
+export function renderAllTimeActivity(pieEl: HTMLElement, listEl: HTMLElement, stats: ActivityStat[]): void {
+  const topStats = stats.slice(0, 5);
+
+  const dailyTotal = topStats.reduce((sum, s) => sum + s.averageMinutesPerDay, 0);
+  if (dailyTotal > 0) {
+    let cursor = 0;
+    const stops: string[] = [];
+    for (const s of topStats) {
+      if (s.averageMinutesPerDay <= 0) continue;
+      const start = (cursor / dailyTotal) * 100;
+      cursor += s.averageMinutesPerDay;
+      const end = (cursor / dailyTotal) * 100;
+      stops.push(`${toCssColor(s.color)} ${start}% ${end}%`);
+    }
+    pieEl.style.background = `conic-gradient(${stops.join(", ")})`;
+  } else {
+    pieEl.style.background = "rgba(255, 255, 255, 0.1)";
+  }
+
+  listEl.textContent = "";
+  if (topStats.every((s) => s.totalMinutesAllTime === 0)) {
+    const empty = document.createElement("div");
+    empty.className = "goals-empty";
+    empty.textContent = "No tracked time yet";
+    listEl.appendChild(empty);
+    return;
+  }
+
+  for (const s of topStats) {
+    const row = document.createElement("div");
+    row.className = "dashboard-row";
+
+    const swatch = document.createElement("span");
+    swatch.className = "dashboard-swatch";
+    swatch.style.background = toCssColor(s.color);
+    row.appendChild(swatch);
+
+    const text = document.createElement("span");
+    text.className = "dashboard-text";
+    text.textContent = `${s.label} — ${formatMinutes(s.totalMinutesAllTime)} total, ${formatMinutes(s.averageMinutesPerDay)}/day avg`;
+    row.appendChild(text);
+
+    listEl.appendChild(row);
   }
 }

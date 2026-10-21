@@ -2,7 +2,7 @@ import { getBroadcastHealth, onBroadcastHealthChange } from "../broadcast/client
 import { getSettings } from "../settings/state";
 import { buildFloatingPanel } from "../ui/draggablePanel";
 import { getCurrentActivity } from "../aw/client";
-import { renderCurrentActivity, renderSyncStatus } from "../status/render";
+import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "../status/render";
 
 const REFRESH_INTERVAL_MS = 30_000;
 const CURRENT_TICK_MS = 1000;
@@ -11,13 +11,7 @@ const CURRENT_TICK_MS = 1000;
  * Always-visible corner panel: who's using the house, what they're doing
  * right now, and connection health. Goal progress used to live here too but
  * moved to the Dashboard panel — showing it in both places was redundant.
- *
- * Title is hardcoded to the one current user for now; once there's a
- * second household user, this becomes whichever name the active session
- * belongs to instead of a constant.
  */
-const CURRENT_USER_NAME = "Jacqueline";
-
 export function setupGoalsPanel(): void {
   // Same title-bar component the Dashboard uses, just not closable (always
   // visible, no button that opens it) and not draggable (always lives in
