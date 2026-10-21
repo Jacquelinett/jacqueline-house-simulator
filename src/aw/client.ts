@@ -41,19 +41,7 @@ export function getCurrentActivity(): RunningActivity | null {
   return current;
 }
 
-export async function startActivity(label: string): Promise<void> {
-  if (current?.label === label) return;
-  if (current) await stopActivity();
-
-  const timestamp = new Date();
-  await client.heartbeat(BUCKET_ID, PULSETIME_SEC, {
-    timestamp,
-    data: { running: true, label, title: label, app: APP_NAME },
-  });
-
-  const [latest] = await client.getEvents(BUCKET_ID, { limit: 1 });
-  current = { id: latest.id!, label, startedAt: latest.timestamp };
-
+function beginHeartbeating(label: string) {
   heartbeatTimer = setInterval(() => {
     client
       .heartbeat(BUCKET_ID, PULSETIME_SEC, {
@@ -65,17 +53,65 @@ export async function startActivity(label: string): Promise<void> {
 }
 
 /**
- * Picks back up whatever was still running in AW when the app last closed
- * (e.g. force-quit mid-practice never calls stopActivity, so the bucket's
- * latest event is left with `running: true`) — resuming through the same
- * heartbeat path startActivity uses keeps id/startedAt consistent with
- * whatever AW decides (merges into the old event if the gap was short,
- * starts fresh otherwise).
+ * Only one House Simulator activity may be `running: true` in AW at a time —
+ * finalizes whatever's there before anything new starts. Closing the app no
+ * longer auto-stops tracking (e.g. an overnight sleep-tracking entry should
+ * keep accruing time with the app shut), so a *different* activity being
+ * started is the actual point something earlier needs to be closed out, and
+ * it may not be reflected in our in-memory `current` (e.g. after a restart).
+ */
+async function stopWhateverIsRunning(): Promise<void> {
+  if (current) {
+    await stopActivity();
+    return;
+  }
+  const [latest] = await client.getEvents(BUCKET_ID, { limit: 1 });
+  if (!latest?.data.running) return;
+  await client.replaceEvent(BUCKET_ID, {
+    id: latest.id!,
+    timestamp: latest.timestamp,
+    duration: (Date.now() - latest.timestamp.getTime()) / 1000,
+    data: { ...latest.data, running: false },
+  });
+}
+
+export async function startActivity(label: string): Promise<void> {
+  if (current?.label === label) return;
+  await stopWhateverIsRunning();
+
+  const timestamp = new Date();
+  await client.heartbeat(BUCKET_ID, PULSETIME_SEC, {
+    timestamp,
+    data: { running: true, label, title: label, app: APP_NAME },
+  });
+
+  const [latest] = await client.getEvents(BUCKET_ID, { limit: 1 });
+  current = { id: latest.id!, label, startedAt: latest.timestamp };
+  beginHeartbeating(label);
+}
+
+/**
+ * Picks back up whatever's still marked running in AW when the app (re)opens
+ * — e.g. an overnight sleep-tracking session left running on purpose, or just
+ * the app being closed without calling stopActivity. Extends the existing
+ * event's duration to cover the real elapsed time (which goes stale while the
+ * app isn't open to send heartbeats) rather than truncating it or leaving a
+ * second, parallel event running alongside it.
  */
 export async function resumeActivity(): Promise<RunningActivity | null> {
   const [latest] = await client.getEvents(BUCKET_ID, { limit: 1 });
   if (!latest?.data.running) return null;
-  await startActivity(latest.data.label as string);
+
+  const label = latest.data.label as string;
+  await client.replaceEvent(BUCKET_ID, {
+    id: latest.id!,
+    timestamp: latest.timestamp,
+    duration: (Date.now() - latest.timestamp.getTime()) / 1000,
+    data: latest.data,
+  });
+
+  current = { id: latest.id!, label, startedAt: latest.timestamp };
+  beginHeartbeating(label);
   return current;
 }
 

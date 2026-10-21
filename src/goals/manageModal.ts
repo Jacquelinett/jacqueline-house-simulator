@@ -2,6 +2,7 @@ import { addGoal, deleteGoal, getGoals, onGoalsChange, skipGoalToday, unskipGoal
 import { buildActivitySelect, buildMinutesInput, buildRecurrencePicker, describeRecurrence, formatMinutes } from "./ui";
 import { Goal, Recurrence } from "./types";
 import { localDateString } from "./recurrence";
+import { buildModal } from "../ui/modal";
 
 function todayDateString(): string {
   return localDateString(new Date());
@@ -9,31 +10,11 @@ function todayDateString(): string {
 
 /** Full add/edit/delete/skip UI for every goal, regardless of whether it's scheduled today — opened on demand so the always-visible goals panel can stay small and progress-only. */
 export function setupGoalsManageModal(): { open: () => void } {
-  const overlay = document.createElement("div");
-  overlay.id = "goals-manage-overlay";
-  document.body.appendChild(overlay);
-
-  const dialog = document.createElement("div");
-  dialog.id = "goals-manage-dialog";
-  overlay.appendChild(dialog);
-
-  const header = document.createElement("div");
-  header.id = "goals-manage-header";
-  dialog.appendChild(header);
-
-  const title = document.createElement("h2");
-  title.textContent = "Manage Goals";
-  header.appendChild(title);
-
-  const closeBtn = document.createElement("button");
-  closeBtn.id = "goals-manage-close";
-  closeBtn.textContent = "×";
-  closeBtn.onclick = close;
-  header.appendChild(closeBtn);
+  const modal = buildModal("Manage Goals");
 
   const buttonRow = document.createElement("div");
   buttonRow.id = "goals-button-row";
-  dialog.appendChild(buttonRow);
+  modal.body.appendChild(buttonRow);
 
   const quickAddBtn = document.createElement("button");
   quickAddBtn.textContent = "+ Add Goal";
@@ -47,11 +28,11 @@ export function setupGoalsManageModal(): { open: () => void } {
 
   const formSlot = document.createElement("div");
   formSlot.id = "goal-form-slot";
-  dialog.appendChild(formSlot);
+  modal.body.appendChild(formSlot);
 
   const list = document.createElement("div");
   list.id = "goals-manage-list";
-  dialog.appendChild(list);
+  modal.body.appendChild(list);
 
   let openForm: "quick" | "recurring" | null = null;
 
@@ -333,24 +314,19 @@ export function setupGoalsManageModal(): { open: () => void } {
     formSlot.appendChild(form);
   }
 
-  function close() {
-    overlay.classList.remove("open");
+  modal.onClose(() => {
     formSlot.textContent = "";
     openForm = null;
     editingGoalId = null;
     confirmingRemovalId = null;
-  }
-
-  overlay.onclick = (e) => {
-    if (e.target === overlay) close();
-  };
+  });
 
   onGoalsChange(render);
   render();
 
   return {
     open() {
-      overlay.classList.add("open");
+      modal.open();
       render();
     },
   };

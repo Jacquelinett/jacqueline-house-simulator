@@ -240,7 +240,6 @@ const roomSpecs: RoomSpec[] = [
       {
         id: "ddr-cabinet",
         name: "DDR Cabinet",
-        enabled: false,
         x: 8,
         y: 0,
         width: 48,

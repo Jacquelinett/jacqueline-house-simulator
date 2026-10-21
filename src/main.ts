@@ -4,6 +4,10 @@ import { House, preloadRoomAssets } from "./scene/House";
 import { setupGoalsPanel } from "./goals/panel";
 import { setupGoalsManageModal } from "./goals/manageModal";
 import { initGoalsState } from "./goals/state";
+import { setupTodosModal } from "./todos/modal";
+import { initTodosState } from "./todos/state";
+import { setupTimerModal } from "./timer/modal";
+import { setupSettingsModal } from "./settings/modal";
 
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
 
@@ -39,6 +43,19 @@ function setupFloorButtons(house: House) {
     const btn = document.createElement("button");
     btn.textContent = label;
     btn.onclick = () => house.goToRoom(roomId);
+    container.appendChild(btn);
+  }
+  document.body.appendChild(container);
+}
+
+/** Top-right row of app-level actions (goals, and whatever else joins it later). */
+function setupTopButtons(buttons: { label: string; onclick: () => void }[]) {
+  const container = document.createElement("div");
+  container.id = "top-buttons";
+  for (const { label, onclick } of buttons) {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.onclick = onclick;
     container.appendChild(btn);
   }
   document.body.appendChild(container);
@@ -107,9 +124,23 @@ async function main() {
     },
   );
   setupFloorButtons(house);
+
   await initGoalsState();
-  const manageModal = setupGoalsManageModal();
-  await setupGoalsPanel(manageModal.open);
+  const goalsModal = setupGoalsManageModal();
+  await setupGoalsPanel();
+
+  await initTodosState();
+  const todosModal = setupTodosModal();
+
+  const timerModal = setupTimerModal();
+  const settingsModal = setupSettingsModal();
+
+  setupTopButtons([
+    { label: "Goals", onclick: goalsModal.open },
+    { label: "Todos", onclick: todosModal.open },
+    { label: "Timer", onclick: timerModal.open },
+    { label: "Settings", onclick: settingsModal.open },
+  ]);
 
   const resumed = await resumeActivity().catch((err) => {
     console.error("[aw] failed to resume previous activity", err);

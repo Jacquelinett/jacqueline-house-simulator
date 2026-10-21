@@ -6,8 +6,8 @@ import { Goal } from "./types";
 
 const REFRESH_INTERVAL_MS = 30_000;
 
-/** Read-only view of today's goals and progress — all editing lives in the manage modal. */
-export async function setupGoalsPanel(onManage: () => void): Promise<void> {
+/** Read-only view of today's goals and progress — all editing lives in the manage modal (opened from the top-right "Goals" button). */
+export async function setupGoalsPanel(): Promise<void> {
   const panel = document.createElement("div");
   panel.id = "goals-panel";
   document.body.appendChild(panel);
@@ -15,12 +15,6 @@ export async function setupGoalsPanel(onManage: () => void): Promise<void> {
   const list = document.createElement("div");
   list.id = "goals-list";
   panel.appendChild(list);
-
-  const manageBtn = document.createElement("button");
-  manageBtn.id = "goals-manage-button";
-  manageBtn.textContent = "Manage Goals";
-  manageBtn.onclick = onManage;
-  panel.appendChild(manageBtn);
 
   async function render() {
     const today = new Date();

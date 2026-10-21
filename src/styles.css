@@ -29,7 +29,7 @@ body {
 
 #floor-buttons {
   position: fixed;
-  top: 8px;
+  bottom: 8px;
   right: 8px;
   z-index: 10;
   display: flex;
@@ -51,6 +51,29 @@ body {
 }
 
 #floor-buttons button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+#top-buttons {
+  position: fixed;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  gap: 4px;
+}
+
+#top-buttons button {
+  background: rgba(0, 0, 0, 0.55);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#top-buttons button:hover {
   background: rgba(255, 255, 255, 0.15);
 }
 
@@ -108,23 +131,7 @@ body {
   flex: 1;
 }
 
-#goals-manage-button {
-  align-self: flex-start;
-  background: rgba(255, 255, 255, 0.1);
-  color: #eee;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-  padding: 4px 8px;
-  font-size: 11px;
-  cursor: pointer;
-  margin-top: 4px;
-}
-
-#goals-manage-button:hover {
-  background: rgba(255, 255, 255, 0.2);
-}
-
-#goals-manage-overlay {
+.modal-overlay {
   display: none;
   position: fixed;
   inset: 0;
@@ -134,11 +141,11 @@ body {
   justify-content: center;
 }
 
-#goals-manage-overlay.open {
+.modal-overlay.open {
   display: flex;
 }
 
-#goals-manage-dialog {
+.modal-dialog {
   background: rgba(20, 20, 20, 0.95);
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 8px;
@@ -149,19 +156,19 @@ body {
   color: #eee;
 }
 
-#goals-manage-header {
+.modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 8px;
 }
 
-#goals-manage-header h2 {
+.modal-header h2 {
   margin: 0;
   font-size: 16px;
 }
 
-#goals-manage-close {
+.modal-close {
   background: transparent;
   border: none;
   color: #eee;
@@ -171,7 +178,7 @@ body {
   padding: 0 4px;
 }
 
-#goals-manage-close:hover {
+.modal-close:hover {
   color: #f88;
 }
 
@@ -373,4 +380,103 @@ body {
 
 .object-menu button:hover {
   background: rgba(255, 255, 255, 0.12);
+}
+
+#todo-add-form {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+#todo-add-form input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+#todo-add-form button {
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#todo-add-form button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+#todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.todo-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.todo-check {
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.todo-text {
+  flex: 1;
+}
+
+.todo-done .todo-text {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+#timer-duration-input {
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 13px;
+  width: 60px;
+}
+
+#timer-display {
+  font-size: 48px;
+  font-weight: 600;
+  text-align: center;
+  margin: 12px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+#timer-display.timer-done {
+  color: #f88;
+}
+
+#timer-controls {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
+#timer-controls button {
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#timer-controls button:hover {
+  background: rgba(255, 255, 255, 0.2);
 }
