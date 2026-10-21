@@ -1,64 +1,77 @@
-import { Application, Graphics, Text } from "pixi.js";
-import {
-  ensureStopwatchBucket,
-  getCurrentActivity,
-  getServerInfo,
-  startActivity,
-  stopActivity,
-} from "./aw/client";
-import { hotspots } from "./scene/hotspots";
+import { Application } from "pixi.js";
+import { ensureStopwatchBucket, getServerInfo, RunningActivity } from "./aw/client";
+import { House, preloadRoomAssets } from "./scene/House";
 
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
 
-function setStatus(text: string) {
-  statusEl.textContent = text;
+let connectionStatus = "connecting to AW…";
+let roomName = "";
+let activity: RunningActivity | null = null;
+
+function formatClock(date: Date): string {
+  const hh = date.getHours().toString().padStart(2, "0");
+  const mm = date.getMinutes().toString().padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const hh = Math.floor(totalSeconds / 3600);
+  const mm = Math.floor((totalSeconds % 3600) / 60)
+    .toString()
+    .padStart(hh > 0 ? 2 : 1, "0");
+  const ss = (totalSeconds % 60).toString().padStart(2, "0");
+  return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+function renderStatus() {
+  const lines = [connectionStatus, roomName];
+  if (activity) {
+    const elapsed = formatElapsed(Date.now() - activity.startedAt.getTime());
+    lines.push(
+      `tracking: ${activity.label}`,
+      `started: ${formatClock(activity.startedAt)}`,
+      `elapsed time: ${elapsed}`,
+    );
+  } else {
+    lines.push("idle");
+  }
+  statusEl.textContent = lines.join("\n");
 }
 
 async function main() {
   const app = new Application();
-  await app.init({ background: "#2b2b2b", resizeTo: window });
+  await app.init({ background: "#1a1a1a", resizeTo: window });
   document.querySelector<HTMLDivElement>("#app")!.appendChild(app.canvas);
 
   try {
     const info = await getServerInfo();
     await ensureStopwatchBucket();
-    setStatus(`connected: ${info.hostname} (aw-server ${info.version})`);
+    connectionStatus = `connected: ${info.hostname} (aw-server ${info.version})`;
   } catch (err) {
-    setStatus(`AW connection failed: ${(err as Error).message}`);
+    statusEl.textContent = `AW connection failed: ${(err as Error).message}`;
     console.error(err);
     return;
   }
 
-  for (const spot of hotspots) {
-    const box = new Graphics()
-      .rect(0, 0, spot.width, spot.height)
-      .fill(spot.color);
-    box.position.set(spot.x, spot.y);
-    box.eventMode = "static";
-    box.cursor = "pointer";
+  renderStatus();
+  setInterval(renderStatus, 1000);
 
-    const label = new Text({
-      text: spot.label,
-      style: { fill: "#ffffff", fontSize: 14 },
-    });
-    label.position.set(spot.x + 8, spot.y + spot.height + 4);
-
-    box.on("pointertap", async () => {
-      const current = getCurrentActivity();
-      if (current?.label === spot.label) {
-        await stopActivity();
-        setStatus(`stopped: ${spot.label}`);
-      } else {
-        await startActivity(spot.label);
-        setStatus(`tracking: ${spot.label}`);
-      }
-    });
-
-    app.stage.addChild(box, label);
-  }
+  await preloadRoomAssets();
+  new House(
+    app,
+    (current) => {
+      activity = current;
+      renderStatus();
+    },
+    (name) => {
+      roomName = name;
+      renderStatus();
+    },
+  );
 }
 
 main().catch((err) => {
-  setStatus(`fatal error: ${(err as Error).message}`);
+  statusEl.textContent = `fatal error: ${(err as Error).message}`;
   console.error(err);
 });
