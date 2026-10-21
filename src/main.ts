@@ -15,18 +15,10 @@ import { pushGoals, pushStats, pushStatus } from "./broadcast/client";
 import { setupDashboardPanel } from "./dashboard/panel";
 import { setupStatisticModal } from "./dashboard/statisticModal";
 import { setupFloorButtons } from "./ui/floorButtons";
-import { Theme } from "./settings/types";
+import { DEFAULT_SETTINGS, Theme } from "./settings/types";
+import { THEME_BACKGROUND } from "./settings/themes";
 
 const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
-
-// Pixi's own canvas background (visible wherever no room tile covers, e.g.
-// letterboxing around the isometric scene) isn't CSS — has to be set
-// directly on the renderer, and re-set on every theme change since it's
-// not something a stylesheet can reach.
-const THEME_BACKGROUND: Record<Theme, number> = {
-  dark: 0x1a1a1a,
-  pink: 0xffe4ec,
-};
 
 function applyTheme(app: Application, theme: Theme) {
   document.documentElement.dataset.theme = theme;
@@ -43,11 +35,11 @@ const roomLabelEl = document.querySelector<HTMLDivElement>("#room-label")!;
 async function setupPixiApp(): Promise<Application> {
   const app = new Application();
   await app.init({
-    // Matches DEFAULT_SETTINGS.theme ("pink") — applyTheme() overrides this
-    // once settings load, but this is what's visible for the brief window
-    // before that, so it should already match the default rather than
-    // flashing the other theme's background first.
-    background: "#ffe4ec",
+    // applyTheme() overrides this once settings load, but this is what's
+    // visible for the brief window before that, so it should already
+    // match DEFAULT_SETTINGS.theme rather than flashing some other
+    // theme's background first.
+    background: THEME_BACKGROUND[DEFAULT_SETTINGS.theme],
     resolution: window.devicePixelRatio || 1,
     autoDensity: true,
   });
