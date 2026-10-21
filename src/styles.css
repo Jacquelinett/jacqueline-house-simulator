@@ -654,9 +654,42 @@ body {
   letter-spacing: 0.05em;
 }
 
-#dashboard-goals-list {
+.dashboard-section-heading:first-child {
+  margin-top: 0;
+}
+
+#dashboard-today-goals-list,
+#dashboard-alltime-goals-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
   font-size: 13px;
+}
+
+#dashboard-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+#dashboard-tabs button {
+  background: transparent;
+  color: #eee;
+  border: none;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  opacity: 0.6;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+#dashboard-tabs button:hover {
+  opacity: 0.85;
+}
+
+#dashboard-tabs button.active {
+  opacity: 1;
+  border-bottom-color: #eee;
 }

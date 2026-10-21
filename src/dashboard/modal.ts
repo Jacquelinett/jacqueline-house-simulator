@@ -1,50 +1,72 @@
 import { buildModal } from "../ui/modal";
 import { getActivityStats } from "./stats";
-import { formatMinutes, describeRecurrence } from "../goals/ui";
+import { formatMinutes } from "../goals/ui";
 import { toCssColor } from "../scene/activities";
-import { getGoals } from "../goals/state";
-import { historyForGoal } from "../goals/history";
+import { getTodayGoalProgress } from "../goals/progress";
+import { getGoalHistory, GoalHistoryEntry } from "../goals/history";
+
+type Tab = "goals" | "activity";
 
 export function setupDashboardModal(): { open: () => void } {
   const modal = buildModal("Dashboard", { size: "large" });
 
+  const tabRow = document.createElement("div");
+  tabRow.id = "dashboard-tabs";
+  modal.body.appendChild(tabRow);
+
+  const goalsTabBtn = document.createElement("button");
+  goalsTabBtn.textContent = "Goals";
+  tabRow.appendChild(goalsTabBtn);
+
+  const activityTabBtn = document.createElement("button");
+  activityTabBtn.textContent = "Activity";
+  tabRow.appendChild(activityTabBtn);
+
+  const goalsPane = document.createElement("div");
+  goalsPane.id = "dashboard-goals-pane";
+  modal.body.appendChild(goalsPane);
+
+  const activityPane = document.createElement("div");
+  activityPane.id = "dashboard-activity-pane";
+  modal.body.appendChild(activityPane);
+
+  function showTab(tab: Tab) {
+    goalsPane.style.display = tab === "goals" ? "" : "none";
+    activityPane.style.display = tab === "activity" ? "" : "none";
+    goalsTabBtn.classList.toggle("active", tab === "goals");
+    activityTabBtn.classList.toggle("active", tab === "activity");
+  }
+  goalsTabBtn.onclick = () => showTab("goals");
+  activityTabBtn.onclick = () => showTab("activity");
+  showTab("goals");
+
+  // --- Activity pane: color-coded all-time totals + daily-average pie ---
   const pie = document.createElement("div");
   pie.id = "dashboard-pie";
-  modal.body.appendChild(pie);
+  activityPane.appendChild(pie);
 
-  const list = document.createElement("div");
-  list.id = "dashboard-list";
-  modal.body.appendChild(list);
+  const activityList = document.createElement("div");
+  activityList.id = "dashboard-list";
+  activityPane.appendChild(activityList);
 
-  const goalsHeading = document.createElement("h3");
-  goalsHeading.className = "dashboard-section-heading";
-  goalsHeading.textContent = "Recurring Goals";
-  modal.body.appendChild(goalsHeading);
-
-  const goalsList = document.createElement("div");
-  goalsList.id = "dashboard-goals-list";
-  modal.body.appendChild(goalsList);
-
-  async function render() {
-    renderRecurringGoals(); // synchronous, local data — independent of the AW stats fetch below
-
-    list.textContent = "";
+  async function renderActivityPane() {
+    activityList.textContent = "";
     const loading = document.createElement("div");
     loading.className = "goals-empty";
     loading.textContent = "Loading...";
-    list.appendChild(loading);
+    activityList.appendChild(loading);
 
     const stats = await getActivityStats().catch((err) => {
       console.error("[dashboard] failed to load stats", err);
       return null;
     });
 
-    list.textContent = "";
+    activityList.textContent = "";
     if (!stats) {
       const error = document.createElement("div");
       error.className = "goals-empty";
       error.textContent = "Failed to load stats";
-      list.appendChild(error);
+      activityList.appendChild(error);
       return;
     }
 
@@ -71,7 +93,7 @@ export function setupDashboardModal(): { open: () => void } {
       const empty = document.createElement("div");
       empty.className = "goals-empty";
       empty.textContent = "No tracked time yet";
-      list.appendChild(empty);
+      activityList.appendChild(empty);
       return;
     }
 
@@ -89,41 +111,105 @@ export function setupDashboardModal(): { open: () => void } {
       text.textContent = `${s.label} — ${formatMinutes(s.totalMinutesAllTime)} total, ${formatMinutes(s.averageMinutesPerDay)}/day avg`;
       row.appendChild(text);
 
-      list.appendChild(row);
+      activityList.appendChild(row);
     }
   }
 
-  function renderRecurringGoals() {
-    goalsList.textContent = "";
-    const recurringGoals = getGoals().filter((g) => g.recurrence.type !== "once");
+  // --- Goals pane: what's scheduled today, plus all-time standouts ---
+  const todayHeading = document.createElement("h3");
+  todayHeading.className = "dashboard-section-heading";
+  todayHeading.textContent = "Today's Goals";
+  goalsPane.appendChild(todayHeading);
 
-    if (recurringGoals.length === 0) {
+  const todayList = document.createElement("div");
+  todayList.id = "dashboard-today-goals-list";
+  goalsPane.appendChild(todayList);
+
+  const allTimeHeading = document.createElement("h3");
+  allTimeHeading.className = "dashboard-section-heading";
+  allTimeHeading.textContent = "All-Time Goals";
+  goalsPane.appendChild(allTimeHeading);
+
+  const allTimeList = document.createElement("div");
+  allTimeList.id = "dashboard-alltime-goals-list";
+  goalsPane.appendChild(allTimeList);
+
+  async function renderTodayGoals() {
+    todayList.textContent = "";
+    const progress = await getTodayGoalProgress();
+
+    if (progress.length === 0) {
       const empty = document.createElement("div");
       empty.className = "goals-empty";
-      empty.textContent = "No recurring goals yet";
-      goalsList.appendChild(empty);
+      empty.textContent = "No goals today";
+      todayList.appendChild(empty);
       return;
     }
 
-    for (const goal of recurringGoals) {
-      const entries = historyForGoal(goal.id);
-      const completedCount = entries.filter((e) => e.outcome === "completed").length;
-      const skippedCount = entries.filter((e) => e.outcome === "skipped").length;
-      const missedCount = entries.filter((e) => e.outcome === "missed").length;
-
+    for (const { activityLabel, minutes, targetMinutes, done } of progress) {
       const row = document.createElement("div");
       row.className = "dashboard-row";
-      row.textContent = entries.length > 0
-        ? `${goal.activityLabel} — ${describeRecurrence(goal.recurrence)} — ✓${completedCount} ⊘${skippedCount} ✗${missedCount}`
-        : `${goal.activityLabel} — ${describeRecurrence(goal.recurrence)} — no history yet`;
-      goalsList.appendChild(row);
+      row.textContent = `${done ? "☑" : "☐"} ${activityLabel} — ${formatMinutes(minutes)} / ${formatMinutes(targetMinutes)}`;
+      todayList.appendChild(row);
     }
+  }
+
+  // Aggregated by activity label, not per-goal — "most completed/skipped
+  // activity" is about the activity overall, not whichever specific
+  // recurring goal happens to track it (and skips showing e.g. a
+  // Sunday-only goal's history on a random Wednesday, which a flat
+  // per-goal list would otherwise do regardless of today's date).
+  function renderAllTimeGoals() {
+    allTimeList.textContent = "";
+    const history = getGoalHistory();
+
+    if (history.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "goals-empty";
+      empty.textContent = "No history yet";
+      allTimeList.appendChild(empty);
+      return;
+    }
+
+    const byLabel = new Map<string, Record<GoalHistoryEntry["outcome"], number>>();
+    for (const entry of history) {
+      const counts = byLabel.get(entry.activityLabel) ?? { completed: 0, skipped: 0, missed: 0 };
+      counts[entry.outcome]++;
+      byLabel.set(entry.activityLabel, counts);
+    }
+
+    let mostCompleted: { label: string; count: number } | null = null;
+    let mostSkipped: { label: string; count: number } | null = null;
+    for (const [label, counts] of byLabel) {
+      if (counts.completed > 0 && (!mostCompleted || counts.completed > mostCompleted.count)) {
+        mostCompleted = { label, count: counts.completed };
+      }
+      if (counts.skipped > 0 && (!mostSkipped || counts.skipped > mostSkipped.count)) {
+        mostSkipped = { label, count: counts.skipped };
+      }
+    }
+
+    const completedRow = document.createElement("div");
+    completedRow.className = "dashboard-row";
+    completedRow.textContent = mostCompleted
+      ? `Most completed: ${mostCompleted.label} (${mostCompleted.count}×)`
+      : "Most completed: —";
+    allTimeList.appendChild(completedRow);
+
+    const skippedRow = document.createElement("div");
+    skippedRow.className = "dashboard-row";
+    skippedRow.textContent = mostSkipped
+      ? `Most skipped: ${mostSkipped.label} (${mostSkipped.count}×)`
+      : "Most skipped: —";
+    allTimeList.appendChild(skippedRow);
   }
 
   return {
     open() {
       modal.open();
-      render();
+      renderActivityPane();
+      renderTodayGoals();
+      renderAllTimeGoals();
     },
   };
 }
