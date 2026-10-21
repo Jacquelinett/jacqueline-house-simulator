@@ -70,6 +70,10 @@ export function setupGoalsPanel(): void {
     }
   }
 
+  const divider = document.createElement("div");
+  divider.className = "panel-divider";
+  panel.body.appendChild(divider);
+
   // AW connection only gets checked once at startup (if it fails, the app
   // bails before this panel ever exists), so this is always "Connected"
   // once shown — still worth labeling explicitly to make clear AW being

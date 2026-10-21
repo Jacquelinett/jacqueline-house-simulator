@@ -1,7 +1,8 @@
 import { Application } from "pixi.js";
 import { HouseViewer, preloadRoomAssets } from "./scene/viewer";
 import { isScheduledOn, localDateString } from "./goals/recurrence";
-import { Goal } from "./goals/types";
+import { Goal, Recurrence } from "./goals/types";
+import { describeRecurrence } from "./goals/ui";
 import { buildModal } from "./ui/modal";
 
 // Edit this to your own deployed val.town status val before building/hosting
@@ -79,6 +80,14 @@ function formatMinutes(min: number): string {
   const h = Math.floor(min / 60);
   const m = Math.round(min % 60);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// This panel only ever shows goals scheduled for today, so a one-off goal's
+// literal date is always just... today — showing it plainly is clearer than
+// the generic "once (2026-10-21)" phrasing describeRecurrence() uses
+// elsewhere (mirrors the same helper in goals/panel.ts and dashboard/panel.ts).
+function describeScheduleForToday(recurrence: Recurrence): string {
+  return recurrence.type === "once" ? "Today" : describeRecurrence(recurrence);
 }
 
 function setupFloorButtons(viewer: HouseViewer) {
@@ -180,6 +189,7 @@ async function main() {
   const elapsedEl = document.querySelector<HTMLDivElement>("#viewer-elapsed")!;
   const syncEl = document.querySelector<HTMLDivElement>("#viewer-sync")!;
   const goalsEl = document.querySelector<HTMLDivElement>("#viewer-goals")!;
+  const todayActivityEl = document.querySelector<HTMLDivElement>("#viewer-today-activity")!;
   const statsPieEl = document.querySelector<HTMLDivElement>("#viewer-stats-pie")!;
   const statsListEl = document.querySelector<HTMLDivElement>("#viewer-stats-list")!;
 
@@ -187,6 +197,7 @@ async function main() {
   let latestActivityLabel: string | null = null;
   let latestTodayMinutesByLabel: Record<string, number> = {};
   let latestGoals: Goal[] = [];
+  let latestStats: ActivityStat[] = [];
   let lastSyncAt: Date | null = null;
 
   // "Synced" here means "last successfully fetched data from val.town" —
@@ -209,6 +220,7 @@ async function main() {
 
       latestActivityLabel = data.activityLabel;
       latestTodayMinutesByLabel = data.todayMinutesByLabel;
+      latestStats = stats;
       startedAtMs = data.startedAt ? new Date(data.startedAt).getTime() : null;
 
       activityEl.textContent = `I'm currently: ${data.activityLabel ?? "idle"}`;
@@ -217,6 +229,7 @@ async function main() {
       lastSyncAt = new Date();
       renderSync();
       renderGoals();
+      renderTodayActivity();
       renderStats(stats);
     } catch (err) {
       console.error("[viewer] failed to fetch status", err);
@@ -283,6 +296,14 @@ async function main() {
     }
 
     goalsEl.textContent = "";
+    if (groups.size === 0) {
+      const empty = document.createElement("div");
+      empty.className = "goals-empty";
+      empty.textContent = "No goals today";
+      goalsEl.appendChild(empty);
+      return;
+    }
+
     for (const [activityLabel, group] of groups) {
       const targetMinutes = group.reduce((sum, g) => sum + g.targetMinutes, 0);
       const baselineMinutes = latestTodayMinutesByLabel[activityLabel] ?? 0;
@@ -294,6 +315,55 @@ async function main() {
       row.className = "viewer-goal-row" + (done ? " viewer-goal-done" : "");
       row.textContent = `${done ? "☑" : "☐"} ${activityLabel} — ${formatMinutes(liveMinutes)} / ${formatMinutes(targetMinutes)}`;
       goalsEl.appendChild(row);
+
+      // group is already exactly today's contributing goals for this label
+      // (filtered + grouped above), so no need to re-derive it from scratch.
+      for (const goal of group) {
+        const subRow = document.createElement("div");
+        subRow.className = "viewer-goal-subrow";
+        subRow.textContent = `${describeScheduleForToday(goal.recurrence)} — ${formatMinutes(goal.targetMinutes)}`;
+        goalsEl.appendChild(subRow);
+      }
+    }
+  }
+
+  // Mirrors the desktop Dashboard's "Today Activity" list — same
+  // todayMinutesByLabel the goal progress above uses, just not filtered
+  // down to activities with a goal attached.
+  function renderTodayActivity() {
+    todayActivityEl.textContent = "";
+    const colorByLabel = new Map(latestStats.map((s) => [s.label, s.color] as const));
+    const entries = Object.entries(latestTodayMinutesByLabel)
+      .map(([label, minutes]) => ({
+        label,
+        color: colorByLabel.get(label) ?? 0xffffff,
+        minutes: minutes + (label === latestActivityLabel && startedAtMs ? (Date.now() - startedAtMs) / 60000 : 0),
+      }))
+      .filter((e) => e.minutes > 0)
+      .sort((a, b) => b.minutes - a.minutes);
+
+    if (entries.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "goals-empty";
+      empty.textContent = "Nothing tracked today";
+      todayActivityEl.appendChild(empty);
+      return;
+    }
+
+    for (const e of entries) {
+      const row = document.createElement("div");
+      row.className = "viewer-stat-row";
+
+      const swatch = document.createElement("span");
+      swatch.className = "viewer-stat-swatch";
+      swatch.style.background = toCssColor(e.color);
+      row.appendChild(swatch);
+
+      const text = document.createElement("span");
+      text.textContent = `${e.label} — ${formatMinutes(e.minutes)}`;
+      row.appendChild(text);
+
+      todayActivityEl.appendChild(row);
     }
   }
 
@@ -302,6 +372,7 @@ async function main() {
       ? `Started: ${formatClock(new Date(startedAtMs))} | ${formatElapsed(Date.now() - startedAtMs)}`
       : "";
     renderGoals();
+    renderTodayActivity();
     renderSync();
   }
 

@@ -40,10 +40,14 @@ body {
   letter-spacing: 0.05em;
 }
 
+.panel-divider {
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  margin: 12px 0;
+}
+
 #viewer-sync {
   font-size: 11px;
   opacity: 0.6;
-  margin-top: 6px;
 }
 
 #viewer-panel {
@@ -52,15 +56,13 @@ body {
   left: 16px;
   z-index: 10;
   width: min(360px, calc(100vw - 32px));
+  max-height: 80vh;
+  overflow-y: auto;
   background: rgba(0, 0, 0, 0.65);
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 8px;
   padding: 16px;
   box-sizing: border-box;
-}
-
-#viewer-status {
-  margin-bottom: 16px;
 }
 
 #viewer-activity {
@@ -84,9 +86,24 @@ body {
   opacity: 0.6;
 }
 
+.goals-empty {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.viewer-goal-subrow {
+  padding-left: 18px;
+  opacity: 0.75;
+  font-size: 11px;
+}
+
 #viewer-panel h2 {
   font-size: 14px;
-  margin: 0 0 8px 0;
+  margin: 20px 0 8px 0;
+}
+
+#viewer-panel h2:first-child {
+  margin-top: 0;
 }
 
 #viewer-stats {

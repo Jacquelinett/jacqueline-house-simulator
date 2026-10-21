@@ -2,6 +2,7 @@ import { getTodayDurationMinutes } from "../aw/client";
 import { isScheduledOn } from "./recurrence";
 import { getGoals, todayDateString } from "./state";
 import { Goal } from "./types";
+import { ACTIVITIES } from "../scene/activities";
 
 export interface GoalProgress {
   activityLabel: string;
@@ -43,19 +44,18 @@ export async function getTodayGoalProgress(): Promise<GoalProgress[]> {
 }
 
 /**
- * Minutes tracked today per distinct activity label across every goal
- * (regardless of whether that goal is scheduled today — a remote viewer
- * gets the raw goal list separately and does its own scheduling/grouping,
- * so this only needs to answer "how much of X have I done today"). Excludes
- * whatever's currently running, since a remote viewer adds that session's
- * live elapsed time itself from `startedAt` — same as its "Running for X"
- * clock — instead of needing a fresh push just to avoid looking stale.
+ * Minutes tracked today per every known activity — not just ones with a
+ * goal attached, since the viewer's own "Today Activity" breakdown needs
+ * the same full list the desktop Dashboard shows, not just whatever
+ * happens to have a goal right now. Excludes whatever's currently running,
+ * since a remote viewer adds that session's live elapsed time itself from
+ * `startedAt` — same as its "Running for X" clock — instead of needing a
+ * fresh push just to avoid looking stale.
  */
 export async function getTodayMinutesByLabel(): Promise<Record<string, number>> {
-  const labels = new Set(getGoals().map((g) => g.activityLabel));
   const result: Record<string, number> = {};
-  for (const label of labels) {
-    result[label] = await getTodayDurationMinutes(label, { excludeRunning: true }).catch(() => 0);
+  for (const activity of Object.values(ACTIVITIES)) {
+    result[activity.label] = await getTodayDurationMinutes(activity.label, { excludeRunning: true }).catch(() => 0);
   }
   return result;
 }

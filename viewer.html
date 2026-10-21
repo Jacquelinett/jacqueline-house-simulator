@@ -12,26 +12,32 @@
     <div id="app"></div>
     <div id="room-label"></div>
     <div id="viewer-panel">
+      <h2>Jacqueline</h2>
       <div id="viewer-status">
         <div id="viewer-activity">Loading...</div>
         <div id="viewer-elapsed"></div>
-        <div id="viewer-sync"></div>
       </div>
+      <div class="panel-divider"></div>
+      <div id="viewer-sync"></div>
 
-      <div class="panel-section-heading">Goal</div>
+      <h3 class="panel-section-heading">Leave a note</h3>
+      <input id="viewer-author" placeholder="Your name (optional)" maxlength="50" />
+      <textarea id="viewer-text" rows="3" placeholder="wow you actually lifted today, nice" maxlength="500"></textarea>
+      <button id="viewer-send">Send</button>
+      <div id="viewer-send-status"></div>
+
+      <h2>Dashboard</h2>
+      <div class="panel-section-heading">Today's Goals</div>
       <div id="viewer-goals"></div>
+      <div class="panel-divider"></div>
+      <div class="panel-section-heading">Today Activity</div>
+      <div id="viewer-today-activity"></div>
 
       <h2>Stats</h2>
       <div id="viewer-stats">
         <div id="viewer-stats-pie"></div>
         <div id="viewer-stats-list"></div>
       </div>
-
-      <h2>Leave a note</h2>
-      <input id="viewer-author" placeholder="Your name (optional)" maxlength="50" />
-      <textarea id="viewer-text" rows="3" placeholder="wow you actually lifted today, nice" maxlength="500"></textarea>
-      <button id="viewer-send">Send</button>
-      <div id="viewer-send-status"></div>
     </div>
   </body>
 </html>
