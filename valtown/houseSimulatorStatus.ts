@@ -40,6 +40,13 @@ async function ensureSchema() {
     today_minutes_json text,
     updated_at text not null
   )`);
+  // CREATE TABLE IF NOT EXISTS is a no-op once the table already exists —
+  // harmless for a brand new val, but a val whose `status` table predates
+  // today_minutes_json (it used to be called goals_json) would otherwise
+  // keep missing this column forever. ALTER TABLE ADD COLUMN is the actual
+  // migration; it only fails if the column's already there, which is fine
+  // to ignore.
+  await sqlite.execute(`alter table status add column today_minutes_json text`).catch(() => {});
   await sqlite.execute(`create table if not exists goals_blob (
     id integer primary key check (id = 1),
     goals_json text not null,
