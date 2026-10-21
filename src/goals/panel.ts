@@ -42,9 +42,14 @@ function formatElapsed(ms: number): string {
 const CURRENT_USER_NAME = "Jacqueline";
 
 export function setupGoalsPanel(): void {
-  // Same title-bar/drag-handle component the Dashboard uses, just not
-  // closable — this one is always visible, there's no button that opens it.
-  const panel = buildFloatingPanel(CURRENT_USER_NAME, { closable: false, className: "goals-panel" });
+  // Same title-bar component the Dashboard uses, just not closable (always
+  // visible, no button that opens it) and not draggable (always lives in
+  // the same corner — nothing to gain from being able to move it).
+  const panel = buildFloatingPanel(CURRENT_USER_NAME, {
+    closable: false,
+    draggable: false,
+    className: "goals-panel",
+  });
 
   // What's running right now and since when — previously the separate
   // top-left #status box, moved here so it's one place for "what's going

@@ -327,7 +327,7 @@ async function main() {
     }
   }
 
-  // Mirrors the desktop Dashboard's "Today Activity" list — same
+  // Mirrors the desktop Dashboard's "Today's Activity" list — same
   // todayMinutesByLabel the goal progress above uses, just not filtered
   // down to activities with a goal attached.
   function renderTodayActivity() {

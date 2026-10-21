@@ -37,14 +37,16 @@ export function makeDraggable(panel: HTMLElement, handle: HTMLElement) {
 /**
  * A draggable floating panel with a uniform title-bar header — unlike
  * buildModal(), has no backdrop and doesn't block interacting with the rest
- * of the screen. Used for both the always-visible corner Goals panel
- * (closable: false — no ×, caller opens it once and never closes it) and
- * the toggleable Dashboard, so their headers/drag behavior stay identical
- * rather than each hand-rolling their own.
+ * of the screen. Used for both the always-visible corner Jacqueline panel
+ * (closable: false — no ×, caller opens it once and never closes it; also
+ * draggable: false — it always lives in the same corner, no reason to let
+ * it get knocked out of place) and the toggleable Dashboard, so their
+ * headers/drag behavior stay identical rather than each hand-rolling their
+ * own.
  */
 export function buildFloatingPanel(
   title: string,
-  options?: { closable?: boolean; className?: string },
+  options?: { closable?: boolean; draggable?: boolean; className?: string },
 ): {
   body: HTMLElement;
   open: () => void;
@@ -64,6 +66,24 @@ export function buildFloatingPanel(
   titleEl.textContent = title;
   header.appendChild(titleEl);
 
+  // Title and close both live here too, but grouped on the right so a drag
+  // handle can sit between them without upsetting the header's left/right
+  // split (space-between only reads cleanly with two flex children).
+  const actions = document.createElement("div");
+  actions.className = "floating-panel-header-actions";
+  header.appendChild(actions);
+
+  // Only this button drags the panel now, not the whole header — grabbing
+  // the title text to move something used to fight with trying to just
+  // read it.
+  if (options?.draggable ?? true) {
+    const dragHandle = document.createElement("button");
+    dragHandle.className = "floating-panel-drag-handle";
+    dragHandle.setAttribute("aria-label", "Drag to move");
+    actions.appendChild(dragHandle);
+    makeDraggable(panel, dragHandle);
+  }
+
   const closeListeners = new Set<() => void>();
   function close() {
     panel.classList.remove("open");
@@ -75,14 +95,12 @@ export function buildFloatingPanel(
     closeBtn.className = "floating-panel-close";
     closeBtn.textContent = "×";
     closeBtn.onclick = close;
-    header.appendChild(closeBtn);
+    actions.appendChild(closeBtn);
   }
 
   const body = document.createElement("div");
   body.className = "floating-panel-body";
   panel.appendChild(body);
-
-  makeDraggable(panel, header);
 
   return {
     body,

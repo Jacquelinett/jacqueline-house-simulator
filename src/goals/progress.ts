@@ -45,7 +45,7 @@ export async function getTodayGoalProgress(): Promise<GoalProgress[]> {
 
 /**
  * Minutes tracked today per every known activity — not just ones with a
- * goal attached, since the viewer's own "Today Activity" breakdown needs
+ * goal attached, since the viewer's own "Today's Activity" breakdown needs
  * the same full list the desktop Dashboard shows, not just whatever
  * happens to have a goal right now. Excludes whatever's currently running,
  * since a remote viewer adds that session's live elapsed time itself from

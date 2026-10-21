@@ -37,7 +37,7 @@ export function setupDashboardPanel(): void {
 
   const activityHeading = document.createElement("h3");
   activityHeading.className = "panel-section-heading";
-  activityHeading.textContent = "Today Activity";
+  activityHeading.textContent = "Today's Activity";
   panel.body.appendChild(activityHeading);
 
   const activityList = document.createElement("div");
