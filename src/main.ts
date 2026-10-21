@@ -12,7 +12,7 @@ import { setupSettingsModal } from "./settings/modal";
 import { getSettings, initSettingsState, onSettingsChange } from "./settings/state";
 import { setupMessagesModal } from "./broadcast/messagesModal";
 import { pushGoals, pushStats, pushStatus } from "./broadcast/client";
-import { setupDashboardModal } from "./dashboard/modal";
+import { setupDashboardPanel } from "./dashboard/panel";
 
 const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -161,13 +161,13 @@ async function setupModals(): Promise<void> {
   const timerModal = setupTimerModal();
   const settingsModal = setupSettingsModal();
   const messagesModal = setupMessagesModal();
-  const dashboardModal = setupDashboardModal();
+  const dashboardPanel = setupDashboardPanel();
 
   setupTopButtons([
     { label: "Goals", onclick: goalsModal.open },
     { label: "Todos", onclick: todosModal.open },
     { label: "Timer", onclick: timerModal.open },
-    { label: "Dashboard", onclick: dashboardModal.open },
+    { label: "Dashboard", onclick: dashboardPanel.open },
     { label: "Messages", onclick: messagesModal.open },
     { label: "Settings", onclick: settingsModal.open },
   ]);

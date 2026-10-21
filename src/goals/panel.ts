@@ -5,6 +5,7 @@ import { isScheduledOn } from "./recurrence";
 import { Recurrence } from "./types";
 import { getBroadcastHealth, onBroadcastHealthChange } from "../broadcast/client";
 import { getSettings } from "../settings/state";
+import { makeDraggable } from "../ui/draggablePanel";
 
 const REFRESH_INTERVAL_MS = 30_000;
 
@@ -30,6 +31,9 @@ export async function setupGoalsPanel(): Promise<void> {
   const panel = document.createElement("div");
   panel.id = "goals-panel";
   document.body.appendChild(panel);
+  // Read-only (no buttons/links of its own), so the whole panel can safely
+  // double as its own drag handle — nothing inside it to conflict with.
+  makeDraggable(panel, panel);
 
   const list = document.createElement("div");
   list.id = "goals-list";

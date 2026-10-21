@@ -1,5 +1,5 @@
-import { buildModal } from "../ui/modal";
-import { getActivityStats } from "./stats";
+import { buildFloatingPanel } from "../ui/draggablePanel";
+import { getActivityStats, getTodayActivityStats } from "./stats";
 import { formatMinutes } from "../goals/ui";
 import { toCssColor } from "../scene/activities";
 import { getTodayGoalProgress } from "../goals/progress";
@@ -7,12 +7,12 @@ import { getGoalHistory, GoalHistoryEntry } from "../goals/history";
 
 type Tab = "goals" | "activity";
 
-export function setupDashboardModal(): { open: () => void } {
-  const modal = buildModal("Dashboard", { size: "large" });
+export function setupDashboardPanel(): { open: () => void } {
+  const panel = buildFloatingPanel("Dashboard");
 
   const tabRow = document.createElement("div");
   tabRow.id = "dashboard-tabs";
-  modal.body.appendChild(tabRow);
+  panel.body.appendChild(tabRow);
 
   const goalsTabBtn = document.createElement("button");
   goalsTabBtn.textContent = "Goals";
@@ -24,11 +24,11 @@ export function setupDashboardModal(): { open: () => void } {
 
   const goalsPane = document.createElement("div");
   goalsPane.id = "dashboard-goals-pane";
-  modal.body.appendChild(goalsPane);
+  panel.body.appendChild(goalsPane);
 
   const activityPane = document.createElement("div");
   activityPane.id = "dashboard-activity-pane";
-  modal.body.appendChild(activityPane);
+  panel.body.appendChild(activityPane);
 
   function showTab(tab: Tab) {
     goalsPane.style.display = tab === "goals" ? "" : "none";
@@ -40,7 +40,21 @@ export function setupDashboardModal(): { open: () => void } {
   activityTabBtn.onclick = () => showTab("activity");
   showTab("goals");
 
-  // --- Activity pane: color-coded all-time totals + daily-average pie ---
+  // --- Activity pane: today's plain list, then all-time pie + totals ---
+  const todayActivityHeading = document.createElement("h3");
+  todayActivityHeading.className = "dashboard-section-heading";
+  todayActivityHeading.textContent = "Today Activity";
+  activityPane.appendChild(todayActivityHeading);
+
+  const todayActivityList = document.createElement("div");
+  todayActivityList.id = "dashboard-today-activity-list";
+  activityPane.appendChild(todayActivityList);
+
+  const allTimeActivityHeading = document.createElement("h3");
+  allTimeActivityHeading.className = "dashboard-section-heading";
+  allTimeActivityHeading.textContent = "All-Time Activity";
+  activityPane.appendChild(allTimeActivityHeading);
+
   const pie = document.createElement("div");
   pie.id = "dashboard-pie";
   activityPane.appendChild(pie);
@@ -49,7 +63,48 @@ export function setupDashboardModal(): { open: () => void } {
   activityList.id = "dashboard-list";
   activityPane.appendChild(activityList);
 
-  async function renderActivityPane() {
+  async function renderTodayActivity() {
+    todayActivityList.textContent = "";
+    const stats = await getTodayActivityStats().catch((err) => {
+      console.error("[dashboard] failed to load today's activity", err);
+      return null;
+    });
+
+    if (!stats) {
+      const error = document.createElement("div");
+      error.className = "goals-empty";
+      error.textContent = "Failed to load";
+      todayActivityList.appendChild(error);
+      return;
+    }
+
+    if (stats.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "goals-empty";
+      empty.textContent = "Nothing tracked today";
+      todayActivityList.appendChild(empty);
+      return;
+    }
+
+    for (const s of stats) {
+      const row = document.createElement("div");
+      row.className = "dashboard-row";
+
+      const swatch = document.createElement("span");
+      swatch.className = "dashboard-swatch";
+      swatch.style.background = toCssColor(s.color);
+      row.appendChild(swatch);
+
+      const text = document.createElement("span");
+      text.className = "dashboard-text";
+      text.textContent = `${s.label} — ${formatMinutes(s.minutes)}`;
+      row.appendChild(text);
+
+      todayActivityList.appendChild(row);
+    }
+  }
+
+  async function renderAllTimeActivity() {
     activityList.textContent = "";
     const loading = document.createElement("div");
     loading.className = "goals-empty";
@@ -206,8 +261,9 @@ export function setupDashboardModal(): { open: () => void } {
 
   return {
     open() {
-      modal.open();
-      renderActivityPane();
+      panel.open();
+      renderTodayActivity();
+      renderAllTimeActivity();
       renderTodayGoals();
       renderAllTimeGoals();
     },

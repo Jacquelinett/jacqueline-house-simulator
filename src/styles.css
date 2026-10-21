@@ -94,6 +94,58 @@ body {
   color: #eee;
 }
 
+.floating-panel {
+  display: none;
+  position: fixed;
+  top: 80px;
+  left: 80px;
+  z-index: 15;
+  width: min(420px, 90vw);
+  max-height: 70vh;
+  background: rgba(20, 20, 20, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: #eee;
+  flex-direction: column;
+}
+
+.floating-panel.open {
+  display: flex;
+}
+
+.floating-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+  flex-shrink: 0;
+}
+
+.floating-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.floating-panel-close {
+  background: transparent;
+  border: none;
+  color: #eee;
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.floating-panel-close:hover {
+  color: #f88;
+}
+
+.floating-panel-body {
+  padding: 12px;
+  overflow-y: auto;
+}
+
 .goals-empty {
   opacity: 0.6;
   font-style: italic;
