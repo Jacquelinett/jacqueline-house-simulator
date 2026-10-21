@@ -3,7 +3,24 @@ import { localDateString } from "./recurrence";
 import { goalsFileStore } from "./store";
 import { Goal, Recurrence } from "./types";
 
-const goalsState = createPersistedState(goalsFileStore.load, goalsFileStore.save);
+// jsonFileStore has no schema-version mechanism, so goals saved under the
+// old single-occurrence monthly shape ({ occurrence: 1|2|3|4|"last" })
+// need converting to the new multi-occurrence one ({ occurrences: [...] })
+// on every load. Self-heals on disk the next time goals are saved for any
+// reason — no explicit write-back needed here.
+function migrateGoals(goals: Goal[]): Goal[] {
+  return goals.map((goal) => {
+    const recurrence = goal.recurrence as Recurrence & { occurrence?: 1 | 2 | 3 | 4 | "last" };
+    if (recurrence.type !== "monthly" || !("occurrence" in recurrence)) return goal;
+    const { occurrence, ...rest } = recurrence;
+    return { ...goal, recurrence: { ...rest, occurrences: [occurrence] } as Recurrence };
+  });
+}
+
+const goalsState = createPersistedState(
+  async () => migrateGoals(await goalsFileStore.load()),
+  goalsFileStore.save,
+);
 
 export const initGoalsState = goalsState.init;
 export const getGoals = goalsState.get;
@@ -21,7 +38,11 @@ function recurrenceEquals(a: Recurrence, b: Recurrence): boolean {
     return a.daysOfWeek.length === b.daysOfWeek.length && a.daysOfWeek.every((d) => b.daysOfWeek.includes(d));
   }
   if (a.type === "monthly" && b.type === "monthly") {
-    return a.occurrence === b.occurrence && a.dayOfWeek === b.dayOfWeek;
+    return (
+      a.dayOfWeek === b.dayOfWeek &&
+      a.occurrences.length === b.occurrences.length &&
+      a.occurrences.every((occ) => b.occurrences.includes(occ))
+    );
   }
   return false;
 }
@@ -59,9 +80,15 @@ export async function unskipGoalToday(goal: Goal) {
   await goalsState.persist(getGoals());
 }
 
-export async function updateGoal(id: string, targetMinutes: number, recurrence: Recurrence) {
+// Changing activityLabel on a goal that already has goalHistory.ts entries
+// leaves those old entries attributed to the old label — the history log
+// records whatever label was current at settle-time, not a live reference
+// to this goal. Same thing you'd get from deleting the goal and adding a
+// new one for a different activity instead, so not a reason to disallow it.
+export async function updateGoal(id: string, activityLabel: string, targetMinutes: number, recurrence: Recurrence) {
   const goal = getGoals().find((g) => g.id === id);
   if (!goal) return;
+  goal.activityLabel = activityLabel;
   goal.targetMinutes = targetMinutes;
   goal.recurrence = recurrence;
   await goalsState.persist(getGoals());

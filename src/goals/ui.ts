@@ -9,10 +9,14 @@ export function formatMinutes(min: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+function formatOccurrence(occ: 1 | 2 | 3 | 4 | "last"): string {
+  return occ === "last" ? "last" : `${occ}${["th", "st", "nd", "rd"][occ] ?? "th"}`;
+}
+
 export function describeRecurrence(r: Recurrence): string {
   if (r.type === "once") return `once (${r.date})`;
   if (r.type === "weekly") return `weekly: ${r.daysOfWeek.join(", ")}`;
-  return `monthly: ${r.occurrence === "last" ? "last" : `${r.occurrence}${["th", "st", "nd", "rd"][r.occurrence] ?? "th"}`} ${r.dayOfWeek}`;
+  return `monthly: ${r.occurrences.map(formatOccurrence).join(", ")} ${r.dayOfWeek}`;
 }
 
 export function buildActivitySelect(): HTMLSelectElement {
@@ -59,7 +63,8 @@ export function buildRecurrencePicker(initial: Recurrence | null): {
   container.appendChild(detail);
 
   const selectedDays = new Set<Weekday>(initial?.type === "weekly" ? initial.daysOfWeek : []);
-  const occurrenceSelect = document.createElement("select");
+  const selectedOccurrences = new Set<1 | 2 | 3 | 4 | "last">(initial?.type === "monthly" ? initial.occurrences : []);
+  const occurrenceToggles = document.createElement("span");
   const monthlyDaySelect = document.createElement("select");
 
   function renderDetail() {
@@ -78,7 +83,10 @@ export function buildRecurrencePicker(initial: Recurrence | null): {
         detail.appendChild(btn);
       }
     } else {
-      occurrenceSelect.textContent = "";
+      occurrenceToggles.textContent = "";
+      // Toggles instead of a single <select> — one monthly goal can now
+      // cover multiple occurrences of the same weekday (e.g. 2nd + 4th
+      // Sunday), same idea as the weekly day-of-week toggles above.
       for (const [value, label] of [
         ["1", "1st"],
         ["2", "2nd"],
@@ -86,12 +94,18 @@ export function buildRecurrencePicker(initial: Recurrence | null): {
         ["4", "4th"],
         ["last", "Last"],
       ] as const) {
-        const opt = document.createElement("option");
-        opt.value = value;
-        opt.textContent = label;
-        occurrenceSelect.appendChild(opt);
+        const occValue = value === "last" ? "last" : (Number(value) as 1 | 2 | 3 | 4);
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = label;
+        btn.className = "day-toggle" + (selectedOccurrences.has(occValue) ? " selected" : "");
+        btn.onclick = () => {
+          if (selectedOccurrences.has(occValue)) selectedOccurrences.delete(occValue);
+          else selectedOccurrences.add(occValue);
+          btn.classList.toggle("selected");
+        };
+        occurrenceToggles.appendChild(btn);
       }
-      if (initial?.type === "monthly") occurrenceSelect.value = String(initial.occurrence);
       monthlyDaySelect.textContent = "";
       for (const day of WEEKDAYS) {
         const opt = document.createElement("option");
@@ -100,7 +114,7 @@ export function buildRecurrencePicker(initial: Recurrence | null): {
         monthlyDaySelect.appendChild(opt);
       }
       if (initial?.type === "monthly") monthlyDaySelect.value = initial.dayOfWeek;
-      detail.appendChild(occurrenceSelect);
+      detail.appendChild(occurrenceToggles);
       detail.appendChild(monthlyDaySelect);
     }
   }
@@ -114,10 +128,10 @@ export function buildRecurrencePicker(initial: Recurrence | null): {
         if (selectedDays.size === 0) return null;
         return { type: "weekly", daysOfWeek: [...selectedDays] };
       }
-      const occurrenceValue = occurrenceSelect.value;
+      if (selectedOccurrences.size === 0) return null;
       return {
         type: "monthly",
-        occurrence: occurrenceValue === "last" ? "last" : (Number(occurrenceValue) as 1 | 2 | 3 | 4),
+        occurrences: [...selectedOccurrences],
         dayOfWeek: monthlyDaySelect.value as Weekday,
       };
     },

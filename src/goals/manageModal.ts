@@ -118,11 +118,16 @@ export function setupGoalsManageModal(): { open: () => void } {
     const form = document.createElement("span");
     form.className = "goal-edit-form";
 
+    const activitySelect = buildActivitySelect();
+    activitySelect.value = goal.activityLabel;
+    form.appendChild(activitySelect);
+
     const minutesInput = buildMinutesInput(goal.targetMinutes);
     form.appendChild(minutesInput);
 
     // A one-off goal's date is fixed to the day it was added for — only its
-    // target is editable. Recurring goals can also have their schedule changed.
+    // target (and now activity) is editable. Recurring goals can also have
+    // their schedule changed.
     const picker = goal.recurrence.type !== "once" ? buildRecurrencePicker(goal.recurrence) : null;
     if (picker) form.appendChild(picker.element);
 
@@ -138,7 +143,7 @@ export function setupGoalsManageModal(): { open: () => void } {
       saveBtn.disabled = true;
       try {
         editingGoalId = null;
-        await updateGoal(goal.id, targetMinutes, recurrence);
+        await updateGoal(goal.id, activitySelect.value, targetMinutes, recurrence);
       } catch (err) {
         console.error("[goals] failed to update goal", err);
         editingGoalId = goal.id;

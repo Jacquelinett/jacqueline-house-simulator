@@ -35,8 +35,8 @@ export function isScheduledOn(recurrence: Recurrence, date: Date): boolean {
       return recurrence.daysOfWeek.includes(WEEKDAYS[date.getDay()]);
     case "monthly": {
       if (WEEKDAYS[date.getDay()] !== recurrence.dayOfWeek) return false;
-      if (recurrence.occurrence === "last") return isLastOccurrenceOfWeekday(date);
-      return Math.ceil(date.getDate() / 7) === recurrence.occurrence;
+      const ordinal = Math.ceil(date.getDate() / 7);
+      return recurrence.occurrences.some((occ) => occ === ordinal || (occ === "last" && isLastOccurrenceOfWeekday(date)));
     }
   }
 }
