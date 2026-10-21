@@ -1,8 +1,7 @@
-import { getTodayDurationMinutes } from "../aw/client";
-import { isScheduledOn } from "./recurrence";
 import { getGoals, onGoalsChange, todayDateString } from "./state";
+import { getTodayGoalProgress } from "./progress";
 import { formatMinutes, describeRecurrence } from "./ui";
-import { Goal } from "./types";
+import { isScheduledOn } from "./recurrence";
 
 const REFRESH_INTERVAL_MS = 30_000;
 
@@ -17,37 +16,21 @@ export async function setupGoalsPanel(): Promise<void> {
   panel.appendChild(list);
 
   async function render() {
-    const today = new Date();
-    const todayStr = todayDateString();
-    const scheduled = getGoals().filter(
-      (g) => isScheduledOn(g.recurrence, today) && !g.skipDates?.includes(todayStr),
-    );
-
-    // AW only measures total time per activity label, not per goal — two
-    // goals for the same activity on the same day (e.g. a daily recurring
-    // goal plus a one-off "extra today") can't be counted separately, so
-    // they're summed into a single progress check instead of double-counting
-    // the same practice time against two independent targets.
-    const groups = new Map<string, Goal[]>();
-    for (const goal of scheduled) {
-      const group = groups.get(goal.activityLabel);
-      if (group) group.push(goal);
-      else groups.set(goal.activityLabel, [goal]);
-    }
+    const progress = await getTodayGoalProgress();
 
     list.textContent = "";
-    if (groups.size === 0) {
+    if (progress.length === 0) {
       const empty = document.createElement("div");
       empty.className = "goals-empty";
       empty.textContent = "No goals today";
       list.appendChild(empty);
+      return;
     }
 
-    for (const [activityLabel, group] of groups) {
-      const minutes = await getTodayDurationMinutes(activityLabel).catch(() => 0);
-      const targetMinutes = group.reduce((sum, g) => sum + g.targetMinutes, 0);
-      const done = minutes >= targetMinutes;
+    const today = new Date();
+    const todayStr = todayDateString();
 
+    for (const { activityLabel, minutes, targetMinutes, done } of progress) {
       const row = document.createElement("div");
       row.className = "goal-row" + (done ? " goal-done" : "");
 
@@ -63,7 +46,13 @@ export async function setupGoalsPanel(): Promise<void> {
 
       list.appendChild(row);
 
-      for (const goal of group) {
+      const contributing = getGoals().filter(
+        (g) =>
+          g.activityLabel === activityLabel &&
+          isScheduledOn(g.recurrence, today) &&
+          !g.skipDates?.includes(todayStr),
+      );
+      for (const goal of contributing) {
         const subRow = document.createElement("div");
         subRow.className = "goal-subrow";
 

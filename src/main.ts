@@ -8,6 +8,11 @@ import { setupTodosModal } from "./todos/modal";
 import { initTodosState } from "./todos/state";
 import { setupTimerModal } from "./timer/modal";
 import { setupSettingsModal } from "./settings/modal";
+import { initSettingsState } from "./settings/state";
+import { setupMessagesModal } from "./broadcast/messagesModal";
+import { pushStatus } from "./broadcast/client";
+
+const BROADCAST_PUSH_INTERVAL_MS = 60_000;
 
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
 
@@ -111,12 +116,16 @@ async function main() {
   renderStatus();
   setInterval(renderStatus, 1000);
 
+  await initGoalsState();
+  await initSettingsState();
+
   await preloadRoomAssets();
   const house = new House(
     app,
     (current) => {
       activity = current;
       renderStatus();
+      pushStatus();
     },
     (name) => {
       roomName = name;
@@ -125,7 +134,6 @@ async function main() {
   );
   setupFloorButtons(house);
 
-  await initGoalsState();
   const goalsModal = setupGoalsManageModal();
   await setupGoalsPanel();
 
@@ -134,11 +142,13 @@ async function main() {
 
   const timerModal = setupTimerModal();
   const settingsModal = setupSettingsModal();
+  const messagesModal = setupMessagesModal();
 
   setupTopButtons([
     { label: "Goals", onclick: goalsModal.open },
     { label: "Todos", onclick: todosModal.open },
     { label: "Timer", onclick: timerModal.open },
+    { label: "Messages", onclick: messagesModal.open },
     { label: "Settings", onclick: settingsModal.open },
   ]);
 
@@ -147,6 +157,9 @@ async function main() {
     return null;
   });
   if (resumed) house.resumeActivity(resumed);
+
+  pushStatus();
+  setInterval(pushStatus, BROADCAST_PUSH_INTERVAL_MS);
 }
 
 main().catch((err) => {

@@ -1,10 +1,9 @@
 import { AWClient } from "aw-client";
 
 // Reuses aw-webui's own manual-stopwatch bucket/schema (type "general.stopwatch",
-// data: { running: boolean, label: string }), confirmed against a live aw-server:
-// a `heartbeat()` with unchanged data merges into one continuous event, and
-// `replaceEvent()` finalizes it on stop. This keeps our tracked time visible in
-// aw-webui's own Stopwatch view too, not just this app.
+// data: { running: boolean, label: string }), confirmed against a live aw-server.
+// This keeps our tracked time visible in aw-webui's own Stopwatch view too,
+// not just this app.
 const BUCKET_ID = "aw-stopwatch";
 const BUCKET_TYPE = "general.stopwatch";
 const BUCKET_HOSTNAME = "unknown";
@@ -15,8 +14,7 @@ const BUCKET_HOSTNAME = "unknown";
 // or on `app` to bucket everything from this app under one category).
 const APP_NAME = "House Simulator";
 
-const HEARTBEAT_INTERVAL_SEC = 10;
-const PULSETIME_SEC = HEARTBEAT_INTERVAL_SEC * 2;
+const REFRESH_INTERVAL_SEC = 10;
 
 const client = new AWClient("house-simulator");
 
@@ -27,7 +25,7 @@ export interface RunningActivity {
 }
 
 let current: RunningActivity | null = null;
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 export async function getServerInfo() {
   return client.getInfo();
@@ -41,15 +39,28 @@ export function getCurrentActivity(): RunningActivity | null {
   return current;
 }
 
-function beginHeartbeating(label: string) {
-  heartbeatTimer = setInterval(() => {
+/**
+ * Keeps `current`'s event duration caught up to real elapsed time by always
+ * replacing it by its known id — never AW's own `heartbeat` endpoint, whose
+ * merge-into-last-event-or-insert-new decision depends on the gap since the
+ * last call staying under its pulsetime. Browsers/webviews throttle
+ * `setInterval` in backgrounded windows, which can silently stretch that gap
+ * past any pulsetime and split one continuous session into two events. An
+ * explicit by-id replace recomputes duration fresh from wall-clock time every
+ * tick, so it's correct regardless of how long a tick was actually delayed.
+ */
+function beginRefreshing(label: string) {
+  refreshTimer = setInterval(() => {
+    if (!current) return;
     client
-      .heartbeat(BUCKET_ID, PULSETIME_SEC, {
-        timestamp: new Date(),
+      .replaceEvent(BUCKET_ID, {
+        id: current.id,
+        timestamp: current.startedAt,
+        duration: (Date.now() - current.startedAt.getTime()) / 1000,
         data: { running: true, label, title: label, app: APP_NAME },
       })
-      .catch((err) => console.error("[aw] heartbeat failed", err));
-  }, HEARTBEAT_INTERVAL_SEC * 1000);
+      .catch((err) => console.error("[aw] periodic refresh failed", err));
+  }, REFRESH_INTERVAL_SEC * 1000);
 }
 
 /**
@@ -80,14 +91,15 @@ export async function startActivity(label: string): Promise<void> {
   await stopWhateverIsRunning();
 
   const timestamp = new Date();
-  await client.heartbeat(BUCKET_ID, PULSETIME_SEC, {
+  await client.insertEvent(BUCKET_ID, {
     timestamp,
+    duration: 0,
     data: { running: true, label, title: label, app: APP_NAME },
   });
 
   const [latest] = await client.getEvents(BUCKET_ID, { limit: 1 });
   current = { id: latest.id!, label, startedAt: latest.timestamp };
-  beginHeartbeating(label);
+  beginRefreshing(label);
 }
 
 /**
@@ -111,7 +123,7 @@ export async function resumeActivity(): Promise<RunningActivity | null> {
   });
 
   current = { id: latest.id!, label, startedAt: latest.timestamp };
-  beginHeartbeating(label);
+  beginRefreshing(label);
   return current;
 }
 
@@ -128,9 +140,9 @@ export async function getTodayDurationMinutes(label: string): Promise<number> {
 
 export async function stopActivity(): Promise<void> {
   if (!current) return;
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
   }
 
   const stoppedAt = new Date();
