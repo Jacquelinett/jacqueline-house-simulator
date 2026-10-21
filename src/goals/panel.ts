@@ -2,6 +2,7 @@ import { getGoals, onGoalsChange, todayDateString } from "./state";
 import { getTodayGoalProgress } from "./progress";
 import { formatMinutes, describeRecurrence } from "./ui";
 import { isScheduledOn } from "./recurrence";
+import { Recurrence } from "./types";
 import { getBroadcastHealth, onBroadcastHealthChange } from "../broadcast/client";
 import { getSettings } from "../settings/state";
 
@@ -13,6 +14,15 @@ function formatRelativeTime(date: Date): string {
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
   return `${Math.floor(minutes / 60)}h ago`;
+}
+
+// This panel only ever shows goals scheduled for today, so a one-off goal's
+// literal date is always just... today — showing it plainly is clearer than
+// the generic "once (2026-10-21)" phrasing describeRecurrence() uses
+// elsewhere (e.g. the manage modal, where goals for OTHER days are visible
+// too and the real date still matters there).
+function describeScheduleForToday(recurrence: Recurrence): string {
+  return recurrence.type === "once" ? "Today" : describeRecurrence(recurrence);
 }
 
 /** Read-only view of today's goals and progress — all editing lives in the manage modal (opened from the top-right "Goals" button). */
@@ -90,7 +100,7 @@ export async function setupGoalsPanel(): Promise<void> {
 
         const subText = document.createElement("span");
         subText.className = "goal-subtext";
-        subText.textContent = `${describeRecurrence(goal.recurrence)} — ${formatMinutes(goal.targetMinutes)}`;
+        subText.textContent = `${describeScheduleForToday(goal.recurrence)} — ${formatMinutes(goal.targetMinutes)}`;
         subRow.appendChild(subText);
 
         list.appendChild(subRow);

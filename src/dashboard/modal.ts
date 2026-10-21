@@ -1,10 +1,12 @@
 import { buildModal } from "../ui/modal";
 import { getActivityStats } from "./stats";
-import { formatMinutes } from "../goals/ui";
+import { formatMinutes, describeRecurrence } from "../goals/ui";
 import { toCssColor } from "../scene/activities";
+import { getGoals } from "../goals/state";
+import { historyForGoal } from "../goals/history";
 
 export function setupDashboardModal(): { open: () => void } {
-  const modal = buildModal("Dashboard");
+  const modal = buildModal("Dashboard", { size: "large" });
 
   const pie = document.createElement("div");
   pie.id = "dashboard-pie";
@@ -14,7 +16,18 @@ export function setupDashboardModal(): { open: () => void } {
   list.id = "dashboard-list";
   modal.body.appendChild(list);
 
+  const goalsHeading = document.createElement("h3");
+  goalsHeading.className = "dashboard-section-heading";
+  goalsHeading.textContent = "Recurring Goals";
+  modal.body.appendChild(goalsHeading);
+
+  const goalsList = document.createElement("div");
+  goalsList.id = "dashboard-goals-list";
+  modal.body.appendChild(goalsList);
+
   async function render() {
+    renderRecurringGoals(); // synchronous, local data — independent of the AW stats fetch below
+
     list.textContent = "";
     const loading = document.createElement("div");
     loading.className = "goals-empty";
@@ -77,6 +90,33 @@ export function setupDashboardModal(): { open: () => void } {
       row.appendChild(text);
 
       list.appendChild(row);
+    }
+  }
+
+  function renderRecurringGoals() {
+    goalsList.textContent = "";
+    const recurringGoals = getGoals().filter((g) => g.recurrence.type !== "once");
+
+    if (recurringGoals.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "goals-empty";
+      empty.textContent = "No recurring goals yet";
+      goalsList.appendChild(empty);
+      return;
+    }
+
+    for (const goal of recurringGoals) {
+      const entries = historyForGoal(goal.id);
+      const completedCount = entries.filter((e) => e.outcome === "completed").length;
+      const skippedCount = entries.filter((e) => e.outcome === "skipped").length;
+      const missedCount = entries.filter((e) => e.outcome === "missed").length;
+
+      const row = document.createElement("div");
+      row.className = "dashboard-row";
+      row.textContent = entries.length > 0
+        ? `${goal.activityLabel} — ${describeRecurrence(goal.recurrence)} — ✓${completedCount} ⊘${skippedCount} ✗${missedCount}`
+        : `${goal.activityLabel} — ${describeRecurrence(goal.recurrence)} — no history yet`;
+      goalsList.appendChild(row);
     }
   }
 

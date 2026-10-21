@@ -1,5 +1,8 @@
 /** Shared overlay/dialog/header chrome for the app's modals (Goals, Todos, Timer, Settings, ...). */
-export function buildModal(title: string): {
+export function buildModal(
+  title: string,
+  options?: { size?: "default" | "large" },
+): {
   body: HTMLElement;
   open: () => void;
   close: () => void;
@@ -10,7 +13,7 @@ export function buildModal(title: string): {
   document.body.appendChild(overlay);
 
   const dialog = document.createElement("div");
-  dialog.className = "modal-dialog";
+  dialog.className = "modal-dialog" + (options?.size === "large" ? " modal-dialog-large" : "");
   overlay.appendChild(dialog);
 
   const header = document.createElement("div");

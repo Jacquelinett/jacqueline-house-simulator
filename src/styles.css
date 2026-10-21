@@ -166,6 +166,10 @@ body {
   color: #eee;
 }
 
+.modal-dialog-large {
+  width: min(640px, 90vw);
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -640,4 +644,19 @@ body {
   height: 12px;
   border-radius: 3px;
   flex-shrink: 0;
+}
+
+.dashboard-section-heading {
+  font-size: 13px;
+  margin: 16px 0 8px 0;
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+#dashboard-goals-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
 }

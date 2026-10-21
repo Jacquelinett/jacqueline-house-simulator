@@ -3,7 +3,6 @@ import { buildActivitySelect, buildMinutesInput, buildRecurrencePicker, describe
 import { Goal, Recurrence } from "./types";
 import { localDateString } from "./recurrence";
 import { buildModal } from "../ui/modal";
-import { historyForGoal, onGoalHistoryChange } from "./history";
 
 function todayDateString(): string {
   return localDateString(new Date());
@@ -172,15 +171,9 @@ export function setupGoalsManageModal(): { open: () => void } {
 
     const skippedToday = goal.recurrence.type !== "once" && (goal.skipDates?.includes(todayDateString()) ?? false);
 
-    const entries = historyForGoal(goal.id);
-    const completedCount = entries.filter((e) => e.outcome === "completed").length;
-    const skippedCount = entries.filter((e) => e.outcome === "skipped").length;
-    const missedCount = entries.filter((e) => e.outcome === "missed").length;
-    const historySummary = entries.length > 0 ? ` — ✓${completedCount} ⊘${skippedCount} ✗${missedCount}` : "";
-
     const text = document.createElement("span");
     text.className = "goal-manage-text";
-    text.textContent = `${goal.activityLabel} — ${formatMinutes(goal.targetMinutes)} — ${describeRecurrence(goal.recurrence)}${skippedToday ? " (skipped today)" : ""}${historySummary}`;
+    text.textContent = `${goal.activityLabel} — ${formatMinutes(goal.targetMinutes)} — ${describeRecurrence(goal.recurrence)}${skippedToday ? " (skipped today)" : ""}`;
     row.appendChild(text);
 
     const editBtn = document.createElement("button");
@@ -329,7 +322,6 @@ export function setupGoalsManageModal(): { open: () => void } {
   });
 
   onGoalsChange(render);
-  onGoalHistoryChange(render);
   render();
 
   return {
