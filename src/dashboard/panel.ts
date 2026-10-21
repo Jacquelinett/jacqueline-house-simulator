@@ -8,7 +8,7 @@ import { getGoalHistory, GoalHistoryEntry } from "../goals/history";
 type Tab = "goals" | "activity";
 
 export function setupDashboardPanel(): { open: () => void } {
-  const panel = buildFloatingPanel("Dashboard");
+  const panel = buildFloatingPanel("Dashboard", { className: "dashboard-panel" });
 
   const tabRow = document.createElement("div");
   tabRow.id = "dashboard-tabs";
@@ -42,7 +42,7 @@ export function setupDashboardPanel(): { open: () => void } {
 
   // --- Activity pane: today's plain list, then all-time pie + totals ---
   const todayActivityHeading = document.createElement("h3");
-  todayActivityHeading.className = "dashboard-section-heading";
+  todayActivityHeading.className = "panel-section-heading";
   todayActivityHeading.textContent = "Today Activity";
   activityPane.appendChild(todayActivityHeading);
 
@@ -51,7 +51,7 @@ export function setupDashboardPanel(): { open: () => void } {
   activityPane.appendChild(todayActivityList);
 
   const allTimeActivityHeading = document.createElement("h3");
-  allTimeActivityHeading.className = "dashboard-section-heading";
+  allTimeActivityHeading.className = "panel-section-heading";
   allTimeActivityHeading.textContent = "All-Time Activity (top 5)";
   activityPane.appendChild(allTimeActivityHeading);
 
@@ -176,7 +176,7 @@ export function setupDashboardPanel(): { open: () => void } {
 
   // --- Goals pane: what's scheduled today, plus all-time standouts ---
   const todayHeading = document.createElement("h3");
-  todayHeading.className = "dashboard-section-heading";
+  todayHeading.className = "panel-section-heading";
   todayHeading.textContent = "Today's Goals";
   goalsPane.appendChild(todayHeading);
 
@@ -185,7 +185,7 @@ export function setupDashboardPanel(): { open: () => void } {
   goalsPane.appendChild(todayList);
 
   const allTimeHeading = document.createElement("h3");
-  allTimeHeading.className = "dashboard-section-heading";
+  allTimeHeading.className = "panel-section-heading";
   allTimeHeading.textContent = "All-Time Goals";
   goalsPane.appendChild(allTimeHeading);
 
@@ -263,13 +263,22 @@ export function setupDashboardPanel(): { open: () => void } {
     allTimeList.appendChild(skippedRow);
   }
 
+  function refresh() {
+    renderTodayActivity();
+    renderAllTimeActivity();
+    renderTodayGoals();
+    renderAllTimeGoals();
+  }
+
+  // Visible from the start, anchored near the top-right menu — the
+  // "Dashboard" button just re-opens it if it's been closed.
+  refresh();
+  panel.open();
+
   return {
     open() {
       panel.open();
-      renderTodayActivity();
-      renderAllTimeActivity();
-      renderTodayGoals();
-      renderAllTimeGoals();
+      refresh();
     },
   };
 }

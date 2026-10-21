@@ -1,5 +1,5 @@
 import { Application } from "pixi.js";
-import { ensureStopwatchBucket, getServerInfo, resumeActivity, RunningActivity } from "./aw/client";
+import { ensureStopwatchBucket, getServerInfo, resumeActivity } from "./aw/client";
 import { House, preloadRoomAssets } from "./scene/House";
 import { setupGoalsPanel } from "./goals/panel";
 import { setupGoalsManageModal } from "./goals/manageModal";
@@ -16,65 +16,12 @@ import { setupDashboardPanel } from "./dashboard/panel";
 
 const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
 
+// Only ever holds the boot-time "connecting…"/fatal-error text now —
+// ongoing AW connection, activity, and elapsed time all live in the Today
+// Overview panel instead (see goals/panel.ts), so this is cleared the
+// moment AW connects and #status:empty hides the box.
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
-
-function formatClock(date: Date): string {
-  const hh = date.getHours().toString().padStart(2, "0");
-  const mm = date.getMinutes().toString().padStart(2, "0");
-  return `${hh}:${mm}`;
-}
-
-function formatElapsed(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const hh = Math.floor(totalSeconds / 3600);
-  const mm = Math.floor((totalSeconds % 3600) / 60)
-    .toString()
-    .padStart(hh > 0 ? 2 : 1, "0");
-  const ss = (totalSeconds % 60).toString().padStart(2, "0");
-  return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
-/** Owns the #status debug text (AW connection state, current room, current activity) and the House callbacks that feed it. */
-function setupStatusDisplay() {
-  let connectionStatus = "connecting to AW…";
-  let roomName = "";
-  let activity: RunningActivity | null = null;
-
-  function render() {
-    const lines = [connectionStatus, roomName];
-    if (activity) {
-      const elapsed = formatElapsed(Date.now() - activity.startedAt.getTime());
-      lines.push(
-        `tracking: ${activity.label}`,
-        `started: ${formatClock(activity.startedAt)}`,
-        `elapsed time: ${elapsed}`,
-      );
-    } else {
-      lines.push("idle");
-    }
-    statusEl.textContent = lines.join("\n");
-  }
-
-  return {
-    setConnectionStatus(status: string) {
-      connectionStatus = status;
-    },
-    /** Only call once AW connection is confirmed — starting the 1s tick earlier risks it overwriting a connection-failure message. */
-    start() {
-      render();
-      setInterval(render, 1000);
-    },
-    onActivityChange(current: RunningActivity | null) {
-      activity = current;
-      render();
-      pushStatus();
-    },
-    onRoomChange(name: string) {
-      roomName = name;
-      render();
-    },
-  };
-}
+const roomLabelEl = document.querySelector<HTMLDivElement>("#room-label")!;
 
 async function setupPixiApp(): Promise<Application> {
   const app = new Application();
@@ -131,12 +78,14 @@ function setupTopButtons(buttons: { label: string; onclick: () => void }[]) {
   document.body.appendChild(container);
 }
 
-async function setupHouse(app: Application, statusDisplay: ReturnType<typeof setupStatusDisplay>): Promise<House> {
+async function setupHouse(app: Application): Promise<House> {
   await preloadRoomAssets();
   const house = new House(
     app,
-    statusDisplay.onActivityChange,
-    statusDisplay.onRoomChange,
+    () => pushStatus(),
+    (name) => {
+      roomLabelEl.textContent = name;
+    },
     { devMode: getSettings().devMode, scale: getSettings().scale },
   );
   setupFloorButtons(house);
@@ -175,18 +124,16 @@ async function setupModals(): Promise<void> {
 
 async function main() {
   const app = await setupPixiApp();
-  const statusDisplay = setupStatusDisplay();
 
   try {
-    const info = await getServerInfo();
+    await getServerInfo();
     await ensureStopwatchBucket();
-    statusDisplay.setConnectionStatus(`connected: ${info.hostname} (aw-server ${info.version})`);
+    statusEl.textContent = "";
   } catch (err) {
     statusEl.textContent = `AW connection failed: ${(err as Error).message}`;
     console.error(err);
     return;
   }
-  statusDisplay.start();
 
   await initGoalsState();
   await initGoalHistoryState();
@@ -197,7 +144,7 @@ async function main() {
   // startup on this, since it's just gamification stats, not core function.
   settleGoalHistory().catch((err) => console.error("[goals] failed to settle history", err));
 
-  const house = await setupHouse(app, statusDisplay);
+  const house = await setupHouse(app);
   await setupModals();
 
   const resumed = await resumeActivity().catch((err) => {

@@ -61,6 +61,20 @@ function formatElapsed(ms: number): string {
   return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+function formatClock(date: Date): string {
+  const hh = date.getHours().toString().padStart(2, "0");
+  const mm = date.getMinutes().toString().padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function formatRelativeTime(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
+}
+
 function formatMinutes(min: number): string {
   const h = Math.floor(min / 60);
   const m = Math.round(min % 60);
@@ -149,14 +163,22 @@ async function main() {
 
   const viewerSettings = loadViewerSettings();
 
+  const roomLabelEl = document.querySelector<HTMLDivElement>("#room-label")!;
   await preloadRoomAssets();
-  const viewer = new HouseViewer(app, () => {}, viewerSettings);
+  const viewer = new HouseViewer(
+    app,
+    (name) => {
+      roomLabelEl.textContent = name;
+    },
+    viewerSettings,
+  );
 
   setupFloorButtons(viewer);
   setupSettings(viewer, viewerSettings);
 
   const activityEl = document.querySelector<HTMLDivElement>("#viewer-activity")!;
   const elapsedEl = document.querySelector<HTMLDivElement>("#viewer-elapsed")!;
+  const syncEl = document.querySelector<HTMLDivElement>("#viewer-sync")!;
   const goalsEl = document.querySelector<HTMLDivElement>("#viewer-goals")!;
   const statsPieEl = document.querySelector<HTMLDivElement>("#viewer-stats-pie")!;
   const statsListEl = document.querySelector<HTMLDivElement>("#viewer-stats-list")!;
@@ -165,6 +187,14 @@ async function main() {
   let latestActivityLabel: string | null = null;
   let latestTodayMinutesByLabel: Record<string, number> = {};
   let latestGoals: Goal[] = [];
+  let lastSyncAt: Date | null = null;
+
+  // "Synced" here means "last successfully fetched data from val.town" —
+  // the viewer only ever polls, it never pushes, so this is the mirror
+  // image of the desktop app's own VT sync indicator.
+  function renderSync() {
+    syncEl.textContent = lastSyncAt ? `VT: Synced ${formatRelativeTime(lastSyncAt)}` : "VT: Not yet synced";
+  }
 
   async function refreshStatus() {
     try {
@@ -181,11 +211,11 @@ async function main() {
       latestTodayMinutesByLabel = data.todayMinutesByLabel;
       startedAtMs = data.startedAt ? new Date(data.startedAt).getTime() : null;
 
-      activityEl.textContent = data.activityLabel
-        ? `Currently: ${data.activityLabel}`
-        : "Not currently doing anything tracked";
+      activityEl.textContent = `I'm currently: ${data.activityLabel ?? "idle"}`;
       viewer.showActivity(data.activityLabel ? { label: data.activityLabel } : null);
 
+      lastSyncAt = new Date();
+      renderSync();
       renderGoals();
       renderStats(stats);
     } catch (err) {
@@ -268,8 +298,11 @@ async function main() {
   }
 
   function tickElapsed() {
-    elapsedEl.textContent = startedAtMs ? `Running for ${formatElapsed(Date.now() - startedAtMs)}` : "";
+    elapsedEl.textContent = startedAtMs
+      ? `Started: ${formatClock(new Date(startedAtMs))} | ${formatElapsed(Date.now() - startedAtMs)}`
+      : "";
     renderGoals();
+    renderSync();
   }
 
   let hiddenAt: number | null = null;
