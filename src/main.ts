@@ -13,6 +13,7 @@ import { getSettings, initSettingsState, onSettingsChange } from "./settings/sta
 import { setupMessagesModal } from "./broadcast/messagesModal";
 import { pushGoals, pushStats, pushStatus } from "./broadcast/client";
 import { setupDashboardPanel } from "./dashboard/panel";
+import { setupStatisticModal } from "./dashboard/statisticModal";
 
 const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -101,7 +102,7 @@ async function setupHouse(app: Application): Promise<House> {
 /** Wires up every feature modal (goals/todos/timer/messages/settings) and the top-right button row that opens them. */
 async function setupModals(): Promise<void> {
   const goalsModal = setupGoalsManageModal();
-  await setupGoalsPanel();
+  setupGoalsPanel();
   onGoalsChange(pushGoals);
 
   await initTodosState();
@@ -110,13 +111,14 @@ async function setupModals(): Promise<void> {
   const timerModal = setupTimerModal();
   const settingsModal = setupSettingsModal();
   const messagesModal = setupMessagesModal();
-  const dashboardPanel = setupDashboardPanel();
+  setupDashboardPanel();
+  const statisticModal = setupStatisticModal();
 
   setupTopButtons([
     { label: "Goals", onclick: goalsModal.open },
     { label: "Todos", onclick: todosModal.open },
     { label: "Timer", onclick: timerModal.open },
-    { label: "Dashboard", onclick: dashboardPanel.open },
+    { label: "Statistic", onclick: statisticModal.open },
     { label: "Messages", onclick: messagesModal.open },
     { label: "Settings", onclick: settingsModal.open },
   ]);

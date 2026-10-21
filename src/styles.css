@@ -189,13 +189,18 @@ body {
   opacity: 0.6;
 }
 
-.overview-status-line.status-ok {
+.status-ok {
   color: #8f8;
 }
 
-.overview-status-line.status-error {
+.status-error {
   opacity: 1;
   color: #f88;
+}
+
+.panel-divider {
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+  margin: 12px 0;
 }
 
 .goal-row {
@@ -755,30 +760,3 @@ body {
   font-size: 13px;
 }
 
-#dashboard-tabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
-}
-
-#dashboard-tabs button {
-  background: transparent;
-  color: #eee;
-  border: none;
-  padding: 8px 12px;
-  font-size: 13px;
-  cursor: pointer;
-  opacity: 0.6;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-
-#dashboard-tabs button:hover {
-  opacity: 0.85;
-}
-
-#dashboard-tabs button.active {
-  opacity: 1;
-  border-bottom-color: #eee;
-}
