@@ -1,6 +1,6 @@
 import { AlphaFilter, Application, Assets, Container, Graphics, Polygon, Rectangle, Sprite, Texture } from "pixi.js";
 import { gridToScreen, rooms as roomDefs, ObjectAction, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
-import { TileRect } from "./tileset";
+import { TileOverride, TileRect } from "./tileset";
 import {
   getCurrentActivity,
   RunningActivity,
@@ -9,7 +9,7 @@ import {
 } from "../aw/client";
 import { DEV_MODE, SCALE } from "../config";
 
-const DIM_ALPHA = 0.1;
+const DIM_ALPHA = 0.3;
 const PAN_EASE = 0.15;
 
 /** Preloads every texture referenced by `rooms.ts` so sprites can be built synchronously. */
@@ -18,6 +18,9 @@ export async function preloadRoomAssets(): Promise<void> {
   for (const room of roomDefs) {
     paths.add(room.floor.texture);
     paths.add(room.wall.texture);
+    for (const o of [...(room.floorOverrides ?? []), ...(room.wallOverrides ?? [])]) {
+      if (o.tile) paths.add(o.tile.texture);
+    }
     for (const obj of room.objects) {
       const layers = [...(obj.below ?? []), ...(obj.overlay ?? []), ...(obj.above ?? [])];
       for (const layer of layers) {
@@ -64,6 +67,29 @@ function placeTile(
   container.addChild(sprite);
 }
 
+/**
+ * Like placeTile, but checks `overrides` for this exact (u,v) first — an
+ * override REPLACES the default tile (a matching `tile: null` entry means
+ * render nothing at all here, e.g. a doorway gap in a wall run) rather than
+ * rendering on top of it.
+ */
+function placeTileWithOverrides(
+  container: Container,
+  overrides: TileOverride[] | undefined,
+  defaultTexture: string,
+  defaultRect: TileRect,
+  u: number,
+  v: number,
+  groundOffset: number,
+) {
+  const override = overrides?.find((o) => o.u === u && o.v === v);
+  if (override) {
+    if (override.tile) placeTile(container, override.tile.texture, override.tile, u, v, groundOffset);
+    return; // override.tile === null -> gap, render nothing
+  }
+  placeTile(container, defaultTexture, defaultRect, u, v, groundOffset);
+}
+
 /** Builds the floor + back walls for a room, tiled per its chosen floor/wall variant. */
 function buildFloorAndWalls(room: RoomDef): Container {
   const container = new Container();
@@ -82,14 +108,20 @@ function buildFloorAndWalls(room: RoomDef): Container {
 
   // Walls first: corner joint at the back vertex, then a run of repeating
   // panels along each back edge, capped with an edge tile at the far end.
-  placeTile(container, wall.texture, wall.corner, 0, 0, groundOffset);
-  for (let v = 1; v < room.rows; v++) placeTile(container, wall.texture, wall.left, 0, v, groundOffset);
-  placeTile(container, wall.texture, wall.edgeLeft, 0, room.rows + 1, edgeGroundOffset);
-  for (let u = 1; u < room.cols; u++) placeTile(container, wall.texture, wall.right, u, 0, groundOffset);
-  placeTile(container, wall.texture, wall.edgeRight, room.cols + 1, 0, edgeGroundOffset);
+  const wo = room.wallOverrides;
+  placeTileWithOverrides(container, wo, wall.texture, wall.corner, 0, 0, groundOffset);
+  for (let v = 1; v < room.rows; v++) {
+    placeTileWithOverrides(container, wo, wall.texture, wall.left, 0, v, groundOffset);
+  }
+  placeTileWithOverrides(container, wo, wall.texture, wall.edgeLeft, 0, room.rows + 1, edgeGroundOffset);
+  for (let u = 1; u < room.cols; u++) {
+    placeTileWithOverrides(container, wo, wall.texture, wall.right, u, 0, groundOffset);
+  }
+  placeTileWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols + 1, 0, edgeGroundOffset);
 
   // Floor, drawn back-to-front (painter's algorithm) so each tile's visible
   // "thickness" is correctly covered by the tile in front of it.
+  const fo = room.floorOverrides;
   const cells: { u: number; v: number }[] = [];
   for (let u = 0; u < room.cols; u++) {
     for (let v = 0; v < room.rows; v++) cells.push({ u, v });
@@ -97,7 +129,7 @@ function buildFloorAndWalls(room: RoomDef): Container {
   cells.sort((a, b) => a.u + a.v - (b.u + b.v));
   for (const { u, v } of cells) {
     const tile = u === room.cols - 1 ? floor.edgeBottomRight : u === 0 ? floor.edgeTopLeft : floor.mid;
-    placeTile(container, floor.texture, tile, u, v, 0);
+    placeTileWithOverrides(container, fo, floor.texture, tile, u, v, 0);
   }
 
   return container;
@@ -114,6 +146,10 @@ export class House {
   // Sprites shown only while one of their object's activity labels is the
   // currently-running activity (e.g. a character sprite at the piano).
   private activeOverlays: { labels: string[]; sprite: Sprite }[] = [];
+  // Objects are only clickable in the room you're currently viewing — a
+  // dimmed neighboring room shows what's there, but you have to click into
+  // it first before you can interact with anything inside it.
+  private interactiveObjects: { roomId: string; container: Container }[] = [];
   private viewedRoomId: string;
   private cameraTarget = { x: 0, y: 0 };
   private menuEl: HTMLDivElement | null = null;
@@ -227,6 +263,7 @@ export class House {
       // clicks where it happens to have opaque pixels — not the full box.
       container.interactiveChildren = false;
       container.on("pointertap", (e) => {
+        e.stopPropagation(); // otherwise this bubbles to the room's own click handler too
         if (obj.actions!.length === 1) {
           this.runAction(roomId, obj.actions![0]);
         } else {
@@ -235,9 +272,11 @@ export class House {
         }
       });
       container.on("rightclick", (e) => {
+        e.stopPropagation();
         const native = e.nativeEvent as MouseEvent;
         this.openMenu(roomId, obj.actions!, native.clientX, native.clientY);
       });
+      this.interactiveObjects.push({ roomId, container });
     }
 
     if (DEV_MODE) {
@@ -251,7 +290,11 @@ export class House {
   }
 
   private runAction(roomId: string, action: ObjectAction) {
-    if (action.kind !== "activity") return;
+    if (action.kind === "navigate") {
+      this.setViewedRoom(action.roomId);
+      return;
+    }
+
     const current = getCurrentActivity();
     const op =
       current?.label === action.label ? stopActivity() : startActivity(action.label);
@@ -279,7 +322,7 @@ export class House {
 
     for (const action of actions) {
       const btn = document.createElement("button");
-      btn.textContent = action.kind === "activity" ? action.label : "?";
+      btn.textContent = action.kind === "activity" ? action.label : `Go to ${action.roomId}`;
       btn.onclick = () => {
         this.runAction(roomId, action);
         this.closeMenu();
@@ -302,6 +345,11 @@ export class House {
     this.menuEl = null;
   }
 
+  /** For external UI (e.g. a floor-switcher) — same path as clicking a room/object. */
+  public goToRoom(roomId: string) {
+    this.setViewedRoom(roomId);
+  }
+
   private setViewedRoom(roomId: string) {
     if (this.viewedRoomId === roomId) return;
     this.viewedRoomId = roomId;
@@ -311,8 +359,28 @@ export class House {
   }
 
   private applyFocus() {
+    const viewedLevel = roomDefs.find((r) => r.id === this.viewedRoomId)!.level;
     for (const [id, filter] of this.roomAlphaFilters) {
-      filter.alpha = id === this.viewedRoomId ? 1 : DIM_ALPHA;
+      const room = roomDefs.find((r) => r.id === id)!;
+      const container = this.roomContainers.get(id)!;
+      if (room.level !== viewedLevel) {
+        // A different floor entirely — hide rather than dim, since it's not
+        // spatially related to what's in view the way a same-floor
+        // neighboring room is (that's still worth seeing faintly). Also
+        // disable interactivity: same-footprint rooms on different levels
+        // (e.g. a bedroom directly above the office) can geometrically
+        // overlap on screen, and a hidden room's hitArea would otherwise
+        // still intercept clicks meant for the visible one on top of it.
+        filter.alpha = 0;
+        container.eventMode = "none";
+      } else {
+        filter.alpha = id === this.viewedRoomId ? 1 : DIM_ALPHA;
+        container.eventMode = "static";
+      }
+    }
+
+    for (const { roomId, container } of this.interactiveObjects) {
+      container.eventMode = roomId === this.viewedRoomId ? "static" : "none";
     }
   }
 

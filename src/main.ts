@@ -24,6 +24,23 @@ function formatElapsed(ms: number): string {
   return hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+function setupFloorButtons(house: House) {
+  const container = document.createElement("div");
+  container.id = "floor-buttons";
+  const floors: { label: string; roomId: string }[] = [
+    { label: "2F", roomId: "bedroom" },
+    { label: "1F", roomId: "office" },
+    { label: "B", roomId: "basement" },
+  ];
+  for (const { label, roomId } of floors) {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.onclick = () => house.goToRoom(roomId);
+    container.appendChild(btn);
+  }
+  document.body.appendChild(container);
+}
+
 function renderStatus() {
   const lines = [connectionStatus, roomName];
   if (activity) {
@@ -41,8 +58,25 @@ function renderStatus() {
 
 async function main() {
   const app = new Application();
-  await app.init({ background: "#1a1a1a", resizeTo: window });
+  await app.init({
+    background: "#1a1a1a",
+    resolution: window.devicePixelRatio || 1,
+    autoDensity: true,
+  });
   document.querySelector<HTMLDivElement>("#app")!.appendChild(app.canvas);
+
+  // Pixi's `resizeTo` option has a known bug where it can leave the backing
+  // buffer subtly stretched/mismatched after a resize instead of cleanly
+  // re-syncing (https://github.com/pixijs/pixijs/issues/6510) — driving
+  // resolution + resize together ourselves, on every resize, avoids it.
+  // Not perfect (occasional stretch still happens on some resizes) — good
+  // enough for now, revisit later.
+  function syncRendererSize() {
+    app.renderer.resolution = window.devicePixelRatio || 1;
+    app.renderer.resize(window.innerWidth, window.innerHeight);
+  }
+  syncRendererSize();
+  window.addEventListener("resize", syncRendererSize);
 
   try {
     const info = await getServerInfo();
@@ -58,7 +92,7 @@ async function main() {
   setInterval(renderStatus, 1000);
 
   await preloadRoomAssets();
-  new House(
+  const house = new House(
     app,
     (current) => {
       activity = current;
@@ -69,6 +103,7 @@ async function main() {
       renderStatus();
     },
   );
+  setupFloorButtons(house);
 }
 
 main().catch((err) => {

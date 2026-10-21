@@ -25,6 +25,21 @@ export interface WallVariant {
   corner: TileRect; // shared joint at u=0,v=0
 }
 
+// A tile rect plus which sheet it lives in — self-contained, so an override
+// can reference a tile from a different variant/sheet than the room's default.
+export interface PlacedTile extends TileRect {
+  texture: string;
+}
+
+// Per-tile override for floor/wall placement, keyed by exact (u,v). REPLACES
+// the default tile at that position rather than rendering on top of it —
+// `tile: null` means render nothing there at all (e.g. a doorway gap).
+export interface TileOverride {
+  u: number;
+  v: number;
+  tile: PlacedTile | null;
+}
+
 const SHEET = "/tileset.png";
 
 // Floor tiles are a 32x32 canvas rendered as a 32x16 iso diamond footprint

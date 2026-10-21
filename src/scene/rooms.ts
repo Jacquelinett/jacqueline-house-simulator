@@ -7,7 +7,7 @@
 // a per-room background image. Object sprite layers still use individual
 // files: public/objects/<object-id>.png, referenced via `texture` in
 // `below`/`overlay`/`above`.
-import { FloorVariant, WallVariant, floor1, wall1 } from "./tileset";
+import { FloorVariant, TileOverride, WallVariant, floor1, wall1 } from "./tileset";
 
 export interface SpriteLayer {
   texture?: string; // path to art asset; omitted -> rendered as a placeholder color box
@@ -16,7 +16,9 @@ export interface SpriteLayer {
   offsetY?: number;
 }
 
-export type ObjectAction = { kind: "activity"; label: string };
+export type ObjectAction =
+  | { kind: "activity"; label: string }
+  | { kind: "navigate"; roomId: string }; // e.g. a staircase — jumps the view to another room, no AW tracking
 
 export interface ObjectDef {
   id: string;
@@ -52,23 +54,44 @@ export const TILE_SIZE = 16; // base square tile, px
 export const TILE_WIDTH = TILE_SIZE * 2; // 32 — tile's iso-projected screen width
 export const TILE_HEIGHT = TILE_SIZE; // 16 — tile's iso-projected screen height (2:1 iso)
 
+// Vertical stacking between floors (level: 1 = upper floor, -1 = basement,
+// etc.) is just a fixed screen-Y offset per level — unlike room-to-room
+// connections, floors don't need a chain-resolution system since they're
+// always directly above/below, not at one of 4 directions. Placeholder
+// value until there's real multi-story art to measure against.
+export const FLOOR_HEIGHT = 80;
+
 export function gridToScreen(u: number, v: number) {
   return { x: (u - v) * (TILE_WIDTH / 2), y: (u + v) * (TILE_HEIGHT / 2) };
 }
+
+// Which edge of the anchor this room extends from. Matches the x/y convention
+// used elsewhere (x/u runs top->bottom-right, y/v runs top->bottom-left):
+//  - behindLeft:  extends from anchor's u=0 (back-left/wall) edge, -u
+//  - behindRight: extends from anchor's v=0 (back-right/wall) edge, -v
+//  - frontLeft:   extends from anchor's v=rows (open, left-to-front) edge, +v
+//  - frontRight:  extends from anchor's u=cols (open, right-to-front) edge, +u
+export type ConnectionDirection = "behindLeft" | "behindRight" | "frontLeft" | "frontRight";
 
 interface RoomSpec {
   id: string;
   name: string;
   cols: number; // room size in tiles along the iso "u" axis
   rows: number; // room size in tiles along the iso "v" axis
+  level?: number; // default 0 (ground floor); 1 = upper floor, -1 = basement, etc.
   floor: FloorVariant;
   wall: WallVariant;
+  // Per-tile replacements for the default floor/wall at specific (u,v)
+  // positions — e.g. a gap in a wall run for a doorway between rooms.
+  floorOverrides?: TileOverride[];
+  wallOverrides?: TileOverride[];
   objects: ObjectDef[];
-  // Placement relative to another room's back-left edge, instead of an
-  // absolute pixel offset — stays correct if either room's size changes.
-  // Exactly one room should omit this (the anchor, placed at the grid origin).
+  // Placement relative to another room's edge, instead of an absolute pixel
+  // offset — stays correct if either room's size changes. Exactly one room
+  // should omit this (the anchor, placed at the grid origin).
   connectedTo?: {
-    roomId: string; // this room sits behind-and-left of that room's u=0 edge
+    roomId: string;
+    direction: ConnectionDirection;
     gapTiles: number; // 0 = flush shared edge, 1 = one empty tile row between
   };
 }
@@ -78,6 +101,7 @@ export interface RoomDef extends RoomSpec {
   y: number;
   width: number;
   height: number;
+  level: number; // resolved — always a number, never undefined, unlike RoomSpec's
 }
 
 function resolveRooms(specs: RoomSpec[]): RoomDef[] {
@@ -93,14 +117,28 @@ function resolveRooms(specs: RoomSpec[]): RoomDef[] {
     if (!spec.connectedTo) {
       origin = { u: 0, v: 0 };
     } else {
-      const anchor = originOf(spec.connectedTo.roomId);
-      // This room's own u=cols edge touches the anchor's u=0 edge (one row
-      // of tiles sits between them when gapTiles=1), with v left aligned so
-      // the two rooms share the same depth band along that edge.
-      origin = {
-        u: anchor.u - spec.cols - spec.connectedTo.gapTiles,
-        v: anchor.v,
-      };
+      const { roomId, direction, gapTiles } = spec.connectedTo;
+      const anchor = originOf(roomId);
+      const anchorSpec = specById.get(roomId)!;
+      switch (direction) {
+        // behindLeft/behindRight: this room's own far edge touches the
+        // anchor's u=0/v=0 edge, so the shift uses THIS room's own size
+        // (to clear its own extent before reaching the anchor's edge).
+        case "behindLeft":
+          origin = { u: anchor.u - spec.cols - gapTiles, v: anchor.v };
+          break;
+        case "behindRight":
+          origin = { u: anchor.u, v: anchor.v - spec.rows - gapTiles };
+          break;
+        // frontLeft/frontRight: this room starts right where the anchor's
+        // own extent ends, so the shift uses the ANCHOR's size instead.
+        case "frontLeft":
+          origin = { u: anchor.u, v: anchor.v + anchorSpec.rows + gapTiles };
+          break;
+        case "frontRight":
+          origin = { u: anchor.u + anchorSpec.cols + gapTiles, v: anchor.v };
+          break;
+      }
     }
     origins.set(id, origin);
     return origin;
@@ -109,10 +147,12 @@ function resolveRooms(specs: RoomSpec[]): RoomDef[] {
   return specs.map((spec) => {
     const { u, v } = originOf(spec.id);
     const { x, y } = gridToScreen(u, v);
+    const level = spec.level ?? 0;
     return {
       ...spec,
       x,
-      y,
+      y: y - level * FLOOR_HEIGHT,
+      level,
       width: (spec.cols + spec.rows) * (TILE_WIDTH / 2),
       height: (spec.cols + spec.rows) * (TILE_HEIGHT / 2),
     };
@@ -127,6 +167,11 @@ const roomSpecs: RoomSpec[] = [
     rows: 10,
     floor: floor1,
     wall: wall1,
+    // Doorway toward the DDR Room: it connects along this room's u=0 (left)
+    // wall, so that's the one that needs the gap — DDR's own facing edge
+    // (its u=cols corner) has no wall by default already. Adjust v / widen
+    // to more than one tile once you see how it looks.
+    wallOverrides: [{ u: 0, v: 5, tile: null }],
     objects: [
       {
         id: "piano",
@@ -187,10 +232,10 @@ const roomSpecs: RoomSpec[] = [
     id: "ddr-room",
     name: "DDR Room",
     cols: 10,
-    rows: 10,
+    rows: 6,
     floor: floor1,
     wall: wall1,
-    connectedTo: { roomId: "office", gapTiles: 1 },
+    connectedTo: { roomId: "office", direction: "behindLeft", gapTiles: 1 },
     objects: [
       {
         id: "ddr-cabinet",
@@ -202,6 +247,106 @@ const roomSpecs: RoomSpec[] = [
         height: 64,
         below: [{ color: 0x7a2b5a }],
         actions: [{ kind: "activity", label: "DDR" }],
+      },
+    ],
+  },
+  {
+    id: "living-room",
+    name: "Living Room",
+    cols: 10,
+    rows: 20,
+    floor: floor1,
+    wall: wall1,
+    connectedTo: { roomId: "ddr-room", direction: "frontLeft", gapTiles: 1 },
+    // DDR's facing edge is open by default, but this room's own v=0 wall
+    // (facing back toward DDR) still gets its default wall — needs a gap too.
+    wallOverrides: [{ u: 5, v: 0, tile: null }],
+    objects: [
+      {
+        id: "stairs-down",
+        name: "Stairs Down",
+        x: 32,
+        y: 48,
+        width: 32,
+        height: 32,
+        below: [{ color: 0x8a8a8a }],
+        actions: [{ kind: "navigate", roomId: "basement" }],
+      },
+    ],
+  },
+  {
+    id: "entrance",
+    name: "Entrance",
+    cols: 8,
+    rows: 6,
+    floor: floor1,
+    wall: wall1,
+    // Connects along office's own v=rows (open, south) edge — lands entrance
+    // right below office with no overlap. It also ends up immediately
+    // adjacent to Living Room's open east edge for free: Living Room/DDR
+    // already align to the same u boundary this lands on (u=0), since they
+    // in turn connect off office's u=0 edge. Two separate doors below: one
+    // in entrance's own v=0 wall (faces office, "top right"), one in its
+    // own u=0 wall (faces Living Room, "top left").
+    connectedTo: { roomId: "office", direction: "frontLeft", gapTiles: 1 },
+    wallOverrides: [
+      { u: 4, v: 0, tile: null }, // door to office
+      { u: 0, v: 3, tile: null }, // door to Living Room
+    ],
+    objects: [
+      {
+        id: "stairs-up",
+        name: "Stairs Up",
+        x: 16,
+        y: 16,
+        width: 32,
+        height: 32,
+        below: [{ color: 0x8a8a8a }],
+        actions: [{ kind: "navigate", roomId: "bedroom" }],
+      },
+    ],
+  },
+  {
+    id: "bedroom",
+    name: "Bedroom",
+    cols: 10,
+    rows: 10,
+    level: 1,
+    floor: floor1,
+    wall: wall1,
+    // Same (u,v) footprint as the office, directly below it (no connectedTo
+    // needed — level is a pure vertical offset, not a horizontal relationship).
+    objects: [
+      {
+        id: "stairs-down",
+        name: "Stairs Down",
+        x: -112,
+        y: 48,
+        width: 32,
+        height: 32,
+        below: [{ color: 0x8a8a8a }],
+        actions: [{ kind: "navigate", roomId: "entrance" }],
+      },
+    ],
+  },
+  {
+    id: "basement",
+    name: "Basement",
+    cols: 10,
+    rows: 10,
+    level: -1,
+    floor: floor1,
+    wall: wall1,
+    objects: [
+      {
+        id: "stairs-up",
+        name: "Stairs Up",
+        x: -112,
+        y: 48,
+        width: 32,
+        height: 32,
+        below: [{ color: 0x8a8a8a }],
+        actions: [{ kind: "navigate", roomId: "living-room" }],
       },
     ],
   },
