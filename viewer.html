@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/viewer-styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>What's Jacqueline doing?</title>
+    <script type="module" src="/src/viewer-main.ts" defer></script>
+  </head>
+
+  <body>
+    <div id="app"></div>
+    <div id="viewer-panel">
+      <div id="viewer-status">
+        <div id="viewer-activity">Loading...</div>
+        <div id="viewer-elapsed"></div>
+        <div id="viewer-goals"></div>
+      </div>
+
+      <h2>Leave a note</h2>
+      <input id="viewer-author" placeholder="Your name (optional)" maxlength="50" />
+      <textarea id="viewer-text" rows="3" placeholder="wow you actually lifted today, nice" maxlength="500"></textarea>
+      <button id="viewer-send">Send</button>
+      <div id="viewer-send-status"></div>
+    </div>
+  </body>
+</html>

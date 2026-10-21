@@ -27,4 +27,8 @@ export default defineConfig(() => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+
+  // The public read-only viewer (viewer.html) builds separately via
+  // vite.viewer.config.ts — it's a single self-contained HTML file meant for
+  // val.town/GitHub Pages, not part of the Tauri app's own bundle.
 }));

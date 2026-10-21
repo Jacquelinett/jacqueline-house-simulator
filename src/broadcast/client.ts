@@ -1,5 +1,6 @@
 import { getCurrentActivity } from "../aw/client";
-import { getTodayGoalProgress } from "../goals/progress";
+import { getGoals } from "../goals/state";
+import { getTodayMinutesByLabel } from "../goals/progress";
 import { getSettings } from "../settings/state";
 
 export interface InboxMessage {
@@ -19,7 +20,12 @@ export async function pushStatus(): Promise<void> {
   if (!broadcastUrl) return;
 
   const current = getCurrentActivity();
-  const goals = await getTodayGoalProgress();
+  // Excludes whatever's currently running — the viewer adds that session's
+  // live elapsed time itself from `startedAt`, the same way it already
+  // computes the live "Running for X" clock, instead of this needing to be
+  // re-pushed on a timer just to keep a running goal's progress from
+  // looking stale.
+  const todayMinutesByLabel = await getTodayMinutesByLabel();
 
   try {
     await fetch(`${broadcastUrl}/api/status`, {
@@ -28,11 +34,32 @@ export async function pushStatus(): Promise<void> {
       body: JSON.stringify({
         activityLabel: current?.label ?? null,
         startedAt: current?.startedAt.toISOString() ?? null,
-        goals,
+        todayMinutesByLabel,
       }),
     });
   } catch (err) {
     console.error("[broadcast] failed to push status", err);
+  }
+}
+
+/**
+ * Pushes the raw goal definitions (targets + schedules, not progress) —
+ * called whenever goals change, independent of activity changes, so editing
+ * a goal shows up for viewers immediately instead of waiting for the next
+ * activity switch to piggyback a fresh push on.
+ */
+export async function pushGoals(): Promise<void> {
+  const { broadcastUrl } = getSettings();
+  if (!broadcastUrl) return;
+
+  try {
+    await fetch(`${broadcastUrl}/api/goals`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify(getGoals()),
+    });
+  } catch (err) {
+    console.error("[broadcast] failed to push goals", err);
   }
 }
 

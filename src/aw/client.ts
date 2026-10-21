@@ -127,13 +127,20 @@ export async function resumeActivity(): Promise<RunningActivity | null> {
   return current;
 }
 
-/** Sums today's (local midnight to now) tracked duration for an activity label, in minutes. */
-export async function getTodayDurationMinutes(label: string): Promise<number> {
+/**
+ * Sums today's (local midnight to now) tracked duration for an activity
+ * label, in minutes. `excludeRunning` leaves out whatever's currently
+ * running — useful for a caller that's going to add that session's live
+ * elapsed time back in itself (e.g. computed client-side on a remote viewer
+ * from a pushed `startedAt`, instead of needing a fresh fetch every tick).
+ */
+export async function getTodayDurationMinutes(label: string, options?: { excludeRunning?: boolean }): Promise<number> {
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const events = await client.getEvents(BUCKET_ID, { start: startOfDay, end: now });
   const totalSeconds = events
     .filter((e) => e.data.label === label)
+    .filter((e) => !(options?.excludeRunning && e.data.running))
     .reduce((sum, e) => sum + (e.duration ?? 0), 0);
   return totalSeconds / 60;
 }

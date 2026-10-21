@@ -3,16 +3,14 @@ import { ensureStopwatchBucket, getServerInfo, resumeActivity, RunningActivity }
 import { House, preloadRoomAssets } from "./scene/House";
 import { setupGoalsPanel } from "./goals/panel";
 import { setupGoalsManageModal } from "./goals/manageModal";
-import { initGoalsState } from "./goals/state";
+import { initGoalsState, onGoalsChange } from "./goals/state";
 import { setupTodosModal } from "./todos/modal";
 import { initTodosState } from "./todos/state";
 import { setupTimerModal } from "./timer/modal";
 import { setupSettingsModal } from "./settings/modal";
-import { initSettingsState } from "./settings/state";
+import { getSettings, initSettingsState, onSettingsChange } from "./settings/state";
 import { setupMessagesModal } from "./broadcast/messagesModal";
-import { pushStatus } from "./broadcast/client";
-
-const BROADCAST_PUSH_INTERVAL_MS = 60_000;
+import { pushGoals, pushStatus } from "./broadcast/client";
 
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
 
@@ -131,11 +129,18 @@ async function main() {
       roomName = name;
       renderStatus();
     },
+    { devMode: getSettings().devMode, scale: getSettings().scale },
   );
   setupFloorButtons(house);
 
+  onSettingsChange(() => {
+    house.setDevMode(getSettings().devMode);
+    house.setScale(getSettings().scale);
+  });
+
   const goalsModal = setupGoalsManageModal();
   await setupGoalsPanel();
+  onGoalsChange(pushGoals);
 
   await initTodosState();
   const todosModal = setupTodosModal();
@@ -158,8 +163,11 @@ async function main() {
   });
   if (resumed) house.resumeActivity(resumed);
 
+  // Pushed once on startup so a viewer isn't stuck showing stale data from
+  // last session; after that, `onActivityChange`/`onGoalsChange` above
+  // re-push whenever something that's actually displayed changes.
   pushStatus();
-  setInterval(pushStatus, BROADCAST_PUSH_INTERVAL_MS);
+  pushGoals();
 }
 
 main().catch((err) => {

@@ -481,6 +481,44 @@ body {
   background: rgba(255, 255, 255, 0.2);
 }
 
+#settings-display-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+#settings-display-section h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.settings-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.settings-scale-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.settings-scale-row input[type="range"] {
+  flex: 1;
+}
+
+.settings-scale-value {
+  font-variant-numeric: tabular-nums;
+  width: 32px;
+}
+
 #settings-broadcast-section {
   display: flex;
   flex-direction: column;
