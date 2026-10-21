@@ -34,6 +34,7 @@ export function todayDateString(): string {
 function recurrenceEquals(a: Recurrence, b: Recurrence): boolean {
   if (a.type !== b.type) return false;
   if (a.type === "once" && b.type === "once") return a.date === b.date;
+  if (a.type === "daily") return true;
   if (a.type === "weekly" && b.type === "weekly") {
     return a.daysOfWeek.length === b.daysOfWeek.length && a.daysOfWeek.every((d) => b.daysOfWeek.includes(d));
   }

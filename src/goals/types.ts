@@ -1,5 +1,6 @@
 export type Recurrence =
   | { type: "once"; date: string } // "YYYY-MM-DD", local date
+  | { type: "daily" }
   | { type: "weekly"; daysOfWeek: Weekday[] }
   | { type: "monthly"; occurrences: (1 | 2 | 3 | 4 | "last")[]; dayOfWeek: Weekday };
 

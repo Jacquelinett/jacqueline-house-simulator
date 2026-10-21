@@ -15,6 +15,7 @@ function formatOccurrence(occ: 1 | 2 | 3 | 4 | "last"): string {
 
 export function describeRecurrence(r: Recurrence): string {
   if (r.type === "once") return `once (${r.date})`;
+  if (r.type === "daily") return "daily";
   if (r.type === "weekly") return `weekly: ${r.daysOfWeek.join(", ")}`;
   return `monthly: ${r.occurrences.map(formatOccurrence).join(", ")} ${r.dayOfWeek}`;
 }
@@ -39,7 +40,7 @@ export function buildMinutesInput(initialMinutes?: number): HTMLInputElement {
   return input;
 }
 
-/** Weekly/monthly schedule picker, shared by the "add recurring" form and the inline edit form. */
+/** Daily/weekly/monthly schedule picker, shared by the "add recurring" form and the inline edit form. */
 export function buildRecurrencePicker(initial: Recurrence | null): {
   element: HTMLElement;
   getRecurrence(): Recurrence | null;
@@ -50,6 +51,7 @@ export function buildRecurrencePicker(initial: Recurrence | null): {
   for (const [value, label] of [
     ["weekly", "Weekly"],
     ["monthly", "Monthly"],
+    ["daily", "Daily"],
   ] as const) {
     const opt = document.createElement("option");
     opt.value = value;
@@ -57,6 +59,7 @@ export function buildRecurrencePicker(initial: Recurrence | null): {
     typeSelect.appendChild(opt);
   }
   if (initial?.type === "monthly") typeSelect.value = "monthly";
+  if (initial?.type === "daily") typeSelect.value = "daily";
   container.appendChild(typeSelect);
 
   const detail = document.createElement("span");
@@ -69,6 +72,9 @@ export function buildRecurrencePicker(initial: Recurrence | null): {
 
   function renderDetail() {
     detail.textContent = "";
+    if (typeSelect.value === "daily") {
+      return; // no parameters to pick — every day, nothing more to configure
+    }
     if (typeSelect.value === "weekly") {
       for (const day of WEEKDAYS) {
         const btn = document.createElement("button");
@@ -124,6 +130,9 @@ export function buildRecurrencePicker(initial: Recurrence | null): {
   return {
     element: container,
     getRecurrence(): Recurrence | null {
+      if (typeSelect.value === "daily") {
+        return { type: "daily" };
+      }
       if (typeSelect.value === "weekly") {
         if (selectedDays.size === 0) return null;
         return { type: "weekly", daysOfWeek: [...selectedDays] };

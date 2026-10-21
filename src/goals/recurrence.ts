@@ -31,6 +31,8 @@ export function isScheduledOn(recurrence: Recurrence, date: Date): boolean {
   switch (recurrence.type) {
     case "once":
       return recurrence.date === localDateString(date);
+    case "daily":
+      return true;
     case "weekly":
       return recurrence.daysOfWeek.includes(WEEKDAYS[date.getDay()]);
     case "monthly": {
