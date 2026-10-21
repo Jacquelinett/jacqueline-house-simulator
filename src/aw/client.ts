@@ -64,6 +64,32 @@ export async function startActivity(label: string): Promise<void> {
   }, HEARTBEAT_INTERVAL_SEC * 1000);
 }
 
+/**
+ * Picks back up whatever was still running in AW when the app last closed
+ * (e.g. force-quit mid-practice never calls stopActivity, so the bucket's
+ * latest event is left with `running: true`) — resuming through the same
+ * heartbeat path startActivity uses keeps id/startedAt consistent with
+ * whatever AW decides (merges into the old event if the gap was short,
+ * starts fresh otherwise).
+ */
+export async function resumeActivity(): Promise<RunningActivity | null> {
+  const [latest] = await client.getEvents(BUCKET_ID, { limit: 1 });
+  if (!latest?.data.running) return null;
+  await startActivity(latest.data.label as string);
+  return current;
+}
+
+/** Sums today's (local midnight to now) tracked duration for an activity label, in minutes. */
+export async function getTodayDurationMinutes(label: string): Promise<number> {
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const events = await client.getEvents(BUCKET_ID, { start: startOfDay, end: now });
+  const totalSeconds = events
+    .filter((e) => e.data.label === label)
+    .reduce((sum, e) => sum + (e.duration ?? 0), 0);
+  return totalSeconds / 60;
+}
+
 export async function stopActivity(): Promise<void> {
   if (!current) return;
   if (heartbeatTimer) {

@@ -54,6 +54,300 @@ body {
   background: rgba(255, 255, 255, 0.15);
 }
 
+#goals-panel {
+  position: fixed;
+  bottom: 8px;
+  left: 8px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 8px;
+  min-width: 220px;
+  font-size: 12px;
+  color: #eee;
+}
+
+.goals-empty {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.goal-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.goal-check {
+  flex-shrink: 0;
+}
+
+.goal-text {
+  flex: 1;
+}
+
+.goal-done .goal-text {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.goal-subrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 18px;
+  opacity: 0.75;
+  font-size: 11px;
+}
+
+.goal-subtext {
+  flex: 1;
+}
+
+#goals-manage-button {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+#goals-manage-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+#goals-manage-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.5);
+  align-items: center;
+  justify-content: center;
+}
+
+#goals-manage-overlay.open {
+  display: flex;
+}
+
+#goals-manage-dialog {
+  background: rgba(20, 20, 20, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 16px;
+  width: min(480px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  color: #eee;
+}
+
+#goals-manage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+#goals-manage-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+#goals-manage-close {
+  background: transparent;
+  border: none;
+  color: #eee;
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+#goals-manage-close:hover {
+  color: #f88;
+}
+
+#goals-manage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.goal-manage-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.7;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 10px;
+}
+
+.goal-manage-section-title:first-child {
+  margin-top: 0;
+}
+
+.goal-manage-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.goal-manage-text {
+  flex: 1;
+}
+
+.goal-remove {
+  background: transparent;
+  border: none;
+  color: #eee;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.goal-remove:hover {
+  color: #f88;
+}
+
+.goal-remove-confirm {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.goal-remove-option {
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.goal-remove-option:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.goal-edit {
+  background: transparent;
+  border: none;
+  color: #eee;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 4px;
+  opacity: 0.8;
+}
+
+.goal-edit:hover {
+  opacity: 1;
+}
+
+.goal-edit-form {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.goal-edit-form input,
+.goal-edit-form select {
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+}
+
+.goal-edit-option {
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.goal-edit-option:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+#goals-button-row {
+  display: flex;
+  gap: 4px;
+}
+
+#goals-button-row button {
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#goals-button-row button:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.add-to-today {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+#goal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+#goal-form select,
+#goal-form input {
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 4px;
+  font-size: 12px;
+}
+
+.day-toggle {
+  background: rgba(255, 255, 255, 0.08);
+  color: #eee;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  margin: 2px 2px 0 0;
+}
+
+.day-toggle.selected {
+  background: rgba(120, 200, 255, 0.4);
+  border-color: rgba(120, 200, 255, 0.8);
+}
+
 .object-menu {
   position: fixed;
   z-index: 20;

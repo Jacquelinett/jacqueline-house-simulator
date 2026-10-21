@@ -1,6 +1,9 @@
 import { Application } from "pixi.js";
-import { ensureStopwatchBucket, getServerInfo, RunningActivity } from "./aw/client";
+import { ensureStopwatchBucket, getServerInfo, resumeActivity, RunningActivity } from "./aw/client";
 import { House, preloadRoomAssets } from "./scene/House";
+import { setupGoalsPanel } from "./goals/panel";
+import { setupGoalsManageModal } from "./goals/manageModal";
+import { initGoalsState } from "./goals/state";
 
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
 
@@ -104,6 +107,15 @@ async function main() {
     },
   );
   setupFloorButtons(house);
+  await initGoalsState();
+  const manageModal = setupGoalsManageModal();
+  await setupGoalsPanel(manageModal.open);
+
+  const resumed = await resumeActivity().catch((err) => {
+    console.error("[aw] failed to resume previous activity", err);
+    return null;
+  });
+  if (resumed) house.resumeActivity(resumed);
 }
 
 main().catch((err) => {

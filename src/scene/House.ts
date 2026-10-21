@@ -1,5 +1,5 @@
 import { AlphaFilter, Application, Assets, Container, Graphics, Polygon, Rectangle, Sprite, Texture } from "pixi.js";
-import { gridToScreen, rooms as roomDefs, ObjectAction, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
+import { findRoomForActivityLabel, gridToScreen, rooms as roomDefs, ObjectAction, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
 import { TileOverride, TileRect } from "./tileset";
 import {
   getCurrentActivity,
@@ -348,6 +348,14 @@ export class House {
   /** For external UI (e.g. a floor-switcher) — same path as clicking a room/object. */
   public goToRoom(roomId: string) {
     this.setViewedRoom(roomId);
+  }
+
+  /** Re-applies a running activity recovered from AW on startup — same visual effects as clicking its object. */
+  public resumeActivity(current: RunningActivity) {
+    this.updateActiveOverlays(current);
+    const roomId = findRoomForActivityLabel(current.label);
+    if (roomId) this.setViewedRoom(roomId);
+    this.onActivityChange(current);
   }
 
   private setViewedRoom(roomId: string) {
