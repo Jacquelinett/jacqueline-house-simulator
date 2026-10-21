@@ -8,6 +8,12 @@ import { AWClient } from "aw-client";
 const BUCKET_ID = "aw-stopwatch";
 const BUCKET_TYPE = "general.stopwatch";
 const BUCKET_HOSTNAME = "unknown";
+// AW's category rules only match an event's `app`/`title` fields (not
+// arbitrary data keys) — `label` alone is invisible to categorization, which
+// is why nothing was showing up grouped in the dashboard. Set up a category
+// rule in AW's Settings matching against these (e.g. a regex on `title`,
+// or on `app` to bucket everything from this app under one category).
+const APP_NAME = "House Simulator";
 
 const HEARTBEAT_INTERVAL_SEC = 10;
 const PULSETIME_SEC = HEARTBEAT_INTERVAL_SEC * 2;
@@ -42,7 +48,7 @@ export async function startActivity(label: string): Promise<void> {
   const timestamp = new Date();
   await client.heartbeat(BUCKET_ID, PULSETIME_SEC, {
     timestamp,
-    data: { running: true, label },
+    data: { running: true, label, title: label, app: APP_NAME },
   });
 
   const [latest] = await client.getEvents(BUCKET_ID, { limit: 1 });
@@ -52,7 +58,7 @@ export async function startActivity(label: string): Promise<void> {
     client
       .heartbeat(BUCKET_ID, PULSETIME_SEC, {
         timestamp: new Date(),
-        data: { running: true, label },
+        data: { running: true, label, title: label, app: APP_NAME },
       })
       .catch((err) => console.error("[aw] heartbeat failed", err));
   }, HEARTBEAT_INTERVAL_SEC * 1000);
@@ -71,7 +77,7 @@ export async function stopActivity(): Promise<void> {
     id: current.id,
     timestamp: current.startedAt,
     duration,
-    data: { running: false, label: current.label },
+    data: { running: false, label: current.label, title: current.label, app: APP_NAME },
   });
   current = null;
 }

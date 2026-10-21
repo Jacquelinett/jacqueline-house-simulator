@@ -9,7 +9,7 @@ import {
 } from "../aw/client";
 import { DEV_MODE, SCALE } from "../config";
 
-const DIM_ALPHA = 0.3;
+const DIM_ALPHA = 0.15;
 const PAN_EASE = 0.15;
 
 /** Preloads every texture referenced by `rooms.ts` so sprites can be built synchronously. */
