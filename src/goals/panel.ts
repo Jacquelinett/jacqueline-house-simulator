@@ -31,9 +31,14 @@ export async function setupGoalsPanel(): Promise<void> {
   const panel = document.createElement("div");
   panel.id = "goals-panel";
   document.body.appendChild(panel);
-  // Read-only (no buttons/links of its own), so the whole panel can safely
-  // double as its own drag handle — nothing inside it to conflict with.
-  makeDraggable(panel, panel);
+
+  // No close button — this panel is always visible, unlike the floating
+  // Dashboard — just a title, which doubles as the drag handle.
+  const header = document.createElement("div");
+  header.id = "goals-panel-header";
+  header.textContent = "Today Overview";
+  panel.appendChild(header);
+  makeDraggable(panel, header);
 
   const list = document.createElement("div");
   list.id = "goals-list";

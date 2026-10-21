@@ -52,7 +52,7 @@ export function setupDashboardPanel(): { open: () => void } {
 
   const allTimeActivityHeading = document.createElement("h3");
   allTimeActivityHeading.className = "dashboard-section-heading";
-  allTimeActivityHeading.textContent = "All-Time Activity";
+  allTimeActivityHeading.textContent = "All-Time Activity (top 5)";
   activityPane.appendChild(allTimeActivityHeading);
 
   const pie = document.createElement("div");
@@ -125,14 +125,18 @@ export function setupDashboardPanel(): { open: () => void } {
       return;
     }
 
+    // Capped so this doesn't just grow forever as more activities get added
+    // — already sorted by all-time total, so "top 5" is the 5 biggest.
+    const topStats = stats.slice(0, 5);
+
     // The pie represents each activity's share of average daily time (how a
     // typical day splits up), not all-time totals — a newer activity
     // shouldn't look negligible forever just because it started later.
-    const dailyTotal = stats.reduce((sum, s) => sum + s.averageMinutesPerDay, 0);
+    const dailyTotal = topStats.reduce((sum, s) => sum + s.averageMinutesPerDay, 0);
     if (dailyTotal > 0) {
       let cursor = 0;
       const stops: string[] = [];
-      for (const s of stats) {
+      for (const s of topStats) {
         if (s.averageMinutesPerDay <= 0) continue;
         const start = (cursor / dailyTotal) * 100;
         cursor += s.averageMinutesPerDay;
@@ -144,7 +148,7 @@ export function setupDashboardPanel(): { open: () => void } {
       pie.style.background = "rgba(255, 255, 255, 0.1)";
     }
 
-    if (stats.every((s) => s.totalMinutesAllTime === 0)) {
+    if (topStats.every((s) => s.totalMinutesAllTime === 0)) {
       const empty = document.createElement("div");
       empty.className = "goals-empty";
       empty.textContent = "No tracked time yet";
@@ -152,7 +156,7 @@ export function setupDashboardPanel(): { open: () => void } {
       return;
     }
 
-    for (const s of stats) {
+    for (const s of topStats) {
       const row = document.createElement("div");
       row.className = "dashboard-row";
 

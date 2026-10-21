@@ -94,6 +94,13 @@ body {
   color: #eee;
 }
 
+#goals-panel-header {
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.9;
+  margin-bottom: 2px;
+}
+
 .floating-panel {
   display: none;
   position: fixed;
