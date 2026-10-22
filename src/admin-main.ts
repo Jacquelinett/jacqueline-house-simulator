@@ -295,7 +295,11 @@ async function renderObjectTypes(body: HTMLElement) {
 
 async function renderRooms(body: HTMLElement) {
   body.textContent = "";
-  const rooms = await adminFetch<RoomSpecWire[]>("/api/admin/rooms");
+  const [rooms, objectTypes] = await Promise.all([
+    adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
+    adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
+  ]);
+  const typeIds = Object.keys(objectTypes);
 
   for (const room of rooms) {
     const block = document.createElement("div");
@@ -308,28 +312,67 @@ async function renderRooms(body: HTMLElement) {
 
     const table = document.createElement("table");
     table.className = "admin-table";
-    table.innerHTML = "<tr><th>Object</th><th>Type</th><th>x,y</th><th>Enabled</th><th></th></tr>";
+    table.innerHTML = "<tr><th>Object</th><th>Type</th><th>x</th><th>y</th><th>Enabled</th><th></th></tr>";
     for (const obj of room.objects) {
       const row = document.createElement("tr");
-      row.innerHTML = `<td>${obj.id}</td><td>${obj.type}</td><td>${obj.x}, ${obj.y}</td>`;
+      const idCell = document.createElement("td");
+      idCell.textContent = obj.id;
+      row.appendChild(idCell);
 
-      const enabledCell = document.createElement("td");
+      const typeCell = document.createElement("td");
+      const typeSelect = document.createElement("select");
+      for (const typeId of typeIds) {
+        const opt = document.createElement("option");
+        opt.value = typeId;
+        opt.textContent = typeId;
+        opt.selected = typeId === obj.type;
+        typeSelect.appendChild(opt);
+      }
+      typeCell.appendChild(typeSelect);
+      row.appendChild(typeCell);
+
+      const xInput = document.createElement("input");
+      xInput.type = "number";
+      xInput.value = String(obj.x);
+      xInput.style.width = "60px";
+      const xCell = document.createElement("td");
+      xCell.appendChild(xInput);
+      row.appendChild(xCell);
+
+      const yInput = document.createElement("input");
+      yInput.type = "number";
+      yInput.value = String(obj.y);
+      yInput.style.width = "60px";
+      const yCell = document.createElement("td");
+      yCell.appendChild(yInput);
+      row.appendChild(yCell);
+
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = obj.enabled;
-      checkbox.onchange = async () => {
+      const enabledCell = document.createElement("td");
+      enabledCell.appendChild(checkbox);
+      row.appendChild(enabledCell);
+
+      async function saveObject() {
         try {
           await adminFetch(`/api/admin/rooms/${room.id}/objects/${obj.id}`, {
             method: "PATCH",
-            body: JSON.stringify({ type: obj.type, x: obj.x, y: obj.y, enabled: checkbox.checked }),
+            body: JSON.stringify({
+              type: typeSelect.value,
+              x: Number(xInput.value),
+              y: Number(yInput.value),
+              enabled: checkbox.checked,
+            }),
           });
         } catch (err) {
           showError(err);
-          checkbox.checked = !checkbox.checked;
         }
-      };
-      enabledCell.appendChild(checkbox);
-      row.appendChild(enabledCell);
+      }
+      typeSelect.onchange = saveObject;
+      xInput.onchange = saveObject;
+      yInput.onchange = saveObject;
+      checkbox.onchange = saveObject;
 
       const actionCell = document.createElement("td");
       const deleteBtn = document.createElement("button");
@@ -349,6 +392,46 @@ async function renderRooms(body: HTMLElement) {
       table.appendChild(row);
     }
     block.appendChild(table);
+
+    const addObjectForm = document.createElement("form");
+    addObjectForm.className = "admin-form";
+    const newIdInput = document.createElement("input");
+    newIdInput.placeholder = "object id";
+    newIdInput.required = true;
+    const newTypeSelect = document.createElement("select");
+    for (const typeId of typeIds) {
+      const opt = document.createElement("option");
+      opt.value = typeId;
+      opt.textContent = typeId;
+      newTypeSelect.appendChild(opt);
+    }
+    const newXInput = document.createElement("input");
+    newXInput.type = "number";
+    newXInput.placeholder = "x";
+    newXInput.value = "0";
+    newXInput.style.width = "60px";
+    const newYInput = document.createElement("input");
+    newYInput.type = "number";
+    newYInput.placeholder = "y";
+    newYInput.value = "0";
+    newYInput.style.width = "60px";
+    const addObjectBtn = document.createElement("button");
+    addObjectBtn.type = "submit";
+    addObjectBtn.textContent = "Add Object";
+    addObjectForm.append(newIdInput, newTypeSelect, newXInput, newYInput, addObjectBtn);
+    addObjectForm.onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        await adminFetch(`/api/admin/rooms/${room.id}/objects`, {
+          method: "POST",
+          body: JSON.stringify({ id: newIdInput.value, type: newTypeSelect.value, x: Number(newXInput.value), y: Number(newYInput.value) }),
+        });
+        renderRooms(body);
+      } catch (err) {
+        showError(err);
+      }
+    };
+    block.appendChild(addObjectForm);
 
     const deleteRoomBtn = document.createElement("button");
     deleteRoomBtn.textContent = "Delete Room";
