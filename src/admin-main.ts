@@ -410,20 +410,39 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
     setTimeout(() => row.classList.remove("admin-row-highlight"), 1500);
   }
 
-  /** Full scene rebuild — only for changes a live move can't express (type, enabled, add/remove). x/y-only edits use moveObject() instead (see applyPosition below), which never tears down the canvas. */
+  /**
+   * Full scene rebuild — only for changes a live move can't express (type,
+   * enabled, add/remove). x/y-only edits use moveObject() instead (see
+   * applyPosition below), which never tears down the canvas.
+   *
+   * Self-contained error handling (not left to callers) on purpose: every
+   * call site below fires this without awaiting/catching it, so a thrown
+   * error here would otherwise become a silent unhandled rejection —
+   * exactly how the connectedTo bug this fixed manifested as "the preview
+   * just doesn't update," not a visible error.
+   */
   async function renderPreview() {
     placingObjectId = null;
-    currentApp?.destroy();
-    previewContainer.textContent = "";
+    try {
+      currentApp?.destroy();
+      previewContainer.textContent = "";
 
-    // Single-room spec, connectedTo stripped — nothing else exists to
-    // connect to, and nothing else exists to pan to, which is the point.
-    setRooms(roomSpecsFromWire([{ ...room, objects: draft }]));
+      // Single-room spec, connectedTo stripped — nothing else exists to
+      // connect to, and nothing else exists to pan to, which is the point.
+      // Without this, any room that normally connects to another one
+      // (most of them — only office/bedroom/basement have no connectedTo
+      // at all) sent resolveRooms() chasing a connectedTo.roomId that
+      // doesn't exist in this one-room array, throwing inside setRooms()
+      // before the Pixi app ever got far enough to render anything.
+      setRooms(roomSpecsFromWire([{ ...room, objects: draft, connectedTo: undefined }]));
 
-    currentApp = new Application();
-    await currentApp.init({ width: 420, height: 320, background: 0x222228 });
-    previewContainer.appendChild(currentApp.canvas);
-    currentRenderer = new AdminPreviewRenderer(currentApp, () => {}, highlightRow);
+      currentApp = new Application();
+      await currentApp.init({ width: 420, height: 320, background: 0x222228 });
+      previewContainer.appendChild(currentApp.canvas);
+      currentRenderer = new AdminPreviewRenderer(currentApp, () => {}, highlightRow);
+    } catch (err) {
+      showError(err);
+    }
   }
 
   /** 2 decimals is plenty — most existing objects aren't tile-aligned at all, so this is routinely a non-round fraction, not floating-point noise to hide. */
