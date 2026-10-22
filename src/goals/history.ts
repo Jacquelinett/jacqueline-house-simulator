@@ -3,7 +3,7 @@ import { createJsonFileStore } from "../lib/jsonFileStore";
 import { createPersistedState } from "../lib/persistedState";
 import { addDaysToDateString, isScheduledOn, parseDateString } from "./recurrence";
 import { getGoals, persistGoals, todayDateString } from "./state";
-import { formatStreak } from "./ui";
+import { formatStreak } from "./format";
 import { Goal } from "./types";
 
 export interface GoalHistoryEntry {

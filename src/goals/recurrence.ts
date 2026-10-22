@@ -1,6 +1,6 @@
 import { Recurrence, Weekday } from "./types";
 
-const WEEKDAYS: Weekday[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export const WEEKDAYS: Weekday[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export function localDateString(date: Date): string {
   const y = date.getFullYear();

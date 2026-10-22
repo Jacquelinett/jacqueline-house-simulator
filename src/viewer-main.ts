@@ -2,7 +2,7 @@ import { HouseViewer, preloadRoomAssets } from "./scene/viewer";
 import { Goal } from "./goals/types";
 import { describeScheduleForDate, groupGoalsForDate } from "./goals/goalGroups";
 import { addDaysToDateString, localDateString, parseDateString } from "./goals/recurrence";
-import { formatMinutes, formatStreak } from "./goals/ui";
+import { formatMinutes, formatStreak } from "./goals/format";
 import { buildModal } from "./ui/modal";
 import { buildFloatingPanel } from "./ui/draggablePanel";
 import { buildToggleGroup } from "./ui/toggleGroup";

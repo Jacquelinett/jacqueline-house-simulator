@@ -5,7 +5,7 @@ import { onGoalsChange } from "../goals/state";
 import { describeScheduleForDate } from "../goals/goalGroups";
 import { describeStreak, getGoalHistory } from "../goals/history";
 import { localDateString, parseDateString } from "../goals/recurrence";
-import { formatMinutes } from "../goals/ui";
+import { formatMinutes } from "../goals/format";
 import { buildDashboardSections, renderActivityList, renderGoalList } from "./render";
 
 const REFRESH_INTERVAL_MS = 30_000;

@@ -13,6 +13,10 @@ dist-ssr
 dist-viewer
 *.local
 
+# Server's local SQLite DB + hand-edited server-only config (val.town
+# secret) — personal data and credentials, never committed.
+server/data/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

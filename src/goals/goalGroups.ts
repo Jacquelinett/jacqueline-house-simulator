@@ -1,5 +1,5 @@
 import { isScheduledOn, localDateString } from "./recurrence";
-import { describeRecurrence } from "./ui";
+import { describeRecurrence } from "./format";
 import { Goal, Recurrence } from "./types";
 
 export interface GoalGroup {

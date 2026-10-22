@@ -1,4 +1,4 @@
-import { formatMinutes } from "../goals/ui";
+import { formatMinutes } from "../goals/format";
 import { toCssColor } from "../scene/activities";
 import type { ActivityStat } from "./stats";
 

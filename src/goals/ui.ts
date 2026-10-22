@@ -1,38 +1,8 @@
 import { getAllActivityLabels } from "../scene/activities";
+import { WEEKDAYS } from "./recurrence";
 import { Recurrence, Weekday } from "./types";
 
-export const WEEKDAYS: Weekday[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-export function formatMinutes(min: number): string {
-  const h = Math.floor(min / 60);
-  const m = Math.round(min % 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
-/**
- * "Streak: 3 (best 7)", or null if there's nothing worth showing yet (no
- * current streak and never had one). Pure formatting, no history/AW
- * dependency — lives here rather than in goals/history.ts (which does
- * depend on AW, via getDurationMinutes) so the viewer can also use it: the
- * desktop app computes `current` itself from the history log
- * (history.ts's describeStreak), while the viewer gets it pre-computed
- * from a val.town push instead (it has no history log to derive it from).
- */
-export function formatStreak(current: number, best: number): string | null {
-  if (current === 0 && best === 0) return null;
-  return `Streak: ${current} (best ${best})`;
-}
-
-function formatOccurrence(occ: 1 | 2 | 3 | 4 | "last"): string {
-  return occ === "last" ? "last" : `${occ}${["th", "st", "nd", "rd"][occ] ?? "th"}`;
-}
-
-export function describeRecurrence(r: Recurrence): string {
-  if (r.type === "once") return `once (${r.date})`;
-  if (r.type === "daily") return "daily";
-  if (r.type === "weekly") return `weekly: ${r.daysOfWeek.join(", ")}`;
-  return `monthly: ${r.occurrences.map(formatOccurrence).join(", ")} ${r.dayOfWeek}`;
-}
+export { formatMinutes, describeRecurrence, formatStreak } from "./format";
 
 export function buildActivitySelect(): HTMLSelectElement {
   const select = document.createElement("select");
