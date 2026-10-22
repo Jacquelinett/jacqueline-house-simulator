@@ -47,6 +47,14 @@ export interface ObjectDef {
   // now typically just one entry. offsetX/offsetY relative to the object's
   // own (0,0) top-left, same as any other SpriteLayer.
   overlay?: SpriteLayer[];
+  // Carried through from the type's own anchorX/anchorY (see
+  // ObjectTypeDef) purely so the admin tool's placement code can read it
+  // off the same resolved ObjectDef it already has in hand, instead of a
+  // second lookup into objectTypes by type id. Ignored by renderer.ts/
+  // House.ts/viewer.ts — x/y above is still always the top-left pixel,
+  // unaffected by this.
+  anchorX?: number;
+  anchorY?: number;
 }
 
 // --- Object types: what an object looks like + what it does, independent
@@ -183,6 +191,8 @@ function resolveObjectPlacement(placement: ObjectPlacement): ObjectDef {
     overlay: type.overlay,
     above: type.above,
     actions: placement.actions ?? type.actions,
+    anchorX: type.anchorX,
+    anchorY: type.anchorY,
   };
 }
 

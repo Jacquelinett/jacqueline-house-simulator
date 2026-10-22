@@ -609,9 +609,16 @@ function cloneObjects(objects: ObjectPlacementWire[]): ObjectPlacementWire[] {
  * what was loaded. Cancel/closing the modal without saving discards the
  * draft entirely — nothing reaches the server until Save.
  */
-async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved: () => void) {
+async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string, ObjectTypeDef>, onSaved: () => void) {
+  const typeIds = Object.keys(objectTypes);
   const original = cloneObjects(room.objects);
   const draft = cloneObjects(room.objects);
+
+  /** Pixel offset from a type's top-left to its "floor contact" point — see ObjectTypeDef.anchorX/anchorY. Unknown/unset types default to (0,0), i.e. today's behavior. */
+  function anchorFor(typeId: string): { x: number; y: number } {
+    const type = objectTypes[typeId];
+    return { x: type?.anchorX ?? 0, y: type?.anchorY ?? 0 };
+  }
 
   const modal = buildModal(`Edit Room: ${room.name}`, { size: "large", resizable: true });
 
@@ -734,7 +741,12 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
       typeCell.appendChild(typeSelect);
       row.appendChild(typeCell);
 
-      const displayed = tileMode ? screenToGrid(obj.x, obj.y) : { u: obj.x, v: obj.y };
+      // In tile mode the displayed coordinate is the anchor's tile, not the
+      // sprite's raw top-left — screenToGrid(x + anchorX, y + anchorY)
+      // rather than screenToGrid(x, y) — so it round-trips correctly
+      // through applyPosition()/the Place button below.
+      const anchor = anchorFor(obj.type);
+      const displayed = tileMode ? screenToGrid(obj.x + anchor.x, obj.y + anchor.y) : { u: obj.x, v: obj.y };
       const xInput = document.createElement("input");
       xInput.type = "number";
       xInput.value = String(round2(displayed.u));
@@ -767,8 +779,9 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
         const enteredV = Number(yInput.value);
         if (tileModeCheckbox.checked) {
           const screen = gridToScreen(enteredU, enteredV);
-          obj.x = screen.x;
-          obj.y = screen.y;
+          const a = anchorFor(obj.type);
+          obj.x = screen.x - a.x;
+          obj.y = screen.y - a.y;
         } else {
           obj.x = enteredU;
           obj.y = enteredV;
@@ -811,14 +824,15 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
         setPlacingUI(true);
         currentRenderer?.enablePlacement(obj.id, (u, v) => {
           const screen = gridToScreen(u, v);
-          obj.x = screen.x;
-          obj.y = screen.y;
+          const a = anchorFor(obj.type);
+          obj.x = screen.x - a.x;
+          obj.y = screen.y - a.y;
           if (tileModeCheckbox.checked) {
             xInput.value = String(round2(u));
             yInput.value = String(round2(v));
           } else {
-            xInput.value = String(screen.x);
-            yInput.value = String(screen.y);
+            xInput.value = String(obj.x);
+            yInput.value = String(obj.y);
           }
           updateSaveState();
           currentRenderer?.moveObject(obj.id, obj.x, obj.y);
@@ -929,7 +943,6 @@ async function renderRooms(body: HTMLElement) {
     adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
     adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
   ]);
-  const typeIds = Object.keys(objectTypes);
 
   const table = document.createElement("table");
   table.className = "admin-table";
@@ -941,7 +954,7 @@ async function renderRooms(body: HTMLElement) {
     const actionCell = document.createElement("td");
     const editBtn = document.createElement("button");
     editBtn.textContent = "Edit";
-    editBtn.onclick = () => openRoomEditModal(room, typeIds, () => renderRooms(body));
+    editBtn.onclick = () => openRoomEditModal(room, objectTypes, () => renderRooms(body));
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {

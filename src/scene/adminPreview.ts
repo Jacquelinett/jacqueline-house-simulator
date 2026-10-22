@@ -172,12 +172,18 @@ export class AdminPreviewRenderer extends SceneRenderer {
     this.hoverDiamond = diamond;
     container.addChild(diamond);
 
+    const anchorX = entry.def.anchorX ?? 0;
+    const anchorY = entry.def.anchorY ?? 0;
     const drawAt = (u: number, v: number) => {
       const back = gridToScreen(u, v);
       const right = gridToScreen(u + 1, v);
       const frontPt = gridToScreen(u + 1, v + 1);
       const left = gridToScreen(u, v + 1);
-      ghost.position.set(back.x, back.y);
+      // Ghost's anchor point (not its top-left) lands on the tile's back
+      // corner — the diamond itself stays drawn at the plain tile corners,
+      // so the ghost visibly shifts to show where its anchor sits relative
+      // to the tile, exactly the alignment tile-mode placement produces.
+      ghost.position.set(back.x - anchorX, back.y - anchorY);
       diamond
         .clear()
         .poly([back.x, back.y, right.x, right.y, frontPt.x, frontPt.y, left.x, left.y])
