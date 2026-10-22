@@ -646,10 +646,10 @@ async function renderObjectTypes(body: HTMLElement) {
 
   const table = document.createElement("table");
   table.className = "admin-table";
-  table.innerHTML = "<tr><th>Id</th><th>Name</th><th>Size</th><th>Anchor</th><th></th></tr>";
+  table.innerHTML = "<tr><th>Name</th><th>Size</th><th>Anchor</th><th></th></tr>";
   for (const [id, type] of Object.entries(types)) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td><code>${id}</code></td><td>${type.name}</td><td>${type.width}×${type.height}</td><td>${type.anchorX ?? 0}, ${type.anchorY ?? 0}</td>`;
+    row.innerHTML = `<td>${type.name}</td><td>${type.width}×${type.height}</td><td>${type.anchorX ?? 0}, ${type.anchorY ?? 0}</td>`;
 
     const actionCell = document.createElement("td");
     const editBtn = document.createElement("button");
@@ -816,20 +816,18 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
 
   function renderTable() {
     const tileMode = tileModeCheckbox.checked;
-    table.innerHTML = `<tr><th>Object</th><th>Type</th><th>${tileMode ? "tile u" : "x"}</th><th>${tileMode ? "tile v" : "y"}</th><th>Enabled</th><th></th><th></th></tr>`;
+    table.innerHTML = `<tr><th>Type</th><th>${tileMode ? "tile u" : "x"}</th><th>${tileMode ? "tile v" : "y"}</th><th>Enabled</th><th></th><th></th></tr>`;
     for (const obj of draft) {
       const row = document.createElement("tr");
+      // Row id still keys off the real/placeholder numeric id internally
+      // (DOM scroll/highlight target) — just never shown to the admin.
       row.id = `modal-obj-row-${obj.id}`;
-
-      const idCell = document.createElement("td");
-      idCell.textContent = obj.id !== undefined ? String(obj.id) : "(new)";
-      row.appendChild(idCell);
 
       const typeSelect = document.createElement("select");
       for (const typeId of typeIds) {
         const opt = document.createElement("option");
         opt.value = typeId;
-        opt.textContent = typeId;
+        opt.textContent = objectTypes[typeId]?.name ?? typeId;
         opt.selected = Number(typeId) === obj.type;
         typeSelect.appendChild(opt);
       }
@@ -973,7 +971,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
     for (const typeId of typeIds) {
       const opt = document.createElement("option");
       opt.value = typeId;
-      opt.textContent = typeId;
+      opt.textContent = objectTypes[typeId]?.name ?? typeId;
       newTypeSelect.appendChild(opt);
     }
     const newXInput = document.createElement("input");
@@ -1270,7 +1268,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     for (const r of candidates) {
       const opt = document.createElement("option");
       opt.value = String(r.id);
-      opt.textContent = `${r.name} (${r.id})`;
+      opt.textContent = r.name;
       roomSelect.appendChild(opt);
     }
     form.append(document.createTextNode("Room:"), roomSelect);
@@ -1327,7 +1325,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
 
     const target = allRooms.find((r) => r.id === entry.roomId);
     const roomCell = document.createElement("td");
-    roomCell.textContent = target ? `${target.name} (${target.id})` : `(missing: ${entry.roomId})`;
+    roomCell.textContent = target ? target.name : `(missing: ${entry.roomId})`;
     row.appendChild(roomCell);
 
     const edgeCell = document.createElement("td");
@@ -1429,7 +1427,7 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
 
     const baseRoomCell = document.createElement("td");
     const baseRoom = rooms.find((r) => r.id === floor.baseRoomId);
-    baseRoomCell.textContent = baseRoom ? `${baseRoom.name} (${baseRoom.id})` : `(missing: ${floor.baseRoomId})`;
+    baseRoomCell.textContent = baseRoom ? baseRoom.name : `(missing: ${floor.baseRoomId})`;
     row.appendChild(baseRoomCell);
 
     const floorActionCell = document.createElement("td");
@@ -1448,7 +1446,7 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
       for (const r of options) {
         const opt = document.createElement("option");
         opt.value = String(r.id);
-        opt.textContent = `${r.name} (${r.id})`;
+        opt.textContent = r.name;
         opt.selected = r.id === floor.baseRoomId;
         select.appendChild(opt);
       }
@@ -1495,7 +1493,7 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
   for (const r of availableBaseRooms) {
     const opt = document.createElement("option");
     opt.value = String(r.id);
-    opt.textContent = `${r.name} (${r.id})`;
+    opt.textContent = r.name;
     floorBaseRoomSelect.appendChild(opt);
   }
   const addFloorBtn = document.createElement("button");
@@ -1521,7 +1519,7 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
 /** One `<li>` per node, nested `<ul>`s for children — a plain indented tree, not a graphical chart, consistent with the rest of this tool's plain-table style. */
 function buildTreeNodeEl(node: FloorTreeNode): HTMLLIElement {
   const li = document.createElement("li");
-  li.textContent = `${node.room.name} (${node.room.id})`;
+  li.textContent = node.room.name;
   if (node.children.length > 0) {
     const ul = document.createElement("ul");
     for (const child of node.children) ul.appendChild(buildTreeNodeEl(child));
@@ -1564,7 +1562,7 @@ async function renderRooms(body: HTMLElement) {
     for (const room of roomsForTab) {
       const row = document.createElement("tr");
       const level = membership.get(room.id) ?? 0;
-      row.innerHTML = `<td>${room.name} (${room.id})</td><td>${room.cols}×${room.rows}</td><td>${level}</td><td>${room.objects.length}</td>`;
+      row.innerHTML = `<td>${room.name}</td><td>${room.cols}×${room.rows}</td><td>${level}</td><td>${room.objects.length}</td>`;
 
       const actionCell = document.createElement("td");
       const editBtn = document.createElement("button");
