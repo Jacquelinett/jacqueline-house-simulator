@@ -16,6 +16,12 @@ There is no test suite yet (deliberate — not yet decided what's worth testing 
 
 The Tauri app (`npm run build`) and the public viewer (`npm run build:viewer`) are two **separate** Vite builds (`vite.config.ts` vs `vite.viewer.config.ts`) from the same `src/`. Building one does not touch the other's output directory.
 
+## Guiding principle: reuse over duplication
+
+This repo has two independent build targets (desktop app, public viewer) sharing one `src/`, which creates constant temptation to just paste a second copy of something instead of extracting it. Don't. Default to making things reusable — a shared function, a shared component builder, a shared CSS rule — rather than writing a second near-identical version. If you're about to duplicate logic, markup, or styling that already exists elsewhere in the repo, that's a sign to extract/reuse instead, not a sign to move faster.
+
+Duplicating is only acceptable with a genuinely good reason (the two things are only superficially similar and will diverge, or a shared abstraction would need so many flags/branches it's less readable than two small copies) — and that reason should be stated in a comment or commit message, not just assumed. "It was faster this way" is not a good reason. See "Shared rendering between the desktop app and the viewer", "Shared panel chrome", "CSS sharing", and "Shared persistence" below for the concrete pattern this has already produced repeatedly in this codebase: split "compute/data" from "render/build," and share the render/build half even when the data half must stay separate.
+
 ## Architecture
 
 ### The three things in this repo
