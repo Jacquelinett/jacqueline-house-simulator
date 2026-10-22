@@ -194,6 +194,16 @@ body {
   margin-bottom: 8px;
 }
 
+/* A placement/object-type's action-override editor (openRoomEditModal's
+   per-row "Actions" cell, and the Object Types tab's default-actions
+   editor) — one .admin-form-styled row per action, stacked vertically. */
+.admin-action-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
 #admin-preview-canvas {
   border: 1px solid var(--border);
   border-radius: 6px;

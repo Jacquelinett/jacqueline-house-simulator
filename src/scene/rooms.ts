@@ -21,9 +21,15 @@ export interface SpriteLayer {
 // activityId (not label) so renaming an activity via the admin tool
 // cascades to every object that triggers it, instead of orphaning a
 // hardcoded label string that was only ever resolved at authoring time.
+// "view" takes no payload — recenter the camera on this object, and (see
+// actionDispatch.ts) peek at whoever's currently attributed to it, if
+// anyone. Every object gets one implicitly even with no actions of its
+// own (see renderer.ts's buildObject) — "navigate" was renamed to "goTo"
+// to match this three-kind vocabulary (view/goTo/activity) consistently.
 export type ObjectAction =
+  | { kind: "view" }
   | { kind: "activity"; activityId: number }
-  | { kind: "navigate"; roomId: number }; // e.g. a staircase — jumps the view to another room, no AW tracking
+  | { kind: "goTo"; roomId: number }; // e.g. a staircase — jumps the view to another room, no AW tracking
 
 export interface ObjectDef {
   id: number;
@@ -749,7 +755,7 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
         type: STATIC_OBJECT_TYPES.stairs.id,
         x: 32,
         y: 48,
-        actions: [{ kind: "navigate", roomId: 6 }],
+        actions: [{ kind: "goTo", roomId: 6 }],
       },
     ],
   },
@@ -778,7 +784,7 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
         type: STATIC_OBJECT_TYPES.stairs.id,
         x: 16,
         y: 16,
-        actions: [{ kind: "navigate", roomId: 5 }],
+        actions: [{ kind: "goTo", roomId: 5 }],
       },
     ],
   },
@@ -798,7 +804,7 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
         type: STATIC_OBJECT_TYPES.stairs.id,
         x: -112,
         y: 48,
-        actions: [{ kind: "navigate", roomId: 4 }],
+        actions: [{ kind: "goTo", roomId: 4 }],
       },
     ],
   },
@@ -815,7 +821,7 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
         type: STATIC_OBJECT_TYPES.stairs.id,
         x: -112,
         y: 48,
-        actions: [{ kind: "navigate", roomId: 3 }],
+        actions: [{ kind: "goTo", roomId: 3 }],
       },
     ],
   },

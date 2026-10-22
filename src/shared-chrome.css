@@ -697,3 +697,36 @@
     box-shadow: 0 2px 8px var(--backdrop);
   }
 }
+
+/* src/ui/actionPicker.ts's floating menu for a multi-action object — used
+   by both the desktop app and the viewer (originally House-only, moved
+   here once the viewer needed the identical thing — see actionPicker.ts's
+   own comment). Not inside the mobile media query above — desktop-width
+   only in practice (actionDispatch.ts's callers gate on isMobileLayout
+   themselves), but the rule itself has no reason to be width-scoped. */
+.object-menu {
+  position: fixed;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px;
+  min-width: 120px;
+}
+
+.object-menu button {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  text-align: left;
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.object-menu button:hover {
+  background: var(--surface-strong);
+}

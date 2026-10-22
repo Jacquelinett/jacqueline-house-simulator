@@ -1,7 +1,9 @@
 import { Application, Container, Polygon } from "pixi.js";
-import { findObjectForActivityLabel, gridToScreen, ObjectAction, ObjectDef, RoomDef } from "./rooms";
+import { findObjectForActivityLabel, gridToScreen, ObjectDef, rooms, RoomDef } from "./rooms";
 import { findActivityById } from "./activities";
 import { SceneRenderer } from "./renderer";
+import { ActionEnvironment, describeAction, DoubleClickTracker, dispatchObjectClick, effectiveActions, runAction } from "./actionDispatch";
+import { openActionPicker } from "../ui/actionPicker";
 import { AllStatusesEntry, getAllStatuses, getCharacter, getRemoteStatus, RemoteStatus, sendCommand } from "../client/remoteState";
 import { setViewingCharacter } from "../dashboard/viewingCharacter";
 
@@ -12,35 +14,8 @@ export { preloadRoomAssets } from "./renderer";
 // activity with no object of its own to focus instead.
 const FALLBACK_ROOM_ID = 1; // Jacqueline's Office
 
-const DOUBLE_CLICK_WINDOW_MS = 400;
-
-/**
- * Detects a double-click/double-tap on the same key within a short
- * window — the one small reusable primitive behind the single/double
- * click distinction in attachObjectInteraction below (a single click on
- * another character's active object peeks at their dashboard; a second
- * click on the SAME object within the window proceeds to actually run
- * the action). Keyed by a plain string rather than tied to object clicks
- * specifically, so anything else that ever needs "are these two taps the
- * same gesture" can reuse it instead of re-inventing timestamp tracking.
- */
-class DoubleClickTracker {
-  private lastKey: string | null = null;
-  private lastAt = 0;
-
-  /** True if this call is the second half of a double-click on `key` — consumes it either way, so a third click starts a fresh single rather than chaining into another "double." */
-  check(key: string): boolean {
-    const now = Date.now();
-    const isDouble = this.lastKey === key && now - this.lastAt < DOUBLE_CLICK_WINDOW_MS;
-    this.lastKey = isDouble ? null : key;
-    this.lastAt = now;
-    return isDouble;
-  }
-}
-
 /** Adds click/interaction handling on top of the shared scene renderer — the desktop app's interactive view. Starting/stopping activities is a fire-and-forget command to the Node server now; the overlay highlight and (on startup only) camera focus are driven back by its `status` broadcast via applyRemoteStatus(), not by awaiting the command itself. */
 export class House extends SceneRenderer {
-  private menuEl: HTMLDivElement | null = null;
   // Which object actually started the currently-running activity — distinct
   // from the activity's label, since two different objects (e.g. a second
   // piano elsewhere) can share a label. null means "unknown" (e.g. right
@@ -65,8 +40,8 @@ export class House extends SceneRenderer {
     // specifically so it still fires even when nothing in the scene was
     // actually hit. Native pointerdown fires before Pixi's own synthetic
     // pointertap, so a click that's ABOUT to set a new viewing character
-    // (see attachObjectInteraction below) still ends up correct: clear,
-    // then set, within the same gesture.
+    // (see onActivity below) still ends up correct: clear, then set,
+    // within the same gesture.
     app.canvas.addEventListener("pointerdown", () => setViewingCharacter(null));
   }
 
@@ -92,7 +67,7 @@ export class House extends SceneRenderer {
   }
 
   protected attachObjectInteraction(container: Container, roomId: number, obj: ObjectDef) {
-    if (!obj.actions?.length) return;
+    const actions = effectiveActions(obj.actions);
 
     container.eventMode = "static";
     container.cursor = "pointer";
@@ -100,52 +75,81 @@ export class House extends SceneRenderer {
     // art (e.g. the thin vine overlay in piano_top.png) only registers
     // clicks where it happens to have opaque pixels — not the full box.
     container.interactiveChildren = false;
+
+    // onActivity is deliberately ungated here — the peek-before-acting
+    // check (attemptActivityPeek below) only ever runs as a pre-check in
+    // front of dispatchObjectClick, for the single-default-action click
+    // path specifically. A multi-action object's menu (left-click or
+    // right-click) always runs whatever got picked immediately — a menu
+    // selection is already a deliberate enough choice to skip the gate,
+    // same as the object's original behavior before this was shared.
+    const env: ActionEnvironment = {
+      onView: () => {
+        if (!this.isMobileLayout()) this.setViewedRoom(roomId, obj.id);
+      },
+      onGoTo: (targetRoomId) => {
+        // Mobile: nothing left to do here at all — no object is being
+        // toggled, and panning to the destination room is exactly the
+        // manual navigation mobile doesn't get.
+        if (!this.isMobileLayout()) this.setViewedRoom(targetRoomId);
+      },
+      onActivity: (activityId) => this.runActivity(roomId, obj.id, activityId),
+    };
+    const openPicker = (pickFrom: typeof actions, run: (action: typeof actions[number]) => void, clientX: number, clientY: number) =>
+      openActionPicker(
+        clientX,
+        clientY,
+        pickFrom.map((action) => ({
+          label: describeAction(
+            action,
+            (id) => findActivityById(id)?.label,
+            (id) => rooms.find((r) => r.id === id)?.name,
+          ),
+          onclick: () => run(action),
+        })),
+      );
+
     container.on("pointertap", (e) => {
       e.stopPropagation(); // otherwise this bubbles to the room's own click handler too
-      if (obj.actions!.length === 1) {
-        this.handleObjectClick(roomId, obj.id, obj.actions![0]);
-      } else {
-        const native = e.nativeEvent as MouseEvent;
-        this.openMenu(roomId, obj.id, obj.actions!, native.clientX, native.clientY);
-      }
+      const native = e.nativeEvent as MouseEvent;
+      const onlyAction = actions.length === 1 ? actions[0] : null;
+      if (onlyAction?.kind === "activity" && this.attemptActivityPeek(roomId, obj.id, onlyAction.activityId)) return;
+      dispatchObjectClick(actions, env, (pickFrom, run) => openPicker(pickFrom, run, native.clientX, native.clientY));
     });
+    // Right-click always shows every action, even for a single-action
+    // object — the one deliberate way to reach, say, a piano's "View"
+    // without starting/stopping tracking.
     container.on("rightclick", (e) => {
       e.stopPropagation();
       const native = e.nativeEvent as MouseEvent;
-      this.openMenu(roomId, obj.id, obj.actions!, native.clientX, native.clientY);
+      openPicker(actions, (action) => runAction(action, env), native.clientX, native.clientY);
     });
   }
 
   /**
-   * Gate in front of runAction(), for the single-default-action click path
-   * only — a multi-action object's menu (e.g. the PC's gaming/streaming
-   * choice) still opens directly via openMenu below; not addressed here,
-   * every example of this feature was a single-action object. On desktop,
-   * if this action's activity is currently attributed to someone ELSE (not
-   * me — see attributionFor), the first click just looks: peeks at their
-   * Dashboard and still pans the camera there (a deliberate click, unlike
-   * passively seeing their overlay appear — see applyAllStatuses, which
-   * never moves the camera), but doesn't touch tracking. A second click on
-   * the same object within the double-click window falls through to the
-   * normal runAction instead. Mobile skips all of this (same
-   * `isMobileLayout()` gate already used for camera panning) — it manages
-   * activities through the Pick Action wheel, not by tapping objects, and
-   * a double-tap requirement doesn't fit that model.
+   * Pre-check in front of the plain single-click default-action path
+   * only — a multi-action object's menu (left-click or right-click)
+   * never reaches this at all, see attachObjectInteraction above. If
+   * this activity is currently attributed to someone ELSE (not me — see
+   * attributionFor), the first click just looks: peeks at their Dashboard
+   * and still pans the camera there (a deliberate click, unlike passively
+   * seeing their overlay appear — see applyAllStatuses, which never moves
+   * the camera), but doesn't touch tracking. A second click on the same
+   * object within the double-click window returns false, letting the
+   * normal runActivity proceed. Mobile skips all of this (same
+   * `isMobileLayout()` gate already used for camera panning) — it
+   * manages activities through the Pick Action wheel, not by tapping
+   * objects, and a double-tap requirement doesn't fit that model.
    */
-  private handleObjectClick(roomId: number, objectId: number, action: ObjectAction) {
-    if (action.kind === "activity" && !this.isMobileLayout()) {
-      const label = findActivityById(action.activityId)?.label;
-      const attribution = label ? this.attributionFor(label) : null;
-      if (attribution && !attribution.isMine) {
-        const isSecondClick = this.objectClickTracker.check(`${roomId}:${objectId}`);
-        if (!isSecondClick) {
-          setViewingCharacter({ id: attribution.characterId, name: attribution.characterName });
-          this.setViewedRoom(roomId, objectId);
-          return;
-        }
-      }
-    }
-    this.runAction(roomId, objectId, action);
+  private attemptActivityPeek(roomId: number, objectId: number, activityId: number): boolean {
+    if (this.isMobileLayout()) return false;
+    const label = findActivityById(activityId)?.label;
+    const attribution = label ? this.attributionFor(label) : null;
+    if (!attribution || attribution.isMine) return false;
+    if (this.objectClickTracker.check(`${roomId}:${objectId}`)) return false; // second click — let it through to runActivity
+    setViewingCharacter({ id: attribution.characterId, name: attribution.characterName });
+    this.setViewedRoom(roomId, objectId);
+    return true;
   }
 
   /** Who (if anyone) is currently running `label` right now — mine wins when both apply, since there's no separate art to otherwise break the tie with (see renderer.ts's updateActiveOverlays). */
@@ -160,16 +164,8 @@ export class House extends SceneRenderer {
     return null;
   }
 
-  private runAction(roomId: number, objectId: number, action: ObjectAction) {
-    if (action.kind === "navigate") {
-      // Mobile: nothing left to do here at all — no object is being
-      // toggled, and panning to the destination room is exactly the
-      // manual navigation mobile doesn't get.
-      if (!this.isMobileLayout()) this.setViewedRoom(action.roomId);
-      return;
-    }
-
-    const activityLabel = findActivityById(action.activityId)?.label;
+  private runActivity(roomId: number, objectId: number, activityId: number) {
+    const activityLabel = findActivityById(activityId)?.label;
     const current = getRemoteStatus();
     const isSameLabel = current.activityLabel === activityLabel;
     // A different object representing the same ongoing activity (e.g. a
@@ -194,39 +190,6 @@ export class House extends SceneRenderer {
     if (!this.isMobileLayout()) this.setViewedRoom(roomId, objectId);
     if (isSameLabel) sendCommand("stopActivity");
     else if (activityLabel) sendCommand("startActivity", { label: activityLabel });
-  }
-
-  private openMenu(roomId: number, objectId: number, actions: ObjectAction[], clientX: number, clientY: number) {
-    this.closeMenu();
-
-    const menu = document.createElement("div");
-    menu.className = "object-menu";
-    menu.style.left = `${clientX}px`;
-    menu.style.top = `${clientY}px`;
-
-    for (const action of actions) {
-      const btn = document.createElement("button");
-      btn.textContent = action.kind === "activity" ? findActivityById(action.activityId)?.label ?? "?" : `Go to ${action.roomId}`;
-      btn.onclick = () => {
-        this.runAction(roomId, objectId, action);
-        this.closeMenu();
-      };
-      menu.appendChild(btn);
-    }
-
-    document.body.appendChild(menu);
-    this.menuEl = menu;
-
-    const closeOnOutside = (e: PointerEvent) => {
-      if (!menu.contains(e.target as Node)) this.closeMenu();
-    };
-    // Defer attaching so the same right-click that opened the menu doesn't also close it.
-    setTimeout(() => document.addEventListener("pointerdown", closeOnOutside, { once: true }), 0);
-  }
-
-  private closeMenu() {
-    this.menuEl?.remove();
-    this.menuEl = null;
   }
 
   /**
@@ -256,7 +219,7 @@ export class House extends SceneRenderer {
    * moves the camera, unlike applyRemoteStatus above. Seeing that Kevin
    * started something should make his object light up without touching
    * where Jacqueline is currently looking; only a deliberate click does
-   * that (see handleObjectClick).
+   * that (see attemptActivityPeek/runActivity).
    */
   public applyAllStatuses(allStatuses: Record<string, AllStatusesEntry>) {
     const labels = new Set(Object.values(allStatuses).map((entry) => entry.activityLabel));
@@ -267,7 +230,7 @@ export class House extends SceneRenderer {
    * Start/stop an activity by label with no associated clicked object —
    * used by the mobile Pick Action list, which picks from the flat
    * ACTIVITIES registry rather than tapping a specific object in a
-   * specific room. Same start/stop-toggle + camera-focus as runAction(),
+   * specific room. Same start/stop-toggle + camera-focus as runActivity(),
    * just always treated as an unattributed source (same "assume it's this
    * one" rule used for an activity resumed before this client connected).
    */

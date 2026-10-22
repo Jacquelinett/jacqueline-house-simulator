@@ -35,6 +35,7 @@ import {
   FloorTreeNode,
   getUsedRoomIds,
   gridToScreen,
+  ObjectAction,
   ObjectTypeDef,
   PAIR_DIRECTION,
   resolveRooms,
@@ -68,12 +69,17 @@ interface ActivityDef {
 // id is omitted for a not-yet-saved placement (the room editor's draft for
 // a brand-new object the admin just added) — same "global objects.id,
 // absent until persisted" contract as ObjectPlacement itself (rooms.ts).
+// actions is undefined -> "use the type's own defaults" (same
+// placement.actions ?? type.actions contract resolveObjectPlacement
+// already implements server-side); an empty array is a deliberate
+// override to "no actions" (just the implicit View), not the same thing.
 interface ObjectPlacementWire {
   id?: number;
   type: number;
   x: number;
   y: number;
   enabled: boolean;
+  actions?: ObjectAction[];
 }
 
 interface RoomSpecWire {
@@ -550,6 +556,8 @@ async function openObjectTypeEditModal(
   id: string | null,
   existing: ObjectTypeDef | null,
   assetPaths: string[],
+  activities: ActivityDef[],
+  allRooms: RoomSpecWire[],
   onSaved: () => void,
 ) {
   const draftType: ObjectTypeDef = existing
@@ -606,6 +614,25 @@ async function openObjectTypeEditModal(
   colorInput.style.display = initialTexture ? "none" : "";
   form.appendChild(colorInput);
   modal.body.appendChild(form);
+
+  // Default actions for every placement of this type (a placement can
+  // still override these entirely — see the room editor's own "Override"
+  // button) — previously carried through completely unedited, the only
+  // way to set them was hand-editing the DB or STATIC_OBJECT_TYPES.
+  const actionsHeading = document.createElement("h3");
+  actionsHeading.textContent = "Default actions";
+  modal.body.appendChild(actionsHeading);
+  modal.body.appendChild(
+    buildActionsEditor(
+      () => draftType.actions ?? [],
+      (actions) => {
+        draftType.actions = actions;
+      },
+      activities,
+      allRooms,
+      () => {},
+    ),
+  );
 
   const anchorHint = document.createElement("div");
   anchorHint.className = "admin-hint";
@@ -798,9 +825,11 @@ async function openObjectTypeEditModal(
 
 async function renderObjectTypes(body: HTMLElement) {
   body.textContent = "";
-  const [types, assetPaths] = await Promise.all([
+  const [types, assetPaths, activities, rooms] = await Promise.all([
     adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
     adminFetch<string[]>("/api/admin/object-assets"),
+    adminFetch<ActivityDef[]>("/api/admin/activities"),
+    adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
   ]);
 
   const table = document.createElement("table");
@@ -813,7 +842,7 @@ async function renderObjectTypes(body: HTMLElement) {
     const actionCell = document.createElement("td");
     const editBtn = document.createElement("button");
     editBtn.textContent = "Edit";
-    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, () => renderObjectTypes(body));
+    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, activities, rooms, () => renderObjectTypes(body));
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {
@@ -834,7 +863,7 @@ async function renderObjectTypes(body: HTMLElement) {
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.textContent = "Add Object Type";
-  addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, () => renderObjectTypes(body));
+  addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, activities, rooms, () => renderObjectTypes(body));
   body.appendChild(addBtn);
 }
 
@@ -845,16 +874,180 @@ function cloneObjects(objects: ObjectPlacementWire[]): ObjectPlacementWire[] {
 }
 
 /**
+ * Self-contained editor for an `ObjectAction[]` — shared by the room
+ * editor's per-placement override (openRoomEditModal) and the Object
+ * Types tab's per-type defaults (openObjectTypeEditModal), which is why
+ * it takes `get`/`set` rather than a plain array: a placement's override
+ * is optional (undefined means "inherit the type's defaults" — see
+ * ObjectPlacementWire's own comment), while a type's defaults are always
+ * a real (possibly empty) array, and this function doesn't need to know
+ * which kind of "actions array" it's editing. `set` must always be
+ * handed a brand-new array (never the same one mutated in place) — the
+ * room editor's dirty-check (`JSON.stringify(orig) !== JSON.stringify(obj)`)
+ * depends on the draft's actions array no longer being the same object
+ * reference `cloneObjects`'s shallow `{...o}` started it as.
+ */
+function buildActionsEditor(
+  get: () => ObjectAction[],
+  set: (actions: ObjectAction[]) => void,
+  activities: ActivityDef[],
+  allRooms: RoomSpecWire[],
+  onChange: () => void,
+  // Room editor only (see openRoomEditModal's call site) — a type's
+  // default actions apply to every placement of it, so "is this target
+  // reachable" doesn't mean anything without knowing which room it's
+  // actually placed in.
+  warnForGoTo?: (roomId: number) => string | null,
+): HTMLElement {
+  const container = document.createElement("div");
+
+  function defaultFor(kind: ObjectAction["kind"]): ObjectAction {
+    if (kind === "goTo") return { kind: "goTo", roomId: allRooms[0]?.id ?? 0 };
+    if (kind === "activity") return { kind: "activity", activityId: activities[0]?.id ?? 0 };
+    return { kind: "view" };
+  }
+
+  function buildRow(action: ObjectAction, index: number): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "admin-form";
+
+    const kindSelect = document.createElement("select");
+    for (const [value, label] of [
+      ["view", "View"],
+      ["goTo", "Go To"],
+      ["activity", "Activity"],
+    ] as const) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      opt.selected = action.kind === value;
+      kindSelect.appendChild(opt);
+    }
+    row.appendChild(kindSelect);
+
+    const fieldSpan = document.createElement("span");
+    row.appendChild(fieldSpan);
+
+    function renderField(current: ObjectAction) {
+      fieldSpan.innerHTML = "";
+      if (current.kind === "activity") {
+        const select = document.createElement("select");
+        for (const a of activities) {
+          const opt = document.createElement("option");
+          opt.value = String(a.id);
+          opt.textContent = a.label;
+          opt.selected = current.activityId === a.id;
+          select.appendChild(opt);
+        }
+        select.onchange = () => {
+          set(get().map((a, i) => (i === index ? ({ kind: "activity", activityId: Number(select.value) } as ObjectAction) : a)));
+          onChange();
+        };
+        fieldSpan.appendChild(select);
+      } else if (current.kind === "goTo") {
+        const select = document.createElement("select");
+        for (const r of allRooms) {
+          const opt = document.createElement("option");
+          opt.value = String(r.id);
+          opt.textContent = r.name;
+          opt.selected = current.roomId === r.id;
+          select.appendChild(opt);
+        }
+        select.onchange = () => {
+          const roomId = Number(select.value);
+          set(get().map((a, i) => (i === index ? ({ kind: "goTo", roomId } as ObjectAction) : a)));
+          onChange();
+          renderField({ kind: "goTo", roomId }); // rebuild so the warning below reflects the new target
+        };
+        fieldSpan.appendChild(select);
+
+        const warning = warnForGoTo?.(current.roomId);
+        if (warning) {
+          const warn = document.createElement("span");
+          warn.className = "admin-hint";
+          warn.style.color = "var(--error)";
+          warn.textContent = warning;
+          fieldSpan.appendChild(warn);
+        }
+      }
+    }
+    renderField(action);
+
+    kindSelect.onchange = () => {
+      const newAction = defaultFor(kindSelect.value as ObjectAction["kind"]);
+      set(get().map((a, i) => (i === index ? newAction : a)));
+      onChange();
+      renderField(newAction);
+    };
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.textContent = "×";
+    removeBtn.onclick = () => {
+      set(get().filter((_, i) => i !== index));
+      onChange();
+      render();
+    };
+    row.appendChild(removeBtn);
+
+    return row;
+  }
+
+  function render() {
+    container.innerHTML = "";
+    const actions = get();
+
+    const list = document.createElement("div");
+    list.className = "admin-action-list";
+    actions.forEach((action, index) => list.appendChild(buildRow(action, index)));
+    container.appendChild(list);
+
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.textContent = "Add action";
+    addBtn.onclick = () => {
+      set([...get(), { kind: "view" }]);
+      onChange();
+      render();
+    };
+    container.appendChild(addBtn);
+  }
+
+  render();
+  return container;
+}
+
+/**
  * Edits one room in isolation: a local draft array of its objects, a
  * preview that re-renders from that draft on every change (never from the
  * server), and a Save button gated on the draft actually differing from
  * what was loaded. Cancel/closing the modal without saving discards the
  * draft entirely — nothing reaches the server until Save.
  */
-async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string, ObjectTypeDef>, onSaved: () => void) {
+async function openRoomEditModal(
+  room: RoomSpecWire,
+  objectTypes: Record<string, ObjectTypeDef>,
+  activities: ActivityDef[],
+  allRooms: RoomSpecWire[],
+  floors: Floor[],
+  onSaved: () => void,
+) {
   const typeIds = Object.keys(objectTypes);
   const original = cloneObjects(room.objects);
   const draft = cloneObjects(room.objects);
+
+  // Computed once (not per keystroke) — resolveRooms() is cheap pure math
+  // over the FULL room list, same reuse already established by
+  // openRoomConnectionsModal's own assertNoCycle. A goTo action's target
+  // can go stale the same way a dangling connectedTo entry can (see
+  // renderer.ts's setViewedRoom, which now fails gracefully instead of
+  // crashing, but silently — this surfaces it at edit time instead).
+  const reachableRoomIds = new Set(resolveRooms(roomSpecsFromWire(allRooms), floors).map((r) => r.id));
+  function warnForGoTo(roomId: number): string | null {
+    if (reachableRoomIds.has(roomId)) return null;
+    const target = allRooms.find((r) => r.id === roomId);
+    return `⚠ "${target?.name ?? roomId}" isn't reachable from any floor right now — this will silently do nothing when clicked`;
+  }
 
   /** Pixel offset from a type's top-left to its "floor contact" point — see ObjectTypeDef.anchorX/anchorY. Unknown/unset types default to (0,0), i.e. today's behavior. */
   function anchorFor(typeId: number): { x: number; y: number } {
@@ -1045,9 +1238,67 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
     }
   }
 
+  /**
+   * `obj.actions === undefined` means "use the type's own defaults" (see
+   * ObjectPlacementWire's own comment) — shown as a plain note plus an
+   * "Override" button that seeds the draft from a COPY of the type's
+   * current defaults (`.map((a) => ({ ...a }))`, never the same array
+   * reference — same reasoning as buildActionsEditor's own comment on why
+   * `set` always needs a fresh array for the dirty-check to work).
+   */
+  function buildPlacementActionsCell(obj: ObjectPlacementWire): HTMLElement {
+    const cell = document.createElement("td");
+
+    function render() {
+      cell.innerHTML = "";
+      if (!obj.actions) {
+        const note = document.createElement("span");
+        note.className = "admin-hint";
+        note.textContent = "(type default) ";
+        cell.appendChild(note);
+        const overrideBtn = document.createElement("button");
+        overrideBtn.type = "button";
+        overrideBtn.textContent = "Override";
+        overrideBtn.onclick = () => {
+          obj.actions = (objectTypes[String(obj.type)]?.actions ?? []).map((a) => ({ ...a }));
+          updateSaveState();
+          render();
+        };
+        cell.appendChild(overrideBtn);
+        return;
+      }
+
+      cell.appendChild(
+        buildActionsEditor(
+          () => obj.actions!,
+          (actions) => {
+            obj.actions = actions;
+          },
+          activities,
+          allRooms,
+          updateSaveState,
+          warnForGoTo,
+        ),
+      );
+
+      const revertBtn = document.createElement("button");
+      revertBtn.type = "button";
+      revertBtn.textContent = "Use type default";
+      revertBtn.onclick = () => {
+        obj.actions = undefined;
+        updateSaveState();
+        render();
+      };
+      cell.appendChild(revertBtn);
+    }
+
+    render();
+    return cell;
+  }
+
   function renderTable() {
     const tileMode = tileModeCheckbox.checked;
-    table.innerHTML = `<tr><th>Type</th><th>${tileMode ? "tile u" : "x"}</th><th>${tileMode ? "tile v" : "y"}</th><th>Enabled</th><th></th><th></th></tr>`;
+    table.innerHTML = `<tr><th>Type</th><th>${tileMode ? "tile u" : "x"}</th><th>${tileMode ? "tile v" : "y"}</th><th>Enabled</th><th>Actions</th><th></th><th></th></tr>`;
     for (const obj of draft) {
       const row = document.createElement("tr");
       // Row id still keys off the real/placeholder numeric id internally
@@ -1094,6 +1345,8 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
       const enabledCell = document.createElement("td");
       enabledCell.appendChild(checkbox);
       row.appendChild(enabledCell);
+
+      row.appendChild(buildPlacementActionsCell(obj));
 
       // x/y move the object live (AdminPreviewRenderer.moveObject) instead
       // of a full scene rebuild — this is the fix for the "blip" when
@@ -1849,10 +2102,11 @@ let roomsRenderGeneration = 0;
 
 async function renderRooms(body: HTMLElement) {
   const myGeneration = ++roomsRenderGeneration;
-  const [rooms, objectTypes, floors] = await Promise.all([
+  const [rooms, objectTypes, floors, activities] = await Promise.all([
     adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
     adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
     adminFetch<Floor[]>("/api/admin/floors"),
+    adminFetch<ActivityDef[]>("/api/admin/activities"),
   ]);
   if (myGeneration !== roomsRenderGeneration) return; // superseded by a newer call while this one was fetching
 
@@ -1874,7 +2128,7 @@ async function renderRooms(body: HTMLElement) {
       const actionCell = document.createElement("td");
       const editBtn = document.createElement("button");
       editBtn.textContent = "Edit";
-      editBtn.onclick = () => openRoomEditModal(room, objectTypes, () => renderRooms(body));
+      editBtn.onclick = () => openRoomEditModal(room, objectTypes, activities, rooms, floors, () => renderRooms(body));
       const buttons = [editBtn];
       if (showConnectionsButton) {
         const connectionsBtn = document.createElement("button");

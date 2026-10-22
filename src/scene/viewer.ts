@@ -1,7 +1,9 @@
 import { Application, Container, Graphics, Polygon, Text } from "pixi.js";
 import { findActivityById } from "./activities";
-import { findObjectForActivityLabel, gridToScreen, ObjectDef, RoomDef } from "./rooms";
+import { findObjectForActivityLabel, gridToScreen, ObjectDef, rooms, RoomDef } from "./rooms";
 import { SceneRenderer } from "./renderer";
+import { ActionEnvironment, describeAction, dispatchObjectClick, effectiveActions } from "./actionDispatch";
+import { openActionPicker } from "../ui/actionPicker";
 
 export { preloadRoomAssets } from "./renderer";
 
@@ -16,17 +18,20 @@ export interface ViewerCharacterStatus {
 }
 
 /**
- * Read-only house view for the public status page. Room navigation (click a
- * room, or an object's "navigate" action like a staircase) works the same as
- * the desktop app — it's just looking around, not doing anything. Clicking
- * an "activity" object shows a floating label with its name (e.g. "Piano"),
- * same as always; on desktop width, if that activity is currently
- * attributed to one of the known characters (see applyAllStatuses), the
- * click also switches the viewer straight to them via onCharacterClick —
- * the viewer's own equivalent of House.ts's peek-at-another-character
- * click, except there's no "mine" to protect (the viewer never starts/
- * stops tracking), so a single click is enough, no double-click gate
- * needed. Mobile keeps today's label-only behavior — it already has its
+ * Read-only house view for the public status page. Click dispatch goes
+ * through the same shared src/scene/actionDispatch.ts House.ts uses — a
+ * "goTo" action pans like a staircase; "view" (the implicit default for
+ * any object with no actions of its own too — see actionDispatch.ts's
+ * effectiveActions) recenters and shows a floating name label (e.g.
+ * "Piano"); "activity" does the same recenter-and-label, plus, on desktop
+ * width, switches the viewer straight to whoever's attributed to it (see
+ * applyAllStatuses) via onCharacterClick — the viewer's own equivalent of
+ * House.ts's peek-at-another-character click, except there's no "mine" to
+ * protect (the viewer never starts/stops tracking) and no "then
+ * officially act on it" second step, so a single click is enough, no
+ * double-click gate needed. A multi-action object (same idea as House's
+ * right-click menu) opens the same shared picker. Mobile keeps the label-
+ * only behavior (no character switch, no camera pan) — it already has its
  * own switcher via the mobile title button (see viewer-main.ts).
  */
 export class HouseViewer extends SceneRenderer {
@@ -87,35 +92,55 @@ export class HouseViewer extends SceneRenderer {
   }
 
   protected attachObjectInteraction(container: Container, roomId: number, obj: ObjectDef) {
-    if (!obj.actions?.length) return;
-
-    const navigateAction = obj.actions.find((a) => a.kind === "navigate");
-    const activityAction = obj.actions.find((a) => a.kind === "activity");
+    const actions = effectiveActions(obj.actions);
 
     container.eventMode = "static";
     container.cursor = "pointer";
     container.interactiveChildren = false;
-    container.on("pointertap", (e) => {
-      e.stopPropagation(); // otherwise this bubbles to the room's own click handler too
-      if (navigateAction) {
-        if (!this.isMobileLayout()) this.setViewedRoom(navigateAction.roomId);
-        return;
-      }
 
-      // The name label is informational, not navigation — keep it
-      // working on mobile even though the camera itself won't move.
+    // The name label is informational, not navigation — keep it working
+    // on mobile even though the camera itself won't move (same as "view"
+    // for a plain/decorative object).
+    const recenterAndLabel = () => {
       if (!this.isMobileLayout()) this.setViewedRoom(roomId, obj.id);
       this.toggleLabel(container, obj);
+    };
 
-      // Desktop-width only (same reasoning House.ts's own click-to-peek
-      // uses isMobileLayout for): if someone's actually doing this right
-      // now, jump the whole viewer to them instead of making the click
-      // just look.
-      if (!this.isMobileLayout() && activityAction) {
-        const label = findActivityById(activityAction.activityId)?.label;
+    const env: ActionEnvironment = {
+      onView: recenterAndLabel,
+      onGoTo: (targetRoomId) => {
+        if (!this.isMobileLayout()) this.setViewedRoom(targetRoomId);
+      },
+      onActivity: (activityId) => {
+        recenterAndLabel();
+        // Desktop-width only (same reasoning House.ts's own click-to-peek
+        // uses isMobileLayout for): if someone's actually doing this right
+        // now, jump the whole viewer to them instead of making the click
+        // just look.
+        if (this.isMobileLayout()) return;
+        const label = findActivityById(activityId)?.label;
         const attribution = label ? this.attributionFor(label) : null;
         if (attribution) this.onCharacterClick(attribution);
-      }
+      },
+    };
+
+    container.on("pointertap", (e) => {
+      e.stopPropagation(); // otherwise this bubbles to the room's own click handler too
+      const native = e.nativeEvent as MouseEvent;
+      dispatchObjectClick(actions, env, (pickFrom, run) =>
+        openActionPicker(
+          native.clientX,
+          native.clientY,
+          pickFrom.map((action) => ({
+            label: describeAction(
+              action,
+              (id) => findActivityById(id)?.label,
+              (id) => rooms.find((r) => r.id === id)?.name,
+            ),
+            onclick: () => run(action),
+          })),
+        ),
+      );
     });
   }
 

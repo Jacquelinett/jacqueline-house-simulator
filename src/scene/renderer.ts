@@ -284,11 +284,13 @@ export class SceneRenderer {
       container.addChild(buildLayer(layer, obj.width, obj.height));
     }
 
+    // Every object is hit-testable now, even with no actions of its own —
+    // actionDispatch.ts treats a missing/empty actions array as an
+    // implicit single "view" action (recenter, no side effect), so a
+    // purely decorative object is clickable instead of inert.
     this.attachObjectInteraction(container, roomId, obj);
-    if (obj.actions?.length) {
-      container.hitArea = new Rectangle(0, 0, obj.width, obj.height);
-      this.interactiveObjects.push({ roomId, container });
-    }
+    container.hitArea = new Rectangle(0, 0, obj.width, obj.height);
+    this.interactiveObjects.push({ roomId, container });
 
     const outline = new Graphics().rect(0, 0, obj.width, obj.height).stroke({ width: 1, color: 0xff0000 });
     outline.visible = this.devMode;
@@ -325,6 +327,21 @@ export class SceneRenderer {
    * re-center when the focused object within it changes.
    */
   protected setViewedRoom(roomId: number, objectId: number | null = null) {
+    // A goTo action's target (or any other room reference) can go stale —
+    // an admin reorganizing connectedTo can silently exclude a room from
+    // resolveRooms()'s output (see that function's own comment on why),
+    // and nothing validates a goTo action's roomId against that at save
+    // time. This used to be a bare non-null-asserted `roomDefs.find(...)!`
+    // here (and in applyFocus/computeCameraTarget below, both only ever
+    // reached via this function) — reaching a missing room threw inside
+    // the Pixi click handler, which the browser swallows silently with no
+    // visible error, reading as "nothing happens" rather than a crash.
+    // Staying on the current room instead is the same "don't let bad data
+    // make the whole scene unusable" stance resolveRooms() itself takes.
+    if (!roomDefs.some((r) => r.id === roomId)) {
+      console.warn(`[renderer] setViewedRoom("${roomId}") — no such room in the currently-resolved scene, ignoring`);
+      return;
+    }
     const roomChanged = this.viewedRoomId !== roomId;
     if (!roomChanged && this.viewedObjectId === objectId) return;
     this.viewedRoomId = roomId;
