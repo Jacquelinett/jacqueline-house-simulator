@@ -164,6 +164,17 @@ export async function connectRemoteState(): Promise<void> {
     ws.addEventListener("error", () => reject(new Error("WebSocket connection failed")));
     ws.addEventListener("close", (event) => {
       console.error(`[remoteState] WebSocket closed (code ${event.code})`);
+      // The server rejected the secret/deviceId outright (see server/rpc.ts's
+      // connection handler) — clearing the stored value here means the next
+      // launch re-shows the setup form instead of retrying the same bad
+      // value forever with no way to correct it short of clearing
+      // localStorage by hand.
+      if (event.code === 4001) {
+        localStorage.removeItem(LAN_SECRET_KEY);
+        reject(new Error("server rejected the secret — re-enter it on next launch"));
+      } else if (event.code === 4002) {
+        reject(new Error("missing device id"));
+      }
     });
 
     ws.addEventListener("message", (event) => {
