@@ -7,6 +7,10 @@ import { computeFixedPeriodStats } from "./periodStats";
 import { addDaysToDateString, localDateString } from "../src/goals/recurrence";
 import { getServerConfig } from "./serverConfig";
 import { getCharacterById } from "./characters";
+import { getActivities } from "./activities";
+import { getObjectTypes } from "./objectTypes";
+import { getRoomSpecs } from "./rooms";
+import { getFloors } from "./floors";
 
 /**
  * Server-side home for src/broadcast/client.ts's push functions — same
@@ -80,6 +84,31 @@ export async function pushStatus(characterId: string): Promise<void> {
 
 export async function pushGoals(characterId: string): Promise<void> {
   await pushWithHealth("/api/goals", getGoals(characterId), "goals");
+}
+
+/**
+ * The house layout itself — activities/object types/rooms (incl. their
+ * objects and connections)/floors, the same four things the WebSocket
+ * protocol sends a connected game client once on connect. The viewer has
+ * no WebSocket connection at all, so without this it was stuck rendering
+ * whatever STATIC_ROOM_SPECS/STATIC_ACTIVITIES/STATIC_OBJECT_TYPES/
+ * STATIC_FLOORS happened to be baked into its own bundle at the last
+ * `npm run build:viewer` — any admin-tool edit (resize a room, move a
+ * connection, add an activity, ...) never reached it at all. Global data,
+ * not per-character (unlike every other push function above) — one blob,
+ * not scoped to Jacqueline specifically.
+ *
+ * Called from adminApi.ts after every mutation that changes any of the
+ * four tables, and once at server startup — admin-tool edits are rare
+ * enough that push-on-change is simpler and fresher than any polling
+ * interval would be, same reasoning pushGoals already uses.
+ */
+export async function pushHouseLayout(): Promise<void> {
+  await pushWithHealth(
+    "/api/house-layout",
+    { activities: getActivities(), objectTypes: getObjectTypes(), rooms: getRoomSpecs(), floors: getFloors() },
+    "house layout",
+  );
 }
 
 export async function pushStats(characterId: string): Promise<void> {

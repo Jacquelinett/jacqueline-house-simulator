@@ -16,7 +16,7 @@ import { createObject, createRoom, deleteObject, deleteRoom, getRoomSpecs, updat
 import { ObjectPlacement } from "../src/scene/rooms";
 import { createFloor, deleteFloor, getFloors, updateFloor } from "./floors";
 import { Floor } from "../src/scene/floors";
-import { stopOrphanedActivities } from "./rpc";
+import { getBroadcastHealthInfo, pushHouseLayout } from "./broadcast";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OBJECT_ASSETS_DIR = resolve(__dirname, "../public/objects");
@@ -98,15 +98,10 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
       if (parts.length === 4 && method === "PATCH") {
         const { label, color } = await readJsonBody(req);
         updateActivity(Number(parts[3]), label, color);
-        // A relabel means the OLD label string no longer matches any
-        // activity — a currently-running session tracking it is now
-        // orphaned (see activityGuard.ts's own comment).
-        await stopOrphanedActivities();
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 4 && method === "DELETE") {
         deleteActivity(Number(parts[3]));
-        await stopOrphanedActivities();
         return sendJson(res, 200, { ok: true }), true;
       }
     }
@@ -121,14 +116,10 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
       if (parts.length === 4 && method === "PATCH") {
         const def = await readJsonBody(req);
         updateObjectType(Number(parts[3]), def);
-        // actions could have changed (even though today's admin UI never
-        // edits them directly) — cheap enough to just always check.
-        await stopOrphanedActivities();
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 4 && method === "DELETE") {
         deleteObjectType(Number(parts[3]));
-        await stopOrphanedActivities();
         return sendJson(res, 200, { ok: true }), true;
       }
     }
@@ -153,9 +144,6 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
       }
       if (parts.length === 4 && method === "DELETE") {
         deleteRoom(Number(parts[3]));
-        // Cascades to deleting the room's own objects too — any of them
-        // could've been the only thing tracking a currently-running label.
-        await stopOrphanedActivities();
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 5 && parts[4] === "connections" && method === "PATCH") {
@@ -170,14 +158,10 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
       if (parts.length === 6 && parts[4] === "objects" && method === "PATCH") {
         const placement = (await readJsonBody(req)) as ObjectPlacement;
         updateObject(Number(parts[3]), { ...placement, id: Number(parts[5]) });
-        // type/enabled/actions could have changed away from whatever a
-        // currently-running session was relying on.
-        await stopOrphanedActivities();
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 6 && parts[4] === "objects" && method === "DELETE") {
         deleteObject(Number(parts[3]), Number(parts[5]));
-        await stopOrphanedActivities();
         return sendJson(res, 200, { ok: true }), true;
       }
     }
@@ -199,6 +183,17 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
         deleteFloor(Number(parts[3]));
         return sendJson(res, 200, { ok: true }), true;
       }
+    }
+
+    // /api/admin/sync-house-layout — manual "push now" button in the admin
+    // tool (see admin-main.ts) rather than an automatic push after every
+    // mutation or a recurring timer; admin edits are infrequent and
+    // usually come in a burst (several fields/rooms in a row), so a single
+    // explicit sync once the admin is actually done is simpler and avoids
+    // spamming val.town with a push per keystroke-equivalent edit.
+    if (parts[2] === "sync-house-layout" && parts.length === 3 && method === "POST") {
+      await pushHouseLayout();
+      return sendJson(res, 200, getBroadcastHealthInfo()), true;
     }
   } catch (err) {
     console.error("[adminApi] request failed", err);

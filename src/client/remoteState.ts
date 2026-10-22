@@ -10,6 +10,23 @@ const SERVER_URL_KEY = "houseSimulatorServerUrl";
 const LAN_SECRET_KEY = "houseSimulatorLanSecret";
 
 /**
+ * "Switch character" (desktop Settings only — see settings/modal.ts) —
+ * clears the cached server address/secret so the next connect attempt
+ * shows the setup form again instead of reconnecting as whoever this
+ * device was last authenticated as. Deliberately leaves the deviceId
+ * alone — that identifies the physical device, not which character it's
+ * currently connected as, and device-scoped settings (scale/theme/devMode)
+ * should carry over to the next character too. Doesn't touch the live
+ * socket itself; the caller reloads the page/app right after, which is
+ * what actually tears down the old session and everything built around
+ * its data.
+ */
+export function clearStoredConnection(): void {
+  localStorage.removeItem(SERVER_URL_KEY);
+  localStorage.removeItem(LAN_SECRET_KEY);
+}
+
+/**
  * crypto.randomUUID() only exists in secure contexts (HTTPS or localhost)
  * — a plain http://<lan-ip>:4000 connection, the normal way another device
  * on the home WiFi reaches the server, isn't one, so calling it there

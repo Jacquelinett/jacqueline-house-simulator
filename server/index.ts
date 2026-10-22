@@ -10,7 +10,7 @@ import { settleGoalHistory } from "./goalHistory";
 import { ensureStopwatchBucket, resumeActivity } from "../src/aw/client";
 import { setupRpc, stopOrphanedActivities } from "./rpc";
 import { getServerConfig } from "./serverConfig";
-import { pushGoals, pushPeriodStats, pushStats, pushStatus, pushTodayStreaks, pushYesterdayStats } from "./broadcast";
+import { pushGoals, pushHouseLayout, pushPeriodStats, pushStats, pushStatus, pushTodayStreaks, pushYesterdayStats } from "./broadcast";
 import { serveStatic } from "./staticServer";
 import { listCharacters } from "./characters";
 import { seedMockWorkoutsIfEmpty } from "./workouts";
@@ -105,6 +105,16 @@ async function main() {
   setInterval(() => {
     settleGoalHistory().catch((err) => console.error("[server] failed to settle goal history", err));
   }, SETTLE_INTERVAL_MS);
+
+  // Global data (not per-character, unlike everything above) — pushed
+  // once on startup so a viewer isn't stuck showing whatever was baked
+  // into its own bundle at the last `npm run build:viewer`. No recurring
+  // timer and no per-admin-edit push: the admin tool's own "Sync" button
+  // (see adminApi.ts's /api/admin/sync-house-layout) is the only other
+  // time this goes out — admin edits are infrequent and usually come in
+  // a burst, so an explicit sync once the admin's actually done beats
+  // either polling or pushing after every single field change.
+  pushHouseLayout().catch((err) => console.error("[server] initial pushHouseLayout failed", err));
 
   if (jacqueline) {
     // Pushed once on startup so a viewer isn't stuck showing stale data

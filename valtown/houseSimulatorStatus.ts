@@ -28,6 +28,14 @@
  *   GET  /api/messages  -> (secret required) your in-app inbox reads these
  *   POST /api/messages  -> public: a viewer leaves you a note
  *   DELETE /api/messages/:id -> (secret required) dismiss a message from your inbox
+ *   GET  /api/house-layout -> public JSON: {activities, objectTypes, rooms, floors} — the same four things
+ *                             House Simulator's own WebSocket protocol sends a connected game client once on
+ *                             connect; the viewer has no WebSocket connection at all, so without this it's
+ *                             stuck rendering whatever was baked into its own bundle at the last deploy
+ *   PUT  /api/house-layout -> (secret required) House Simulator pushes this once at its own startup, and
+ *                             whenever the admin tool's "Sync to viewer" button is clicked — NOT on a timer
+ *                             and not after every single admin edit (see House Simulator's own
+ *                             adminApi.ts/index.ts comments)
  *
  * It never computes anything itself — goal completion, streaks, stats —
  * it just stores and forwards independently-pushed blobs. Whatever's
@@ -89,6 +97,11 @@ async function ensureSchema() {
     author text,
     text text not null,
     created_at text not null
+  )`);
+  await sqlite.execute(`create table if not exists house_layout_blob (
+    id integer primary key check (id = 1),
+    layout_json text not null,
+    updated_at text not null
   )`);
 }
 
@@ -289,6 +302,28 @@ async function handleDeleteMessage(id: string): Promise<Response> {
   return Response.json({ ok: true });
 }
 
+async function handleGetHouseLayout(): Promise<Response> {
+  const result = await sqlite.execute("select * from house_layout_blob where id = 1");
+  const row = result.rows[0] as { layout_json: string } | undefined;
+  return Response.json(row ? JSON.parse(row.layout_json) : { activities: [], objectTypes: {}, rooms: [], floors: [] });
+}
+
+async function handlePutHouseLayout(req: Request): Promise<Response> {
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object") return Response.json({ error: "invalid JSON body" }, { status: 400 });
+
+  await sqlite.execute({
+    sql: `insert into house_layout_blob (id, layout_json, updated_at)
+          values (1, :layoutJson, :updatedAt)
+          on conflict(id) do update set
+            layout_json = excluded.layout_json,
+            updated_at = excluded.updated_at`,
+    args: { layoutJson: JSON.stringify(body), updatedAt: new Date().toISOString() },
+  });
+
+  return Response.json({ ok: true });
+}
+
 export default async function (req: Request): Promise<Response> {
   await ensureSchema();
 
@@ -367,6 +402,15 @@ export default async function (req: Request): Promise<Response> {
   if (method === "DELETE" && deleteMatch) {
     if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     return handleDeleteMessage(deleteMatch[1]);
+  }
+
+  if (method === "GET" && pathname === "/api/house-layout") {
+    return handleGetHouseLayout();
+  }
+
+  if (method === "PUT" && pathname === "/api/house-layout") {
+    if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handlePutHouseLayout(req);
   }
 
   return Response.json({ error: "not found" }, { status: 404 });

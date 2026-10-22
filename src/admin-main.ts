@@ -183,6 +183,56 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+interface BroadcastHealthInfo {
+  lastSuccessAt: string | null;
+  lastError: string | null;
+  configured: boolean;
+}
+
+/**
+ * Manual "push to val.town now" — the server itself only pushes the house
+ * layout (activities/object types/rooms/floors) once at its own startup,
+ * not on a timer or after every edit (admin changes are infrequent and
+ * usually come in a burst), so this is the only way the public viewer
+ * picks up a room/activity/object-type edit before the next server
+ * restart. Lives at the top of the page, not inside the Rooms tab, since
+ * it covers all three tabs' worth of data at once.
+ */
+function setupSyncButton(): void {
+  const container = document.createElement("div");
+  container.className = "admin-form";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = "Sync to viewer";
+  container.appendChild(button);
+
+  const statusEl = document.createElement("span");
+  statusEl.className = "admin-hint";
+  container.appendChild(statusEl);
+
+  button.onclick = async () => {
+    button.disabled = true;
+    statusEl.textContent = "Syncing…";
+    try {
+      const health = await adminFetch<BroadcastHealthInfo>("/api/admin/sync-house-layout", { method: "POST" });
+      if (!health.configured) {
+        statusEl.textContent = "No broadcast_url configured on the server — nothing to sync to.";
+      } else if (health.lastError) {
+        statusEl.textContent = `Sync failed: ${health.lastError}`;
+      } else {
+        statusEl.textContent = `Synced at ${health.lastSuccessAt ? new Date(health.lastSuccessAt).toLocaleTimeString() : "?"}`;
+      }
+    } catch (err) {
+      statusEl.textContent = err instanceof Error ? err.message : String(err);
+    } finally {
+      button.disabled = false;
+    }
+  };
+
+  app.appendChild(container);
+}
+
 // --- Tabs ---
 
 type TabId = "characters" | "activities" | "object-types" | "rooms";
@@ -1918,6 +1968,8 @@ async function main() {
   const header = document.createElement("h1");
   header.textContent = "House Simulator Admin";
   app.appendChild(header);
+
+  setupSyncButton();
 
   const pages = setupTabs();
 

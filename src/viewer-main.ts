@@ -1,4 +1,7 @@
 import { HouseViewer, preloadRoomAssets } from "./scene/viewer";
+import { setActivities, ActivityDef } from "./scene/activities";
+import { ObjectTypeDef, RoomSpecWire, roomSpecsFromWire, setObjectTypes, setRooms } from "./scene/rooms";
+import { Floor, setFloors } from "./scene/floors";
 import { Goal } from "./goals/types";
 import { describeScheduleForDate, groupGoalsForDate } from "./goals/goalGroups";
 import { addDaysToDateString, localDateString, parseDateString } from "./goals/recurrence";
@@ -427,6 +430,34 @@ function setupMobileMessageModal(): { open: () => void } {
   };
 }
 
+/**
+ * Fetched once, before the scene is ever built — the viewer has no
+ * WebSocket connection, so unlike the desktop app (which gets this same
+ * data pushed once per connect over RPC) this is its only way to see
+ * anything the admin tool has changed, rather than whatever
+ * STATIC_ROOM_SPECS/STATIC_ACTIVITIES/STATIC_OBJECT_TYPES/STATIC_FLOORS
+ * happened to be baked into this build. House Simulator only pushes this
+ * once at its own startup and whenever the admin tool's "Sync to viewer"
+ * button is clicked (not on a timer, not after every edit — see
+ * server/adminApi.ts/index.ts), so there's no point re-fetching it on
+ * the same poll interval as status/goals/stats; a plain reload picks up
+ * whatever was last synced.
+ */
+async function loadHouseLayout(): Promise<void> {
+  try {
+    const res = await fetch(`${STATUS_API_BASE}/api/house-layout`);
+    const data = (await res.json()) as { activities: ActivityDef[]; objectTypes: Record<string, ObjectTypeDef>; rooms: RoomSpecWire[]; floors: Floor[] };
+    setActivities(data.activities);
+    setObjectTypes(data.objectTypes);
+    setFloors(data.floors);
+    setRooms(roomSpecsFromWire(data.rooms), data.floors);
+  } catch (err) {
+    // Falls back to whatever STATIC_* this build shipped with — still a
+    // real, renderable house, just possibly stale, rather than nothing.
+    console.error("[viewer] failed to fetch house layout, using this build's static fallback", err);
+  }
+}
+
 async function main() {
   // Unlike the desktop app (where settings load async from Tauri fs, so
   // the initial Pixi/CSS theme has to guess the default and get corrected
@@ -438,6 +469,12 @@ async function main() {
   const app = await setupPixiApp(THEME_BACKGROUND[viewerSettings.theme]);
 
   const roomLabelEl = document.querySelector<HTMLDivElement>("#room-label")!;
+
+  // Must happen before setupFloorButtons()/anything else reads
+  // rooms/ACTIVITIES/objectTypes/FLOORS — those are live module bindings
+  // (see scene/rooms.ts etc.), and setupFloorButtons() below reads FLOORS
+  // synchronously at call time, not reactively.
+  await loadHouseLayout();
 
   // Building the floor buttons before the HouseViewer needs no viewer at
   // all (bindGoToRoom happens after) — so the HouseViewer's own

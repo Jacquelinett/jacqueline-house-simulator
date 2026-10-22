@@ -100,31 +100,38 @@ function broadcastToCharacter(characterId: string, key: string, data: unknown) {
 }
 
 /**
- * Auto-stops any character's currently-running activity if the room/object
+ * Auto-stops `character`'s currently-running activity if the room/object
  * that was tracking it has since been deleted or reconfigured out from
  * under it (e.g. via the admin tool) — defaults back to idle rather than
  * leaving a session running for something that no longer exists anywhere
- * in the house. Checked at server startup (resumeActivity may have just
- * picked up a stale running session left over from before a deletion) and
- * after any admin-tool mutation that could invalidate one (see
- * adminApi.ts's own calls to this) — cheap enough to just run after every
- * relevant mutation rather than trying to reason about exactly which ones
- * could possibly orphan something.
+ * in the house.
+ *
+ * Checked once per connection (see wss.on("connection") below) rather than
+ * reactively after every admin-tool edit — the admin tool doesn't change
+ * rooms/objects/activities often enough to justify re-checking on every
+ * single mutation, and "a client is starting a session" is both a more
+ * natural checkpoint and the only moment this actually needs to be
+ * correct (nobody's looking at a stale "running" state in between).
  */
+async function stopIfOrphaned(character: Character): Promise<void> {
+  const current = getCurrentActivity(character.awBucketId);
+  if (!current) return;
+  if (activityLabelHasLiveObject(current.label)) return;
+
+  console.warn(`[rpc] "${current.label}" (tracked by ${character.name}) no longer has a live object — stopping and defaulting to idle`);
+  await stopActivity(character.awBucketId);
+  broadcastToCharacter(character.id, "status", currentStatus(character.awBucketId));
+  // val.town/the public viewer only ever show Jacqueline for now — see
+  // server/broadcast.ts's own comment on why this check is here too.
+  if (character.name === "Jacqueline") {
+    pushStatus(character.id).catch((err) => console.error("[rpc] pushStatus after auto-stop failed", err));
+  }
+}
+
+/** Same check as stopIfOrphaned, swept across every character at once — used only at server startup (see index.ts), since a resumed session could be stale from before the last shutdown and nothing's connected yet to trigger the per-connection check above. */
 export async function stopOrphanedActivities(): Promise<void> {
   for (const character of listCharacters()) {
-    const current = getCurrentActivity(character.awBucketId);
-    if (!current) continue;
-    if (activityLabelHasLiveObject(current.label)) continue;
-
-    console.warn(`[rpc] "${current.label}" (tracked by ${character.name}) no longer has a live object — stopping and defaulting to idle`);
-    await stopActivity(character.awBucketId);
-    broadcastToCharacter(character.id, "status", currentStatus(character.awBucketId));
-    // val.town/the public viewer only ever show Jacqueline for now — see
-    // server/broadcast.ts's own comment on why this check is here too.
-    if (character.name === "Jacqueline") {
-      pushStatus(character.id).catch((err) => console.error("[rpc] pushStatus after auto-stop failed", err));
-    }
+    await stopIfOrphaned(character);
   }
 }
 
@@ -152,7 +159,7 @@ export function setupRpc(wss: WebSocketServer): void {
   onGoalsChange(() => broadcastEachClient("goals", (characterId) => getGoals(characterId)));
   onTodosChange(() => broadcastEachClient("todos", (characterId) => getTodos(characterId)));
 
-  wss.on("connection", (ws, req) => {
+  wss.on("connection", async (ws, req) => {
     const url = new URL(req.url ?? "", "http://localhost");
     const character = getCharacterBySecret(url.searchParams.get("secret") ?? "");
     if (!character) {
@@ -169,6 +176,14 @@ export function setupRpc(wss: WebSocketServer): void {
       ws.close(4002, "missing deviceId");
       return;
     }
+
+    // Checked before this client is registered/sent anything — if it
+    // fixes something, the broadcast it fires reaches any OTHER already-
+    // connected device of this same character, and this new client just
+    // gets the already-correct value in its own initial "status" send
+    // below, no separate broadcast needed for it.
+    await stopIfOrphaned(character).catch((err) => console.error("[rpc] stopIfOrphaned on connect failed", err));
+
     deviceIdByClient.set(ws, deviceId);
     characterByClient.set(ws, character);
 

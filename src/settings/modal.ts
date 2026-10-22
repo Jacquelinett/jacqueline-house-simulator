@@ -1,6 +1,7 @@
 import { buildModal } from "../ui/modal";
 import { buildDisplaySettingsSection } from "../ui/displaySettings";
 import { getSettings, onSettingsChange, updateSettings } from "./state";
+import { clearStoredConnection } from "../client/remoteState";
 
 /**
  * Display settings only — status broadcast config used to live here too,
@@ -43,6 +44,27 @@ export function setupSettingsContent(container: HTMLElement): void {
   // devMode/scale) is what keeps both in sync, instead of one silently
   // going stale until reload whenever the other one changes something.
   onSettingsChange(() => display.update(getSettings()));
+
+  // Desktop-app-only (this whole file is never imported by the viewer —
+  // see clearStoredConnection's own comment) — reloading is what actually
+  // tears down the live socket and every bit of UI built around the old
+  // character's data; simpler and more reliable than trying to reconnect
+  // and rebuild everything in place.
+  const characterSection = document.createElement("div");
+  characterSection.id = "settings-character-section";
+  const heading = document.createElement("h3");
+  heading.textContent = "Character";
+  characterSection.appendChild(heading);
+  const switchBtn = document.createElement("button");
+  switchBtn.type = "button";
+  switchBtn.textContent = "Switch character / server…";
+  switchBtn.onclick = () => {
+    if (!confirm("Disconnect and return to the connection screen? You'll need to re-enter a server address and secret.")) return;
+    clearStoredConnection();
+    location.reload();
+  };
+  characterSection.appendChild(switchBtn);
+  container.appendChild(characterSection);
 }
 
 export function setupSettingsModal(): { open: () => void } {
