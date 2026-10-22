@@ -104,7 +104,7 @@ export function setupSettingsContent(container: HTMLElement): void {
 }
 
 export function setupSettingsModal(): { open: () => void } {
-  const modal = buildModal("Settings");
+  const modal = buildModal("Settings", { resizable: true });
   setupSettingsContent(modal.body);
   return { open: modal.open };
 }

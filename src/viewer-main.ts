@@ -54,6 +54,62 @@ interface StatusResponse {
   todayMinutesByLabel: Record<string, number>;
 }
 
+/** Builds the "current activity" line (+ optional title above it, for the mobile Home tab, which has no panel header to show one) — shared by the Jacqueline panel and its mobile equivalent, which otherwise hand-built this same markup twice. */
+function buildCurrentActivityBlock(
+  container: HTMLElement,
+  options?: { showTitle?: boolean },
+): {
+  render(status: { label: string | null; startedAt: Date | null }): void;
+  showError(message: string): void;
+} {
+  if (options?.showTitle) {
+    const title = document.createElement("div");
+    title.className = "mobile-status-title";
+    title.textContent = CURRENT_USER_NAME;
+    container.appendChild(title);
+  }
+
+  const currentEl = document.createElement("div");
+  currentEl.className = "overview-current";
+  container.appendChild(currentEl);
+
+  return {
+    render: (status) => renderCurrentActivity(currentEl, status),
+    showError: (message) => {
+      currentEl.textContent = message;
+    },
+  };
+}
+
+/** Builds the VT sync line — same idea as buildCurrentActivityBlock above. No AW line at all, since the viewer has no AW access regardless of connection state. */
+function buildSyncStatusBlock(
+  container: HTMLElement,
+): (vt: { configured: boolean; lastSuccessAt: Date | null; lastError: string | null }) => void {
+  const syncEl = document.createElement("div");
+  syncEl.className = "overview-status-line";
+  container.appendChild(syncEl);
+
+  return (vt) => renderSyncStatus(syncEl, { showAw: false, vt });
+}
+
+/** Builds the All-Time Activity pie + legend — shared by the desktop Statistic modal and the mobile Statistic tab. No All-Time Goals here — goal completion/skip history never leaves the desktop app (nothing pushes it to val.town). */
+function buildStatisticBlock(container: HTMLElement): (stats: ActivityStat[]) => void {
+  const heading = document.createElement("h3");
+  heading.className = "panel-section-heading";
+  heading.textContent = "All-Time Activity (top 5)";
+  container.appendChild(heading);
+
+  const pie = document.createElement("div");
+  pie.id = "dashboard-pie";
+  container.appendChild(pie);
+
+  const list = document.createElement("div");
+  list.className = "dashboard-list";
+  container.appendChild(list);
+
+  return (stats) => renderAllTimeActivity(pie, list, stats);
+}
+
 /** Shared by the inline Leave-a-note form (desktop/wide-viewport) and the mobile Message popup — just the network call, each caller handles its own form fields/status text. */
 async function sendMessage(author: string, text: string): Promise<void> {
   const res = await fetch(`${STATUS_API_BASE}/api/messages`, {
@@ -76,7 +132,7 @@ function setupSettingsModalUI(
   settings: ViewerSettings,
   callbacks: DisplaySettingsCallbacks,
 ): { open: () => void; update(values: ViewerSettings): void } {
-  const modal = buildModal("Settings");
+  const modal = buildModal("Settings", { resizable: true });
   const display = buildDisplaySettingsSection(modal.body, settings, callbacks);
   return { open: modal.open, update: display.update };
 }
@@ -216,9 +272,7 @@ async function main() {
     className: "goals-panel",
   });
 
-  const currentEl = document.createElement("div");
-  currentEl.className = "overview-current";
-  jacquelinePanel.body.appendChild(currentEl);
+  const renderCurrentDesktop = buildCurrentActivityBlock(jacquelinePanel.body);
 
   const noteHeading = document.createElement("h3");
   noteHeading.className = "panel-section-heading";
@@ -251,38 +305,29 @@ async function main() {
   jacquelineDivider.className = "panel-divider";
   jacquelinePanel.body.appendChild(jacquelineDivider);
 
-  const syncEl = document.createElement("div");
-  syncEl.className = "overview-status-line";
-  jacquelinePanel.body.appendChild(syncEl);
+  const renderSyncDesktop = buildSyncStatusBlock(jacquelinePanel.body);
 
   jacquelinePanel.open();
 
   // --- Dashboard panel: identical to the desktop app's, same position. ---
-  const dashboardPanel = buildFloatingPanel("Dashboard", { closable: false, className: "dashboard-panel" });
+  const dashboardPanel = buildFloatingPanel("Dashboard", {
+    closable: false,
+    resizable: true,
+    className: "dashboard-panel",
+  });
   const { goalList, activityList } = buildDashboardSections(dashboardPanel.body);
   dashboardPanel.open();
 
-  // --- Statistic modal: same all-time Activity section the desktop app's
-  // Statistic modal has. No All-Time Goals here — goal completion/skip
-  // history never leaves the desktop app (nothing pushes it to val.town). ---
-  const statisticModal = buildModal("Statistic", { size: "large" });
-  const statisticHeading = document.createElement("h3");
-  statisticHeading.className = "panel-section-heading";
-  statisticHeading.textContent = "All-Time Activity (top 5)";
-  statisticModal.body.appendChild(statisticHeading);
-  const statisticPie = document.createElement("div");
-  statisticPie.id = "dashboard-pie";
-  statisticModal.body.appendChild(statisticPie);
-  const statisticList = document.createElement("div");
-  statisticList.className = "dashboard-list";
-  statisticModal.body.appendChild(statisticList);
+  // --- Statistic modal: same all-time Activity section the desktop app's Statistic modal has. ---
+  const statisticModal = buildModal("Statistic", { size: "large", resizable: true });
+  const renderStatisticDesktop = buildStatisticBlock(statisticModal.body);
 
   setupTopButtons([
     {
       label: "Statistic",
       onclick: () => {
         statisticModal.open();
-        renderAllTimeActivity(statisticPie, statisticList, latestStats);
+        renderStatisticDesktop(latestStats);
       },
     },
     { label: "Settings", onclick: settingsModal.open },
@@ -299,22 +344,13 @@ async function main() {
   mobileStatus.className = "mobile-status";
   mobileTabs.pages.home.appendChild(mobileStatus);
 
-  const mobileTitle = document.createElement("div");
-  mobileTitle.className = "mobile-status-title";
-  mobileTitle.textContent = CURRENT_USER_NAME;
-  mobileStatus.appendChild(mobileTitle);
-
-  const mobileCurrentEl = document.createElement("div");
-  mobileCurrentEl.className = "overview-current";
-  mobileStatus.appendChild(mobileCurrentEl);
+  const renderCurrentMobile = buildCurrentActivityBlock(mobileStatus, { showTitle: true });
 
   const mobileDivider = document.createElement("div");
   mobileDivider.className = "panel-divider";
   mobileStatus.appendChild(mobileDivider);
 
-  const mobileSyncEl = document.createElement("div");
-  mobileSyncEl.className = "overview-status-line";
-  mobileStatus.appendChild(mobileSyncEl);
+  const renderSyncMobile = buildSyncStatusBlock(mobileStatus);
 
   const mobileMessageModal = setupMobileMessageModal();
   const mobileFab = document.createElement("button");
@@ -328,21 +364,12 @@ async function main() {
     mobileTabs.pages.dashboard,
   );
 
-  const mobileStatisticHeading = document.createElement("h3");
-  mobileStatisticHeading.className = "panel-section-heading";
-  mobileStatisticHeading.textContent = "All-Time Activity (top 5)";
-  mobileTabs.pages.statistic.appendChild(mobileStatisticHeading);
-  const mobileStatisticPie = document.createElement("div");
-  mobileStatisticPie.id = "dashboard-pie";
-  mobileTabs.pages.statistic.appendChild(mobileStatisticPie);
-  const mobileStatisticList = document.createElement("div");
-  mobileStatisticList.className = "dashboard-list";
-  mobileTabs.pages.statistic.appendChild(mobileStatisticList);
+  const renderStatisticMobile = buildStatisticBlock(mobileTabs.pages.statistic);
 
   mobileSettingsUI = buildDisplaySettingsSection(mobileTabs.pages.settings, viewerSettings, displaySettingsCallbacks);
 
   mobileTabs.onTabChange((tab) => {
-    if (tab === "statistic") renderAllTimeActivity(mobileStatisticPie, mobileStatisticList, latestStats);
+    if (tab === "statistic") renderStatisticMobile(latestStats);
   });
 
   let latestStats: ActivityStat[] = [];
@@ -355,8 +382,8 @@ async function main() {
 
   function renderCurrent() {
     const status = { label: latestActivityLabel, startedAt: startedAtMs ? new Date(startedAtMs) : null };
-    renderCurrentActivity(currentEl, status);
-    renderCurrentActivity(mobileCurrentEl, status);
+    renderCurrentDesktop.render(status);
+    renderCurrentMobile.render(status);
   }
 
   // "Synced" here means "last successfully fetched data from val.town" —
@@ -365,8 +392,8 @@ async function main() {
   // since the viewer has no AW access regardless of connection state.
   function renderSync() {
     const vt = { configured: true, lastSuccessAt: lastSyncAt, lastError: lastSyncError };
-    renderSyncStatus(syncEl, { showAw: false, vt });
-    renderSyncStatus(mobileSyncEl, { showAw: false, vt });
+    renderSyncDesktop(vt);
+    renderSyncMobile(vt);
   }
 
   async function refreshStatus() {
@@ -394,7 +421,8 @@ async function main() {
       renderTodayActivity();
     } catch (err) {
       console.error("[viewer] failed to fetch status", err);
-      currentEl.textContent = "Couldn't load status";
+      renderCurrentDesktop.showError("Couldn't load status");
+      renderCurrentMobile.showError("Couldn't load status");
       lastSyncError = (err as Error).message;
       renderSync();
     }

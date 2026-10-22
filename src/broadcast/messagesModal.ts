@@ -3,7 +3,7 @@ import { deleteMessage, fetchMessages, InboxMessage } from "./client";
 import { getSettings } from "../settings/state";
 
 export function setupMessagesModal(): { open: () => void } {
-  const modal = buildModal("Messages");
+  const modal = buildModal("Messages", { resizable: true });
 
   const list = document.createElement("div");
   list.id = "messages-list";

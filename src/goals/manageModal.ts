@@ -10,7 +10,7 @@ function todayDateString(): string {
 
 /** Full add/edit/delete/skip UI for every goal, regardless of whether it's scheduled today — opened on demand so the always-visible goals panel can stay small and progress-only. */
 export function setupGoalsManageModal(): { open: () => void } {
-  const modal = buildModal("Manage Goals");
+  const modal = buildModal("Manage Goals", { resizable: true });
 
   const buttonRow = document.createElement("div");
   buttonRow.id = "goals-button-row";

@@ -2,7 +2,7 @@ import { buildModal } from "../ui/modal";
 import { addTodo, deleteTodo, getTodos, onTodosChange, toggleTodo } from "./state";
 
 export function setupTodosModal(): { open: () => void } {
-  const modal = buildModal("Todos");
+  const modal = buildModal("Todos", { resizable: true });
 
   const form = document.createElement("div");
   form.id = "todo-add-form";

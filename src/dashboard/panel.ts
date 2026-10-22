@@ -48,7 +48,7 @@ export function setupDashboardContent(container: HTMLElement): void {
 
 /** Always-visible corner panel version of the above. */
 export function setupDashboardPanel(): void {
-  const panel = buildFloatingPanel("Dashboard", { closable: false, className: "dashboard-panel" });
+  const panel = buildFloatingPanel("Dashboard", { closable: false, resizable: true, className: "dashboard-panel" });
   setupDashboardContent(panel.body);
   panel.open();
 }

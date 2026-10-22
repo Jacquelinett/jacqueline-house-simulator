@@ -242,6 +242,29 @@
 .floating-panel-body {
   padding: 12px;
   overflow-y: auto;
+  /* flex-grow has nothing to grow into for short content (the panel's
+     height is otherwise content-driven, capped by max-height) — this
+     only matters once height is constrained (by max-height or a resize),
+     where min-height:0 is what lets the body actually shrink and scroll
+     instead of just pushing the panel taller than its cap. */
+  flex: 1;
+  min-height: 0;
+}
+
+/* Native CSS resize (drag handle at the bottom-right corner) instead of
+   hand-rolled pointer-event math — the header stays pinned and only
+   .floating-panel-body scrolls regardless of whether its height comes
+   from the panel's default max-height or a user-resized one. overflow:
+   hidden (not auto) on the panel itself since resize requires *some*
+   non-visible overflow to register as a scroll container, but the actual
+   scrolling should happen on the body, not here. */
+.floating-panel.resizable {
+  resize: both;
+  overflow: hidden;
+  min-width: 240px;
+  min-height: 160px;
+  max-width: 90vw;
+  max-height: 85vh;
 }
 
 .goals-empty {
@@ -326,6 +349,19 @@
 
 .modal-dialog-large {
   width: min(640px, 90vw);
+}
+
+/* Native CSS resize, same idea as .floating-panel.resizable — .modal-dialog
+   already scrolls its own overflow (header and body together, unlike the
+   floating panel's pinned-header split), so this just needs overflow:auto
+   kept (not swapped to hidden) and bounds added. */
+.modal-dialog.resizable {
+  resize: both;
+  overflow: auto;
+  min-width: 280px;
+  min-height: 200px;
+  max-width: 90vw;
+  max-height: 90vh;
 }
 
 .modal-header h2 {

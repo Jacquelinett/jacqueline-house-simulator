@@ -43,10 +43,16 @@ export function makeDraggable(panel: HTMLElement, handle: HTMLElement) {
  * it get knocked out of place) and the toggleable Dashboard, so their
  * headers/drag behavior stay identical rather than each hand-rolling their
  * own.
+ *
+ * `resizable` uses the browser's own CSS `resize` (a drag handle at the
+ * bottom-right corner, bounded by the `.resizable` CSS rule's min/max
+ * width/height) rather than hand-rolled pointer-event math — the body
+ * already scrolls past its own height regardless of whether that height
+ * comes from the panel's default max-height or a user-resized one.
  */
 export function buildFloatingPanel(
   title: string,
-  options?: { closable?: boolean; draggable?: boolean; className?: string },
+  options?: { closable?: boolean; draggable?: boolean; resizable?: boolean; className?: string },
 ): {
   body: HTMLElement;
   open: () => void;
@@ -54,7 +60,8 @@ export function buildFloatingPanel(
   onClose(cb: () => void): void;
 } {
   const panel = document.createElement("div");
-  panel.className = "floating-panel" + (options?.className ? ` ${options.className}` : "");
+  panel.className =
+    "floating-panel" + (options?.resizable ? " resizable" : "") + (options?.className ? ` ${options.className}` : "");
   document.body.appendChild(panel);
 
   const header = document.createElement("div");

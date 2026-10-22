@@ -1,7 +1,14 @@
-/** Shared overlay/dialog/header chrome for the app's modals (Goals, Todos, Timer, Settings, ...). */
+/**
+ * Shared overlay/dialog/header chrome for the app's modals (Goals, Todos,
+ * Timer, Settings, ...). `resizable` uses the browser's own CSS `resize`
+ * (drag handle at the bottom-right corner, bounded by the `.resizable`
+ * rule's min/max width/height) — the dialog already scrolls past its own
+ * height regardless of whether that height comes from its default
+ * max-height or a user-resized one.
+ */
 export function buildModal(
   title: string,
-  options?: { size?: "default" | "large" },
+  options?: { size?: "default" | "large"; resizable?: boolean },
 ): {
   body: HTMLElement;
   open: () => void;
@@ -13,7 +20,10 @@ export function buildModal(
   document.body.appendChild(overlay);
 
   const dialog = document.createElement("div");
-  dialog.className = "modal-dialog" + (options?.size === "large" ? " modal-dialog-large" : "");
+  dialog.className =
+    "modal-dialog" +
+    (options?.size === "large" ? " modal-dialog-large" : "") +
+    (options?.resizable ? " resizable" : "");
   overlay.appendChild(dialog);
 
   const header = document.createElement("div");
