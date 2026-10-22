@@ -5,6 +5,11 @@ import { getRemoteStatus, RemoteStatus, sendCommand } from "../client/remoteStat
 
 export { preloadRoomAssets } from "./renderer";
 
+// Mobile has no floor buttons and nowhere obvious to go otherwise — used
+// only when toggleActivity() (the mobile Pick Action list) starts an
+// activity with no object of its own to focus instead.
+const FALLBACK_ROOM_ID = "office"; // Jacqueline's Office
+
 /** Adds click/interaction handling on top of the shared scene renderer — the desktop app's interactive view. Starting/stopping activities is a fire-and-forget command to the Node server now; the overlay highlight and (on startup only) camera focus are driven back by its `status` broadcast via applyRemoteStatus(), not by awaiting the command itself. */
 export class House extends SceneRenderer {
   private menuEl: HTMLDivElement | null = null;
@@ -41,7 +46,12 @@ export class House extends SceneRenderer {
     const left = gridToScreen(0, room.rows);
     container.eventMode = "static";
     container.hitArea = new Polygon([back.x, back.y, right.x, right.y, front.x, front.y, left.x, left.y]);
-    container.on("pointertap", () => this.setViewedRoom(room.id));
+    // Mobile has no manual room navigation at all — the scene only ever
+    // moves because the running activity changed (see applyRemoteStatus),
+    // never because of a tap on the canvas itself.
+    container.on("pointertap", () => {
+      if (!this.isMobileLayout()) this.setViewedRoom(room.id);
+    });
   }
 
   protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
@@ -71,7 +81,10 @@ export class House extends SceneRenderer {
 
   private runAction(roomId: string, objectId: string, action: ObjectAction) {
     if (action.kind === "navigate") {
-      this.setViewedRoom(action.roomId);
+      // Mobile: nothing left to do here at all — no object is being
+      // toggled, and panning to the destination room is exactly the
+      // manual navigation mobile doesn't get.
+      if (!this.isMobileLayout()) this.setViewedRoom(action.roomId);
       return;
     }
 
@@ -87,12 +100,16 @@ export class House extends SceneRenderer {
       (this.currentActivitySource.roomId !== roomId || this.currentActivitySource.objectId !== objectId);
 
     if (isDifferentSource) {
-      this.setViewedRoom(roomId, objectId);
+      if (!this.isMobileLayout()) this.setViewedRoom(roomId, objectId);
       return;
     }
 
     this.currentActivitySource = isSameLabel ? null : { roomId, objectId };
-    this.setViewedRoom(roomId, objectId);
+    // On mobile, the click still starts/stops the activity below — it just
+    // doesn't pan on its own; applyRemoteStatus() does that once the
+    // server's status broadcast confirms the change, so the camera still
+    // ends up on the right object, just reactively instead of optimistically.
+    if (!this.isMobileLayout()) this.setViewedRoom(roomId, objectId);
     if (isSameLabel) sendCommand("stopActivity");
     else sendCommand("startActivity", { label: action.label });
   }
@@ -158,12 +175,20 @@ export class House extends SceneRenderer {
   public toggleActivity(label: string): void {
     const current = getRemoteStatus();
     const isSameLabel = current.activityLabel === label;
-
-    if (isSameLabel) sendCommand("stopActivity");
-    else sendCommand("startActivity", { label });
     this.currentActivitySource = null;
 
+    if (isSameLabel) {
+      sendCommand("stopActivity");
+      return;
+    }
+
+    sendCommand("startActivity", { label });
+    // Always pan here, mobile or not — this is the one deliberate "picking
+    // an action" entry point mobile keeps (no floor buttons, no clicking
+    // around otherwise). Falls back to a fixed room when this activity has
+    // no object of its own to focus instead of just leaving the camera
+    // wherever it happened to be.
     const found = findObjectForActivityLabel(label);
-    if (found) this.setViewedRoom(found.roomId, found.objectId);
+    this.setViewedRoom(found?.roomId ?? FALLBACK_ROOM_ID, found?.objectId ?? null);
   }
 }

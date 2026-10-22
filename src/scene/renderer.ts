@@ -4,6 +4,11 @@ import { TileOverride, TileRect } from "./tileset";
 
 const DIM_ALPHA = 0.15;
 const PAN_EASE = 0.15;
+// Mirrors shared-chrome.css's own mobile breakpoint exactly — below it,
+// manual room/object panning is suppressed (see House.ts/viewer.ts): mobile
+// has no floor buttons and is meant to just auto-follow whatever's
+// currently running, not be manually navigated around.
+const MOBILE_BREAKPOINT_QUERY = "(max-width: 700px) and (orientation: portrait)";
 
 // rooms.ts's texture paths (e.g. "/objects/piano_base.png") are written as if
 // served from the domain root — true for the Tauri app, but the public
@@ -274,6 +279,11 @@ export class SceneRenderer {
     container.addChild(outline);
 
     return container;
+  }
+
+  /** Shared by House.ts/viewer.ts to gate click-driven camera panning — see MOBILE_BREAKPOINT_QUERY. */
+  protected isMobileLayout(): boolean {
+    return window.matchMedia(MOBILE_BREAKPOINT_QUERY).matches;
   }
 
   /** Override to wire up room click-to-focus — the base renderer has none (used by the read-only public viewer). */

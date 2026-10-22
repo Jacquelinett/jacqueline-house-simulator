@@ -35,7 +35,12 @@ export class HouseViewer extends SceneRenderer {
     const left = gridToScreen(0, room.rows);
     container.eventMode = "static";
     container.hitArea = new Polygon([back.x, back.y, right.x, right.y, front.x, front.y, left.x, left.y]);
-    container.on("pointertap", () => this.setViewedRoom(room.id));
+    // Mobile has no manual room navigation at all — the scene only ever
+    // moves because the running activity changed (see showActivity), never
+    // because of a tap on the canvas itself.
+    container.on("pointertap", () => {
+      if (!this.isMobileLayout()) this.setViewedRoom(room.id);
+    });
   }
 
   protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
@@ -49,9 +54,11 @@ export class HouseViewer extends SceneRenderer {
     container.on("pointertap", (e) => {
       e.stopPropagation(); // otherwise this bubbles to the room's own click handler too
       if (navigateAction) {
-        this.setViewedRoom(navigateAction.roomId);
+        if (!this.isMobileLayout()) this.setViewedRoom(navigateAction.roomId);
       } else {
-        this.setViewedRoom(roomId, obj.id);
+        // The name label is informational, not navigation — keep it
+        // working on mobile even though the camera itself won't move.
+        if (!this.isMobileLayout()) this.setViewedRoom(roomId, obj.id);
         this.toggleLabel(container, obj);
       }
     });
