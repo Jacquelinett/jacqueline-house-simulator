@@ -6,7 +6,7 @@ import { getActivityStats, getActivityStatsForDate } from "./stats";
 import { computeFixedPeriodStats } from "./periodStats";
 import { addDaysToDateString, localDateString } from "../src/goals/recurrence";
 import { getServerConfig } from "./serverConfig";
-import { getCharacterById } from "./characters";
+import { Character, getCharacterById } from "./characters";
 import { getActivities } from "./activities";
 import { getObjectTypes } from "./objectTypes";
 import { getRoomSpecs } from "./rooms";
@@ -19,16 +19,26 @@ import { getFloors } from "./floors";
  * only the server pushes to val.town now. Scheduling (what used to be
  * main.ts's setInterval) lives in server/index.ts, not here.
  *
- * val.town/the public viewer stay scoped to one character (Jacqueline) —
- * every push function below takes that character's id explicitly rather
- * than assuming a single global account, so the decision to keep the
- * public surface single-character is visible at each call site
- * (server/index.ts/rpc.ts) instead of hardcoded in here.
+ * val.town/the public viewer can show any admin-published character now
+ * (see server/characters.ts's publishToViewer), not just Jacqueline —
+ * every push function below still takes a characterId explicitly (which
+ * characters actually get pushed is still decided at each call site in
+ * server/index.ts/rpc.ts, not hardcoded in here), but now also resolves
+ * and sends that character's id/name so val.town can key each blob by
+ * character instead of storing one global singleton row.
  */
+function characterOrThrow(characterId: string): Character {
+  const character = getCharacterById(characterId);
+  if (!character) throw new Error(`unknown character: ${characterId}`);
+  return character;
+}
 function bucketIdFor(characterId: string): string {
-  const bucketId = getCharacterById(characterId)?.awBucketId;
-  if (!bucketId) throw new Error(`unknown character: ${characterId}`);
-  return bucketId;
+  return characterOrThrow(characterId).awBucketId;
+}
+/** Every per-character PUT body includes this, so val.town can store/key each blob by character — see valtown/houseSimulatorStatus.ts's schema. */
+function characterFields(characterId: string): { characterId: string; characterName: string } {
+  const character = characterOrThrow(characterId);
+  return { characterId: character.id, characterName: character.name };
 }
 function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${getServerConfig().broadcastSecret ?? ""}` };
@@ -77,13 +87,13 @@ export async function pushStatus(characterId: string): Promise<void> {
   const todayMinutesByLabel = await getTodayMinutesByLabel(characterId);
   await pushWithHealth(
     "/api/status",
-    { activityLabel: current?.label ?? null, startedAt: current?.startedAt.toISOString() ?? null, todayMinutesByLabel },
+    { ...characterFields(characterId), activityLabel: current?.label ?? null, startedAt: current?.startedAt.toISOString() ?? null, todayMinutesByLabel },
     "status",
   );
 }
 
 export async function pushGoals(characterId: string): Promise<void> {
-  await pushWithHealth("/api/goals", getGoals(characterId), "goals");
+  await pushWithHealth("/api/goals", { ...characterFields(characterId), goals: getGoals(characterId) }, "goals");
 }
 
 /**
@@ -112,34 +122,48 @@ export async function pushHouseLayout(): Promise<void> {
 }
 
 export async function pushStats(characterId: string): Promise<void> {
-  await pushWithHealth("/api/stats", await getActivityStats(characterId), "stats");
+  await pushWithHealth("/api/stats", { ...characterFields(characterId), stats: await getActivityStats(characterId) }, "stats");
 }
 
 export async function pushPeriodStats(characterId: string): Promise<void> {
-  await pushWithHealth("/api/period-stats", await computeFixedPeriodStats(characterId), "period stats");
+  await pushWithHealth(
+    "/api/period-stats",
+    { ...characterFields(characterId), periodStats: await computeFixedPeriodStats(characterId) },
+    "period stats",
+  );
 }
 
-let yesterdayPushedForToday: string | null = null;
+// Keyed by characterId — now that more than one character can be
+// published, a single shared string would make the SECOND published
+// character's push silently skip for the rest of the day the moment the
+// FIRST one's already gone out, since both would share one "have I
+// pushed for today" flag.
+const yesterdayPushedForToday = new Map<string, string>();
 
 export async function pushYesterdayStats(characterId: string): Promise<void> {
   const todayStr = localDateString(new Date());
-  if (yesterdayPushedForToday === todayStr) return;
+  if (yesterdayPushedForToday.get(characterId) === todayStr) return;
 
   const yesterday = addDaysToDateString(todayStr, -1);
   const stats = await getActivityStatsForDate(characterId, yesterday);
   const minutesByLabel = Object.fromEntries(stats.map((s) => [s.label, s.minutes]));
-  const ok = await pushWithHealth("/api/yesterday", minutesByLabel, "yesterday stats");
-  if (ok) yesterdayPushedForToday = todayStr;
+  const ok = await pushWithHealth("/api/yesterday", { ...characterFields(characterId), minutesByLabel }, "yesterday stats");
+  if (ok) yesterdayPushedForToday.set(characterId, todayStr);
 }
 
-let streaksPushedForToday: string | null = null;
+// Same per-character reasoning as yesterdayPushedForToday above.
+const streaksPushedForToday = new Map<string, string>();
 
 export async function pushTodayStreaks(characterId: string): Promise<void> {
   const todayStr = localDateString(new Date());
-  if (streaksPushedForToday === todayStr) return;
+  if (streaksPushedForToday.get(characterId) === todayStr) return;
 
-  const ok = await pushWithHealth("/api/streaks", getTodayStreaksByGoalId(characterId), "today's streaks");
-  if (ok) streaksPushedForToday = todayStr;
+  const ok = await pushWithHealth(
+    "/api/streaks",
+    { ...characterFields(characterId), streaksByGoalId: getTodayStreaksByGoalId(characterId) },
+    "today's streaks",
+  );
+  if (ok) streaksPushedForToday.set(characterId, todayStr);
 }
 
 /**
