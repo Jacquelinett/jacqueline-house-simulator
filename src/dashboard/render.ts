@@ -175,3 +175,45 @@ export function renderAllTimeActivity(pieEl: HTMLElement, listEl: HTMLElement, s
     listEl.appendChild(row);
   }
 }
+
+export interface GoalOutcomesSummary {
+  mostCompleted: { label: string; count: number } | null;
+  mostSkipped: { label: string; count: number } | null;
+}
+
+/**
+ * "Most completed"/"most skipped" rows from a goal-history summary — used
+ * by the Statistic modal's All Time tab (summarized from all history) and
+ * Period tab (summarized from history filtered to one window), plus the
+ * viewer's own Period section (fed from whichever pre-computed fixed
+ * bucket is selected). `emptyText` shows instead of the two rows only when
+ * there's truly nothing to report (no completions *or* skips ever/in that
+ * window) — a window with only "missed" outcomes still shows both rows
+ * with a "—" placeholder, since that's a real (if discouraging) result,
+ * not the same as no data existing at all.
+ */
+export function renderGoalOutcomes(container: HTMLElement, summary: GoalOutcomesSummary, emptyText = "No history yet"): void {
+  container.textContent = "";
+
+  if (!summary.mostCompleted && !summary.mostSkipped) {
+    const empty = document.createElement("div");
+    empty.className = "goals-empty";
+    empty.textContent = emptyText;
+    container.appendChild(empty);
+    return;
+  }
+
+  const completedRow = document.createElement("div");
+  completedRow.className = "dashboard-row";
+  completedRow.textContent = summary.mostCompleted
+    ? `Most completed: ${summary.mostCompleted.label} (${summary.mostCompleted.count}×)`
+    : "Most completed: —";
+  container.appendChild(completedRow);
+
+  const skippedRow = document.createElement("div");
+  skippedRow.className = "dashboard-row";
+  skippedRow.textContent = summary.mostSkipped
+    ? `Most skipped: ${summary.mostSkipped.label} (${summary.mostSkipped.count}×)`
+    : "Most skipped: —";
+  container.appendChild(skippedRow);
+}

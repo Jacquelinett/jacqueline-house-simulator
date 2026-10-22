@@ -192,22 +192,6 @@ body {
   font-size: 12px;
 }
 
-.day-toggle {
-  background: var(--surface-soft);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 11px;
-  cursor: pointer;
-  margin: 2px 2px 0 0;
-}
-
-.day-toggle.selected {
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-}
-
 .object-menu {
   position: fixed;
   z-index: 20;
@@ -448,9 +432,12 @@ body {
   font-size: 13px;
 }
 
-/* Dashboard's date picker and the Statistic modal's tab/period controls —
-   app-only (both need live AW range queries the viewer has no access to),
-   so these live here rather than in shared-chrome.css. */
+/* Dashboard's date picker — app-only, since the viewer has no AW access to
+   run the live range query a picked date would need. (.day-toggle,
+   .stat-tabs/.stat-tab, and .stat-period-controls' layout now live in
+   shared-chrome.css instead — the viewer's own Period section reuses all
+   three for its This Week/Last Week/This Month/Last Month picker, just
+   with no date input inside .stat-period-controls.) */
 .dashboard-date-row {
   margin-bottom: 8px;
 }
@@ -459,7 +446,8 @@ body {
    text color as everything else, just styled as a text link rather than a
    button. border-bottom instead of text-decoration: underline, since the
    latter doesn't reliably reach a native date input's internal rendering
-   the way it would on plain text. */
+   the way it would on plain text. App-only along with the row above: the
+   viewer's .stat-period-controls never contains a date input. */
 .dashboard-date-input,
 .stat-period-controls input[type="date"] {
   background: transparent;
@@ -471,49 +459,6 @@ body {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
-}
-
-/* Real tab navigation (underline style) — distinct on purpose from
-   .day-toggle's pill-button look below, so "switches which section is
-   visible" (All Time/Period) doesn't read as the same kind of control as
-   "picks a parameter within a section" (Weekly/Monthly). */
-.stat-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 14px;
-}
-
-/* buildToggleGroup wraps its buttons in one <span>, so a flex `gap` on
-   .stat-tabs would have nothing to apply between (just one child, that
-   wrapper span) — spacing is a margin on the button itself instead, same
-   as how .day-toggle spaces itself below. */
-.stat-tab {
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  margin: 0 18px -1px 0;
-  color: var(--text);
-  opacity: 0.6;
-  font-size: 13px;
-  font-weight: 600;
-  padding: 0 0 8px 0;
-  cursor: pointer;
-}
-
-.stat-tab:hover {
-  opacity: 0.85;
-}
-
-.stat-tab.selected {
-  opacity: 1;
-  border-bottom-color: var(--accent-border);
-}
-
-.stat-period-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 4px;
 }
 
 /* Mobile Pick Action list rows — app-only (the viewer never starts/stops

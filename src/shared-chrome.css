@@ -463,6 +463,72 @@
   font-size: 13px;
 }
 
+.day-toggle {
+  background: var(--surface-soft);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  margin: 2px 2px 0 0;
+}
+
+.day-toggle.selected {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+
+/* Real tab navigation (underline style) — distinct on purpose from
+   .day-toggle's pill-button look above, so "switches which section is
+   visible" (All Time/Period) doesn't read as the same kind of control as
+   "picks a parameter within a section" (Weekly/Monthly, or the viewer's
+   This Week/Last Week/This Month/Last Month). Used by both the desktop
+   Statistic modal and the viewer's own Statistic surface, via
+   ui/toggleGroup.ts's buildToggleGroup(). */
+.stat-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 14px;
+}
+
+/* buildToggleGroup wraps its buttons in one <span>, so a flex `gap` on
+   .stat-tabs would have nothing to apply between (just one child, that
+   wrapper span) — spacing is a margin on the button itself instead, same
+   as how .day-toggle spaces itself above. */
+.stat-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin: 0 18px -1px 0;
+  color: var(--text);
+  opacity: 0.6;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 0 8px 0;
+  cursor: pointer;
+}
+
+.stat-tab:hover {
+  opacity: 0.85;
+}
+
+.stat-tab.selected {
+  opacity: 1;
+  border-bottom-color: var(--accent-border);
+}
+
+/* Layout only — the desktop app's own .dashboard-date-input styling (for
+   the date picker that sits in here on its Period tab) stays app-only in
+   styles.css, since the viewer's own Period section never has a date
+   input in this row, just the fixed-bucket toggle group. */
+.stat-period-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
 .panel-section-heading {
   font-size: 13px;
   margin: 16px 0 8px 0;

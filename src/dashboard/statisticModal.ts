@@ -1,61 +1,10 @@
 import { buildModal } from "../ui/modal";
-import { getActivityStats, getActivityStatsForRange } from "./stats";
-import { renderAllTimeActivity, renderGoalList } from "./render";
+import { buildToggleGroup } from "../ui/toggleGroup";
+import { getActivityStats } from "./stats";
+import { renderAllTimeActivity, renderGoalList, renderGoalOutcomes } from "./render";
 import { getGoalHistory, summarizeGoalHistory } from "../goals/history";
-import { getGoalProgressForRange } from "../goals/progress";
-import { localDateString, parseDateString } from "../goals/recurrence";
-
-/**
- * A row of mutually-exclusive buttons (single-select, as opposed to the
- * multi-select day-of-week toggles in goals/ui.ts) — used twice below, with
- * different classNames so the two don't read as the same kind of control:
- * All Time/Period is real tab navigation (`stat-tab`, underline style) that
- * swaps which section is visible, while Weekly/Monthly is a toggle/radio
- * pair (`day-toggle`, the same pill style used everywhere else in this app)
- * that just changes a parameter within the Period section. Small enough to
- * keep local rather than promoting to a shared ui/ module until a third
- * caller shows up.
- */
-function buildToggleGroup<T extends string>(
-  options: readonly (readonly [T, string])[],
-  initial: T,
-  onChange: (value: T) => void,
-  buttonClass: "day-toggle" | "stat-tab" = "day-toggle",
-): HTMLElement {
-  const group = document.createElement("span");
-  const buttons = new Map<T, HTMLButtonElement>();
-  let current = initial;
-  for (const [value, label] of options) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = label;
-    btn.className = buttonClass + (value === initial ? " selected" : "");
-    btn.onclick = () => {
-      if (value === current) return;
-      current = value;
-      for (const [v, b] of buttons) b.classList.toggle("selected", v === value);
-      onChange(value);
-    };
-    buttons.set(value, btn);
-    group.appendChild(btn);
-  }
-  return group;
-}
-
-type PeriodMode = "weekly" | "monthly";
-
-function periodRange(mode: PeriodMode, anchor: Date): { start: Date; end: Date; label: string } {
-  if (mode === "weekly") {
-    const start = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - anchor.getDay());
-    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
-    const lastDay = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1);
-    const label = `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${lastDay.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
-    return { start, end, label };
-  }
-  const start = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-  const end = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1);
-  return { start, end, label: start.toLocaleDateString(undefined, { month: "long", year: "numeric" }) };
-}
+import { computePeriodStats } from "./periodStats";
+import { localDateString, parseDateString, periodRange, PeriodMode } from "../goals/recurrence";
 
 /**
  * All-time standouts (goals + activity) — shared by the desktop Statistic
@@ -128,34 +77,10 @@ export function setupStatisticContent(container: HTMLElement): { refresh(): void
   //
   // Goal history never leaves this app (nothing pushes it to val.town), so
   // this section is desktop-only — the viewer's own Statistic surface only
-  // has the Activity half below.
+  // gets per-window goal outcomes for the 4 fixed buckets it's pushed (see
+  // periodStats.ts), never the full all-time history.
   function renderGoals() {
-    goalsList.textContent = "";
-    const history = getGoalHistory();
-
-    if (history.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "goals-empty";
-      empty.textContent = "No history yet";
-      goalsList.appendChild(empty);
-      return;
-    }
-
-    const { mostCompleted, mostSkipped } = summarizeGoalHistory(history);
-
-    const completedRow = document.createElement("div");
-    completedRow.className = "dashboard-row";
-    completedRow.textContent = mostCompleted
-      ? `Most completed: ${mostCompleted.label} (${mostCompleted.count}×)`
-      : "Most completed: —";
-    goalsList.appendChild(completedRow);
-
-    const skippedRow = document.createElement("div");
-    skippedRow.className = "dashboard-row";
-    skippedRow.textContent = mostSkipped
-      ? `Most skipped: ${mostSkipped.label} (${mostSkipped.count}×)`
-      : "Most skipped: —";
-    goalsList.appendChild(skippedRow);
+    renderGoalOutcomes(goalsList, summarizeGoalHistory(getGoalHistory()));
   }
 
   async function renderActivity() {
@@ -244,44 +169,15 @@ export function setupStatisticContent(container: HTMLElement): { refresh(): void
     const { start, end, label } = periodRange(mode, parseDateString(periodDateInput.value));
     periodGoalsHeading.textContent = `Period Goals — ${label}`;
 
-    const progress = await getGoalProgressForRange(start, end);
+    const { goalProgress, mostCompleted, mostSkipped, activityStats } = await computePeriodStats(start, end);
+
     renderGoalList(
       periodGoalsList,
-      progress.map((p) => ({ ...p, subRows: [] })),
+      goalProgress.map((p) => ({ ...p, subRows: [] })),
       "No goals that period",
     );
-
-    const startStr = localDateString(start);
-    const endStr = localDateString(end);
-    const history = getGoalHistory().filter((h) => h.date >= startStr && h.date < endStr);
-    const { mostCompleted, mostSkipped } = summarizeGoalHistory(history);
-
-    periodOutcomesList.textContent = "";
-    const completedRow = document.createElement("div");
-    completedRow.className = "dashboard-row";
-    completedRow.textContent = mostCompleted
-      ? `Most completed: ${mostCompleted.label} (${mostCompleted.count}×)`
-      : "Most completed: —";
-    periodOutcomesList.appendChild(completedRow);
-
-    const skippedRow = document.createElement("div");
-    skippedRow.className = "dashboard-row";
-    skippedRow.textContent = mostSkipped ? `Most skipped: ${mostSkipped.label} (${mostSkipped.count}×)` : "Most skipped: —";
-    periodOutcomesList.appendChild(skippedRow);
-
-    const stats = await getActivityStatsForRange(start, end).catch((err) => {
-      console.error("[statistic] failed to load period stats", err);
-      return null;
-    });
-    if (!stats) {
-      periodActivityList.textContent = "";
-      const error = document.createElement("div");
-      error.className = "goals-empty";
-      error.textContent = "Failed to load stats";
-      periodActivityList.appendChild(error);
-      return;
-    }
-    renderAllTimeActivity(periodPie, periodActivityList, stats);
+    renderGoalOutcomes(periodOutcomesList, { mostCompleted, mostSkipped });
+    renderAllTimeActivity(periodPie, periodActivityList, activityStats);
   }
 
   return {

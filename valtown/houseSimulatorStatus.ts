@@ -14,6 +14,11 @@
  *   PUT  /api/goals     -> (secret required) House Simulator pushes this whenever goals change
  *   GET  /api/stats     -> public JSON: per-activity all-time totals + rolling daily averages (color-coded)
  *   PUT  /api/stats     -> (secret required) House Simulator pushes this on a slow cadence (startup + hourly)
+ *   GET  /api/period-stats -> public JSON: goal progress + outcomes + activity totals for 4 fixed windows
+ *                             (This Week/Last Week/This Month/Last Month) — the viewer has no way to run
+ *                             its own arbitrary-date-range queries, so it picks from this fixed list
+ *                             instead of a free date picker
+ *   PUT  /api/period-stats -> (secret required) House Simulator pushes this on the same cadence as /api/stats
  *   GET  /api/messages  -> (secret required) your in-app inbox reads these
  *   POST /api/messages  -> public: a viewer leaves you a note
  *   DELETE /api/messages/:id -> (secret required) dismiss a message from your inbox
@@ -57,6 +62,11 @@ async function ensureSchema() {
   await sqlite.execute(`create table if not exists stats_blob (
     id integer primary key check (id = 1),
     stats_json text not null,
+    updated_at text not null
+  )`);
+  await sqlite.execute(`create table if not exists period_stats_blob (
+    id integer primary key check (id = 1),
+    period_stats_json text not null,
     updated_at text not null
   )`);
   await sqlite.execute(`create table if not exists messages (
@@ -163,6 +173,28 @@ async function handlePutStats(req: Request): Promise<Response> {
   return Response.json({ ok: true });
 }
 
+async function handleGetPeriodStats(): Promise<Response> {
+  const result = await sqlite.execute("select * from period_stats_blob where id = 1");
+  const row = result.rows[0] as { period_stats_json: string } | undefined;
+  return Response.json(row ? JSON.parse(row.period_stats_json) : []);
+}
+
+async function handlePutPeriodStats(req: Request): Promise<Response> {
+  const body = await req.json().catch(() => null);
+  if (!Array.isArray(body)) return Response.json({ error: "expected a JSON array of period stats" }, { status: 400 });
+
+  await sqlite.execute({
+    sql: `insert into period_stats_blob (id, period_stats_json, updated_at)
+          values (1, :periodStatsJson, :updatedAt)
+          on conflict(id) do update set
+            period_stats_json = excluded.period_stats_json,
+            updated_at = excluded.updated_at`,
+    args: { periodStatsJson: JSON.stringify(body), updatedAt: new Date().toISOString() },
+  });
+
+  return Response.json({ ok: true });
+}
+
 async function handleGetMessages(): Promise<Response> {
   const result = await sqlite.execute("select * from messages order by id desc limit 200");
   return Response.json(result.rows);
@@ -230,6 +262,15 @@ export default async function (req: Request): Promise<Response> {
   if (method === "PUT" && pathname === "/api/stats") {
     if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     return handlePutStats(req);
+  }
+
+  if (method === "GET" && pathname === "/api/period-stats") {
+    return handleGetPeriodStats();
+  }
+
+  if (method === "PUT" && pathname === "/api/period-stats") {
+    if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handlePutPeriodStats(req);
   }
 
   if (method === "GET" && pathname === "/api/messages") {

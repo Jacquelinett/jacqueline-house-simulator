@@ -2,6 +2,7 @@ import { getCurrentActivity } from "../aw/client";
 import { getGoals } from "../goals/state";
 import { getTodayMinutesByLabel } from "../goals/progress";
 import { getActivityStats } from "../dashboard/stats";
+import { computeFixedPeriodStats } from "../dashboard/periodStats";
 import { getSettings } from "../settings/state";
 
 export interface InboxMessage {
@@ -99,6 +100,19 @@ export async function pushGoals(): Promise<void> {
  */
 export async function pushStats(): Promise<void> {
   await pushWithHealth("/api/stats", await getActivityStats(), "stats");
+}
+
+/**
+ * Pushes the 4 fixed This Week/Last Week/This Month/Last Month buckets —
+ * the viewer has no AW access to run its own arbitrary-range queries, so
+ * instead of a date picker it gets whatever was last computed here, picked
+ * from this fixed list. Same slow cadence as pushStats (called alongside
+ * it in main.ts) rather than a separate once-a-day scheduler — reusing the
+ * existing hourly timer is simpler than tracking day boundaries, and it
+ * keeps the "this week"/"this month" buckets fresher through the day too.
+ */
+export async function pushPeriodStats(): Promise<void> {
+  await pushWithHealth("/api/period-stats", await computeFixedPeriodStats(), "period stats");
 }
 
 export async function fetchMessages(): Promise<InboxMessage[]> {

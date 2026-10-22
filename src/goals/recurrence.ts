@@ -42,3 +42,26 @@ export function isScheduledOn(recurrence: Recurrence, date: Date): boolean {
     }
   }
 }
+
+export type PeriodMode = "weekly" | "monthly";
+
+/**
+ * The [start, end) window and a display label for the Sun–Sat week or the
+ * calendar month containing `anchor` — used by Statistic's Period tab (a
+ * free-form date picker) and by the fixed This Week/Last Week/This
+ * Month/Last Month buckets pushed to val.town for the viewer, so both
+ * compute "what does Weekly/Monthly actually mean as a date range"
+ * identically.
+ */
+export function periodRange(mode: PeriodMode, anchor: Date): { start: Date; end: Date; label: string } {
+  if (mode === "weekly") {
+    const start = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - anchor.getDay());
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7);
+    const lastDay = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1);
+    const label = `${start.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${lastDay.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}`;
+    return { start, end, label };
+  }
+  const start = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const end = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1);
+  return { start, end, label: start.toLocaleDateString(undefined, { month: "long", year: "numeric" }) };
+}

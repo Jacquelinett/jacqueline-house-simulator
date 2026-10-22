@@ -5,9 +5,17 @@ import { localDateString } from "./goals/recurrence";
 import { formatMinutes } from "./goals/ui";
 import { buildModal } from "./ui/modal";
 import { buildFloatingPanel } from "./ui/draggablePanel";
-import { buildDashboardSections, renderActivityList, renderAllTimeActivity, renderGoalList } from "./dashboard/render";
+import { buildToggleGroup } from "./ui/toggleGroup";
+import {
+  buildDashboardSections,
+  renderActivityList,
+  renderAllTimeActivity,
+  renderGoalList,
+  renderGoalOutcomes,
+} from "./dashboard/render";
 import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "./status/render";
 import type { ActivityStat } from "./dashboard/stats";
+import type { FixedPeriodKey, FixedPeriodStats } from "./dashboard/periodStats";
 import { setupFloorButtons } from "./ui/floorButtons";
 import { setupTopButtons } from "./ui/topButtons";
 import { setupPixiApp } from "./ui/pixiApp";
@@ -93,22 +101,140 @@ function buildSyncStatusBlock(
   return (vt) => renderSyncStatus(syncEl, { showAw: false, vt });
 }
 
-/** Builds the All-Time Activity pie + legend — shared by the desktop Statistic modal and the mobile Statistic tab. No All-Time Goals here — goal completion/skip history never leaves the desktop app (nothing pushes it to val.town). */
-function buildStatisticBlock(container: HTMLElement): (stats: ActivityStat[]) => void {
+/**
+ * All-Time Activity pie (same as before — no All-Time Goals here, since
+ * goal completion/skip history never leaves the desktop app) plus a Period
+ * tab fed from the 4 fixed windows pushed to val.town (This Week/Last
+ * Week/This Month/Last Month, see dashboard/periodStats.ts): the viewer
+ * has no AW access to run its own arbitrary-range queries, so it picks
+ * from this fixed list instead of a free date picker like the desktop
+ * Statistic modal's own Period tab. Shared by the desktop-viewport
+ * Statistic modal and the mobile Statistic tab.
+ */
+function buildStatisticBlock(container: HTMLElement): {
+  renderAllTime(stats: ActivityStat[]): void;
+  renderPeriod(periods: FixedPeriodStats[]): void;
+} {
+  let latestPeriods: FixedPeriodStats[] = [];
+  let selectedKey: FixedPeriodKey = "thisWeek";
+
+  const tabsRow = document.createElement("div");
+  tabsRow.className = "stat-tabs";
+  container.appendChild(tabsRow);
+
+  const allTimeSection = document.createElement("div");
+  container.appendChild(allTimeSection);
+
+  const periodSection = document.createElement("div");
+  periodSection.style.display = "none";
+  container.appendChild(periodSection);
+
+  tabsRow.appendChild(
+    buildToggleGroup(
+      [
+        ["all", "All Time"],
+        ["period", "Period"],
+      ] as const,
+      "all",
+      (tab) => {
+        allTimeSection.style.display = tab === "all" ? "" : "none";
+        periodSection.style.display = tab === "period" ? "" : "none";
+      },
+      "stat-tab",
+    ),
+  );
+
+  // --- All Time ---
+
   const heading = document.createElement("h3");
   heading.className = "panel-section-heading";
   heading.textContent = "All-Time Activity (top 5)";
-  container.appendChild(heading);
+  allTimeSection.appendChild(heading);
 
   const pie = document.createElement("div");
   pie.id = "dashboard-pie";
-  container.appendChild(pie);
+  allTimeSection.appendChild(pie);
 
   const list = document.createElement("div");
   list.className = "dashboard-list";
-  container.appendChild(list);
+  allTimeSection.appendChild(list);
 
-  return (stats) => renderAllTimeActivity(pie, list, stats);
+  // --- Period: fixed buckets only, no date picker (see function comment). ---
+
+  const controlsRow = document.createElement("div");
+  controlsRow.className = "stat-period-controls";
+  periodSection.appendChild(controlsRow);
+
+  controlsRow.appendChild(
+    buildToggleGroup(
+      [
+        ["thisWeek", "This Week"],
+        ["lastWeek", "Last Week"],
+        ["thisMonth", "This Month"],
+        ["lastMonth", "Last Month"],
+      ] as const,
+      "thisWeek",
+      (key) => {
+        selectedKey = key;
+        renderSelectedPeriod();
+      },
+    ),
+  );
+
+  const periodGoalsHeading = document.createElement("h3");
+  periodGoalsHeading.className = "panel-section-heading";
+  periodGoalsHeading.textContent = "Period Goals";
+  periodSection.appendChild(periodGoalsHeading);
+
+  const periodGoalsList = document.createElement("div");
+  periodGoalsList.className = "dashboard-list";
+  periodSection.appendChild(periodGoalsList);
+
+  const periodOutcomesHeading = document.createElement("h3");
+  periodOutcomesHeading.className = "panel-section-heading";
+  periodOutcomesHeading.textContent = "Period Goal Outcomes";
+  periodSection.appendChild(periodOutcomesHeading);
+
+  const periodOutcomesList = document.createElement("div");
+  periodSection.appendChild(periodOutcomesList);
+
+  const periodActivityHeading = document.createElement("h3");
+  periodActivityHeading.className = "panel-section-heading";
+  periodActivityHeading.textContent = "Period Activity";
+  periodSection.appendChild(periodActivityHeading);
+
+  const periodPie = document.createElement("div");
+  periodPie.id = "dashboard-period-pie";
+  periodSection.appendChild(periodPie);
+
+  const periodActivityList = document.createElement("div");
+  periodActivityList.className = "dashboard-list";
+  periodSection.appendChild(periodActivityList);
+
+  function renderSelectedPeriod() {
+    const period = latestPeriods.find((p) => p.key === selectedKey);
+    periodGoalsHeading.textContent = period ? `Period Goals — ${period.label}` : "Period Goals";
+    renderGoalList(
+      periodGoalsList,
+      (period?.goalProgress ?? []).map((p) => ({ ...p, subRows: [] })),
+      "No goals that period",
+    );
+    renderGoalOutcomes(periodOutcomesList, {
+      mostCompleted: period?.mostCompleted ?? null,
+      mostSkipped: period?.mostSkipped ?? null,
+    });
+    renderAllTimeActivity(periodPie, periodActivityList, period?.activityStats ?? []);
+  }
+
+  return {
+    renderAllTime(stats) {
+      renderAllTimeActivity(pie, list, stats);
+    },
+    renderPeriod(periods) {
+      latestPeriods = periods;
+      renderSelectedPeriod();
+    },
+  };
 }
 
 /** Shared by the inline Leave-a-note form (desktop/wide-viewport) and the mobile Message popup — just the network call, each caller handles its own form fields/status text. */
@@ -319,16 +445,17 @@ async function main() {
   const { goalList, activityList } = buildDashboardSections(dashboardPanel.body);
   dashboardPanel.open();
 
-  // --- Statistic modal: same all-time Activity section the desktop app's Statistic modal has. ---
+  // --- Statistic modal: All-Time Activity section + Period tab, same shape the desktop app's Statistic modal has. ---
   const statisticModal = buildModal("Statistic", { size: "large", resizable: true });
-  const renderStatisticDesktop = buildStatisticBlock(statisticModal.body);
+  const statisticDesktop = buildStatisticBlock(statisticModal.body);
 
   setupTopButtons([
     {
       label: "Statistic",
       onclick: () => {
         statisticModal.open();
-        renderStatisticDesktop(latestStats);
+        statisticDesktop.renderAllTime(latestStats);
+        statisticDesktop.renderPeriod(latestPeriodStats);
       },
     },
     { label: "Settings", onclick: settingsModal.open },
@@ -365,15 +492,19 @@ async function main() {
     mobileTabs.pages.dashboard,
   );
 
-  const renderStatisticMobile = buildStatisticBlock(mobileTabs.pages.statistic);
+  const statisticMobile = buildStatisticBlock(mobileTabs.pages.statistic);
 
   mobileSettingsUI = buildDisplaySettingsSection(mobileTabs.pages.settings, viewerSettings, displaySettingsCallbacks);
 
   mobileTabs.onTabChange((tab) => {
-    if (tab === "statistic") renderStatisticMobile(latestStats);
+    if (tab === "statistic") {
+      statisticMobile.renderAllTime(latestStats);
+      statisticMobile.renderPeriod(latestPeriodStats);
+    }
   });
 
   let latestStats: ActivityStat[] = [];
+  let latestPeriodStats: FixedPeriodStats[] = [];
   let startedAtMs: number | null = null;
   let latestActivityLabel: string | null = null;
   let latestTodayMinutesByLabel: Record<string, number> = {};
@@ -399,14 +530,16 @@ async function main() {
 
   async function refreshStatus() {
     try {
-      const [statusRes, goalsRes, statsRes] = await Promise.all([
+      const [statusRes, goalsRes, statsRes, periodStatsRes] = await Promise.all([
         fetch(`${STATUS_API_BASE}/api/status`),
         fetch(`${STATUS_API_BASE}/api/goals`),
         fetch(`${STATUS_API_BASE}/api/stats`),
+        fetch(`${STATUS_API_BASE}/api/period-stats`),
       ]);
       const data: StatusResponse = await statusRes.json();
       latestGoals = await goalsRes.json();
       latestStats = await statsRes.json();
+      latestPeriodStats = await periodStatsRes.json();
 
       latestActivityLabel = data.activityLabel;
       latestTodayMinutesByLabel = data.todayMinutesByLabel;
