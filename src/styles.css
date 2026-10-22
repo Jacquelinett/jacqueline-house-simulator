@@ -192,6 +192,48 @@ body {
   font-size: 12px;
 }
 
+/* First-run server connection form — see remoteState.ts's comment for why
+   this is plain DOM instead of window.prompt() (Tauri's webview doesn't
+   implement it). #connection-setup-overlay reuses .modal-overlay/
+   .modal-dialog/.modal-header/.modal-body for the chrome; this just styles
+   the form itself. */
+#connection-setup-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#connection-setup-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+#connection-setup-form input {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+#connection-setup-form button {
+  align-self: flex-start;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#connection-setup-form button:hover {
+  background: var(--border);
+}
+
 .object-menu {
   position: fixed;
   z-index: 20;

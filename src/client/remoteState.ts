@@ -16,22 +16,75 @@ function getOrCreateDeviceId(): string {
   return id;
 }
 
-function getOrPromptServerUrl(): string {
-  let url = localStorage.getItem(SERVER_URL_KEY);
-  if (!url) {
-    url = window.prompt("House Simulator server address (e.g. ws://192.168.0.50:4000)")?.trim() || "";
-    if (url) localStorage.setItem(SERVER_URL_KEY, url);
-  }
-  return url;
-}
+/**
+ * Tauri's webview (WKWebView on macOS in particular) doesn't implement
+ * window.prompt() — it returns null immediately instead of ever showing
+ * anything, which made the very first connection attempt fail instantly
+ * with "no server address provided" before the user saw a dialog at all.
+ * Built as plain DOM instead, same as every other in-app dialog here —
+ * no close button and no outside-click dismissal, since there's nothing
+ * usable behind it yet (no connection, no scene) for a cancel to fall
+ * back to.
+ */
+function promptForConnectionDetails(): Promise<{ serverUrl: string; lanSecret: string }> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay open";
+    overlay.id = "connection-setup-overlay";
 
-function getOrPromptLanSecret(): string {
-  let secret = localStorage.getItem(LAN_SECRET_KEY);
-  if (secret === null) {
-    secret = window.prompt("House Simulator server secret")?.trim() ?? "";
-    localStorage.setItem(LAN_SECRET_KEY, secret);
-  }
-  return secret;
+    const dialog = document.createElement("div");
+    dialog.className = "modal-dialog";
+    overlay.appendChild(dialog);
+
+    const header = document.createElement("div");
+    header.className = "modal-header";
+    const titleEl = document.createElement("h2");
+    titleEl.textContent = "Connect to House Simulator server";
+    header.appendChild(titleEl);
+    dialog.appendChild(header);
+
+    const body = document.createElement("div");
+    body.className = "modal-body";
+    dialog.appendChild(body);
+
+    const form = document.createElement("form");
+    form.id = "connection-setup-form";
+    body.appendChild(form);
+
+    const urlLabel = document.createElement("label");
+    urlLabel.textContent = "Server address (e.g. ws://192.168.0.50:4000)";
+    const urlInput = document.createElement("input");
+    urlInput.type = "text";
+    urlInput.required = true;
+    urlLabel.appendChild(urlInput);
+    form.appendChild(urlLabel);
+
+    const secretLabel = document.createElement("label");
+    secretLabel.textContent = "Server secret (leave blank if none)";
+    const secretInput = document.createElement("input");
+    secretInput.type = "text";
+    secretLabel.appendChild(secretInput);
+    form.appendChild(secretLabel);
+
+    const submitBtn = document.createElement("button");
+    submitBtn.type = "submit";
+    submitBtn.textContent = "Connect";
+    form.appendChild(submitBtn);
+
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const serverUrl = urlInput.value.trim();
+      if (!serverUrl) return;
+      const lanSecret = secretInput.value.trim();
+      localStorage.setItem(SERVER_URL_KEY, serverUrl);
+      localStorage.setItem(LAN_SECRET_KEY, lanSecret);
+      overlay.remove();
+      resolve({ serverUrl, lanSecret });
+    };
+
+    document.body.appendChild(overlay);
+    urlInput.focus();
+  });
 }
 
 /** Same externally-visible shape as src/lib/persistedState.ts's createPersistedState (get/onChange) — but fed by WebSocket `state` broadcasts instead of a local file, via the internal _set the socket dispatcher below calls. */
@@ -86,16 +139,18 @@ const pendingQueries = new Map<string, { resolve(value: unknown): void; reject(e
  * can await this before building UI that expects goals/todos/status to
  * already be populated. See server/rpc.ts for the protocol this speaks.
  */
-export function connectRemoteState(): Promise<void> {
+export async function connectRemoteState(): Promise<void> {
+  let serverUrl = localStorage.getItem(SERVER_URL_KEY);
+  let lanSecret = localStorage.getItem(LAN_SECRET_KEY);
+  if (!serverUrl || lanSecret === null) {
+    const entered = await promptForConnectionDetails();
+    serverUrl = entered.serverUrl;
+    lanSecret = entered.lanSecret;
+  }
+
   return new Promise((resolve, reject) => {
-    const serverUrl = getOrPromptServerUrl();
-    if (!serverUrl) {
-      reject(new Error("no server address provided"));
-      return;
-    }
     const deviceId = getOrCreateDeviceId();
-    const secret = getOrPromptLanSecret();
-    const url = `${serverUrl}?deviceId=${encodeURIComponent(deviceId)}&secret=${encodeURIComponent(secret)}`;
+    const url = `${serverUrl}?deviceId=${encodeURIComponent(deviceId)}&secret=${encodeURIComponent(lanSecret ?? "")}`;
 
     const ws = new WebSocket(url);
     socket = ws;
