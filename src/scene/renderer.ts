@@ -44,7 +44,8 @@ export async function preloadRoomAssets(): Promise<void> {
   }
 }
 
-function buildLayer(layer: SpriteLayer, width: number, height: number): Container {
+/** Exported for the admin tool's placement-ghost preview (adminPreview.ts), which builds a lightweight stand-in sprite from the same SpriteLayer data instead of duplicating this logic. */
+export function buildLayer(layer: SpriteLayer, width: number, height: number): Container {
   const node: Container = layer.texture
     ? new Sprite(Assets.get<Texture>(assetUrl(layer.texture)))
     : new Graphics().rect(0, 0, width, height).fill(layer.color ?? 0xffffff);

@@ -1,6 +1,6 @@
 import { Container, FederatedPointerEvent, Graphics, Polygon } from "pixi.js";
 import { gridToScreen, ObjectDef, RoomDef, screenToGrid } from "./rooms";
-import { SceneRenderer } from "./renderer";
+import { buildLayer, SceneRenderer } from "./renderer";
 
 /**
  * Read-only-except-for-placement preview renderer for the admin tool —
@@ -41,8 +41,13 @@ import { SceneRenderer } from "./renderer";
  * construction sequence, so this entirely sidesteps the issue rather
  * than fighting field-initialization timing again.
  */
-const objectContainersByRenderer = new WeakMap<AdminPreviewRenderer, Map<string, Container>>();
-function objectContainersFor(renderer: AdminPreviewRenderer): Map<string, Container> {
+interface RegisteredObject {
+  container: Container;
+  def: ObjectDef;
+}
+
+const objectContainersByRenderer = new WeakMap<AdminPreviewRenderer, Map<string, RegisteredObject>>();
+function objectContainersFor(renderer: AdminPreviewRenderer): Map<string, RegisteredObject> {
   let map = objectContainersByRenderer.get(renderer);
   if (!map) {
     map = new Map();
@@ -62,6 +67,8 @@ export class AdminPreviewRenderer extends SceneRenderer {
 
   private hoverDiamond: Graphics | null = null;
   private placingRoomContainer: Container | null = null;
+  private placingGhost: Container | null = null;
+  private placingObjectId: string | null = null;
 
   constructor(
     app: ConstructorParameters<typeof SceneRenderer>[0],
@@ -87,7 +94,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
   }
 
   protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
-    objectContainersFor(this).set(obj.id, container);
+    objectContainersFor(this).set(obj.id, { container, def: obj });
     console.log(
       `[adminPreview] instance #${AdminPreviewRenderer.currentlyConstructingId} registered "${obj.id}" at (${container.position.x}, ${container.position.y})`,
     );
@@ -102,14 +109,15 @@ export class AdminPreviewRenderer extends SceneRenderer {
 
   /** Moves one object's own sprite directly — no scene rebuild, so this never blips. Only valid for an already-built object (same type/size as when the scene was last built). */
   public moveObject(objectId: string, x: number, y: number): void {
-    const container = objectContainersFor(this).get(objectId);
-    if (!container) {
+    const entry = objectContainersFor(this).get(objectId);
+    if (!entry) {
       console.warn(
         `[adminPreview] instance #${this.instanceId} moveObject("${objectId}") — no container registered for this id. Known ids:`,
         [...objectContainersFor(this).keys()],
       );
       return;
     }
+    const { container } = entry;
     console.log(`[adminPreview] instance #${this.instanceId} moveObject("${objectId}") (${container.position.x},${container.position.y}) -> (${x},${y})`);
     container.position.set(x, y);
     // Forces an immediate repaint rather than waiting for the next
@@ -119,13 +127,19 @@ export class AdminPreviewRenderer extends SceneRenderer {
   }
 
   /**
-   * Starts tile-placement mode on whichever room is currently viewed: a
-   * diamond follows the pointer, snapped to the tile grid, and a click
-   * reports that tile's (u, v) back to onTileClick. Call disablePlacement()
-   * when done (committing or cancelling) — it does not auto-disable itself
-   * on click, since the caller may want to keep placing more objects.
+   * Starts tile-placement mode on whichever room is currently viewed, for
+   * one specific object (`objectId`): that object's existing sprite is
+   * dimmed to half-transparent in place (so it's clear it's the thing being
+   * moved, not just left behind), and a ghost built from the same sprite
+   * layers follows the pointer snapped to the tile grid, with the diamond
+   * drawn at the ghost's own back corner — same point, so the diamond is
+   * naturally "at the base" of the ghost with no separate anchor math. A
+   * click reports that tile's (u, v) back to onTileClick. Call
+   * disablePlacement() when done (committing or cancelling) — it does not
+   * auto-disable itself on click, since the caller may want to keep placing
+   * more objects.
    */
-  public enablePlacement(onTileClick: (u: number, v: number) => void): void {
+  public enablePlacement(objectId: string, onTileClick: (u: number, v: number) => void): void {
     this.disablePlacement();
 
     const container = this.roomContainers.get(this.viewedRoomId);
@@ -133,8 +147,26 @@ export class AdminPreviewRenderer extends SceneRenderer {
       console.warn(`[adminPreview] instance #${this.instanceId} enablePlacement — no room container for viewedRoomId "${this.viewedRoomId}"`);
       return;
     }
-    console.log(`[adminPreview] instance #${this.instanceId} enablePlacement on room "${this.viewedRoomId}"`);
+    const entry = objectContainersFor(this).get(objectId);
+    if (!entry) {
+      console.warn(`[adminPreview] instance #${this.instanceId} enablePlacement — no registered object for id "${objectId}"`);
+      return;
+    }
+    console.log(`[adminPreview] instance #${this.instanceId} enablePlacement on room "${this.viewedRoomId}" for object "${objectId}"`);
     this.placingRoomContainer = container;
+    this.placingObjectId = objectId;
+    entry.container.alpha = 0.4;
+
+    const ghost = new Container();
+    ghost.alpha = 0.6;
+    for (const layer of entry.def.below ?? []) {
+      ghost.addChild(buildLayer(layer, entry.def.width, entry.def.height));
+    }
+    for (const layer of entry.def.above ?? []) {
+      ghost.addChild(buildLayer(layer, entry.def.width, entry.def.height));
+    }
+    this.placingGhost = ghost;
+    container.addChild(ghost);
 
     const diamond = new Graphics();
     this.hoverDiamond = diamond;
@@ -145,6 +177,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
       const right = gridToScreen(u + 1, v);
       const frontPt = gridToScreen(u + 1, v + 1);
       const left = gridToScreen(u, v + 1);
+      ghost.position.set(back.x, back.y);
       diamond
         .clear()
         .poly([back.x, back.y, right.x, right.y, frontPt.x, frontPt.y, left.x, left.y])
@@ -184,6 +217,15 @@ export class AdminPreviewRenderer extends SceneRenderer {
       this.hoverDiamond.destroy();
       this.hoverDiamond = null;
     }
+    if (this.placingGhost) {
+      this.placingGhost.destroy({ children: true });
+      this.placingGhost = null;
+    }
+    if (this.placingObjectId) {
+      const entry = objectContainersFor(this).get(this.placingObjectId);
+      if (entry) entry.container.alpha = 1;
+      this.placingObjectId = null;
+    }
     const container = this.placingRoomContainer as (Container & { _placementHandlers?: { onMove: (e: FederatedPointerEvent) => void; onClick: (e: FederatedPointerEvent) => void } }) | null;
     if (container?._placementHandlers) {
       container.off("pointermove", container._placementHandlers.onMove);
@@ -191,5 +233,6 @@ export class AdminPreviewRenderer extends SceneRenderer {
       delete container._placementHandlers;
     }
     this.placingRoomContainer = null;
+    this.app.render();
   }
 }

@@ -550,7 +550,7 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
         }
         placingObjectId = obj.id;
         setPlacingUI(true);
-        currentRenderer?.enablePlacement((u, v) => {
+        currentRenderer?.enablePlacement(obj.id, (u, v) => {
           const screen = gridToScreen(u, v);
           obj.x = screen.x;
           obj.y = screen.y;
