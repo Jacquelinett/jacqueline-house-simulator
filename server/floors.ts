@@ -34,6 +34,14 @@ export function createFloor(floor: Floor): void {
   });
 }
 
+export function updateFloor(level: number, floor: { label: string; baseRoomId: string }): void {
+  db.prepare("UPDATE floors SET label = @label, base_room_id = @baseRoomId WHERE level = @level").run({
+    level,
+    label: floor.label,
+    baseRoomId: floor.baseRoomId,
+  });
+}
+
 export function deleteFloor(level: number): void {
   db.prepare("DELETE FROM floors WHERE level = ?").run(level);
 }

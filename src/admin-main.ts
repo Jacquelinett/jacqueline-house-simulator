@@ -1481,14 +1481,63 @@ async function renderRooms(body: HTMLElement) {
   floorsHint.textContent = "Each floor is a level plus which room the floor-switch button jumps to. Not enforced, but that base room is meant to be the one nothing else connects to.";
   body.appendChild(floorsHint);
 
+  /** Rooms nothing else connects to (plus not already another floor's own base room) — `exemptBaseRoomId` keeps one floor's own current base room selectable in its own edit dropdown even though it'd otherwise count as "another floor's base room" against itself. */
+  function pickableBaseRooms(exemptFloorLevel?: number): RoomSpecWire[] {
+    const otherFloorBaseRoomIds = floors.filter((f) => f.level !== exemptFloorLevel).map((f) => f.baseRoomId);
+    const used = getUsedRoomIds(rooms, otherFloorBaseRoomIds);
+    return rooms.filter((r) => !used.has(r.id));
+  }
+
   const floorsTable = document.createElement("table");
   floorsTable.className = "admin-table";
   floorsTable.innerHTML = "<tr><th>Level</th><th>Label</th><th>Base room</th><th></th></tr>";
   for (const floor of floors) {
     const row = document.createElement("tr");
+    const levelCell = document.createElement("td");
+    levelCell.textContent = String(floor.level);
+    row.appendChild(levelCell);
+
+    const labelCell = document.createElement("td");
+    labelCell.textContent = floor.label;
+    row.appendChild(labelCell);
+
+    const baseRoomCell = document.createElement("td");
     const baseRoom = rooms.find((r) => r.id === floor.baseRoomId);
-    row.innerHTML = `<td>${floor.level}</td><td>${floor.label}</td><td>${baseRoom ? `${baseRoom.name} (${baseRoom.id})` : `(missing: ${floor.baseRoomId})`}</td>`;
+    baseRoomCell.textContent = baseRoom ? `${baseRoom.name} (${baseRoom.id})` : `(missing: ${floor.baseRoomId})`;
+    row.appendChild(baseRoomCell);
+
     const floorActionCell = document.createElement("td");
+    const editFloorBtn = document.createElement("button");
+    editFloorBtn.type = "button";
+    editFloorBtn.textContent = "Edit";
+    editFloorBtn.onclick = () => {
+      // Swaps the base-room cell for a dropdown in place, rather than a
+      // separate modal — it's one field, a modal would be overkill.
+      baseRoomCell.textContent = "";
+      const select = document.createElement("select");
+      // The floor's own current base room is always included even if it
+      // would otherwise read as "used" against itself.
+      const candidates = pickableBaseRooms(floor.level);
+      const options = baseRoom && !candidates.some((r) => r.id === baseRoom.id) ? [baseRoom, ...candidates] : candidates;
+      for (const r of options) {
+        const opt = document.createElement("option");
+        opt.value = r.id;
+        opt.textContent = `${r.name} (${r.id})`;
+        opt.selected = r.id === floor.baseRoomId;
+        select.appendChild(opt);
+      }
+      baseRoomCell.appendChild(select);
+
+      editFloorBtn.textContent = "Save";
+      editFloorBtn.onclick = async () => {
+        try {
+          await adminFetch(`/api/admin/floors/${floor.level}`, { method: "PATCH", body: JSON.stringify({ label: floor.label, baseRoomId: select.value }) });
+          renderRooms(body);
+        } catch (err) {
+          showError(err);
+        }
+      };
+    };
     const removeFloorBtn = document.createElement("button");
     removeFloorBtn.type = "button";
     removeFloorBtn.textContent = "Remove";
@@ -1500,7 +1549,7 @@ async function renderRooms(body: HTMLElement) {
         showError(err);
       }
     };
-    floorActionCell.appendChild(removeFloorBtn);
+    floorActionCell.append(editFloorBtn, removeFloorBtn);
     row.appendChild(floorActionCell);
     floorsTable.appendChild(row);
   }
@@ -1516,14 +1565,7 @@ async function renderRooms(body: HTMLElement) {
   floorLabelInput.placeholder = "label (e.g. 3F)";
   floorLabelInput.required = true;
   const floorBaseRoomSelect = document.createElement("select");
-  // Same pool a room's own connections picker draws from — a room already
-  // claimed as a connection target, or already another floor's base room,
-  // can't be picked here either (see getUsedRoomIds).
-  const usedForFloors = getUsedRoomIds(
-    rooms,
-    floors.map((f) => f.baseRoomId),
-  );
-  const availableBaseRooms = rooms.filter((r) => !usedForFloors.has(r.id));
+  const availableBaseRooms = pickableBaseRooms();
   for (const r of availableBaseRooms) {
     const opt = document.createElement("option");
     opt.value = r.id;

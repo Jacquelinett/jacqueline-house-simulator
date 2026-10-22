@@ -14,7 +14,7 @@ import {
 } from "./objectTypes";
 import { createObject, createRoom, deleteObject, deleteRoom, getRoomSpecs, updateObject, updateRoom } from "./rooms";
 import { ObjectPlacement } from "../src/scene/rooms";
-import { createFloor, deleteFloor, getFloors } from "./floors";
+import { createFloor, deleteFloor, getFloors, updateFloor } from "./floors";
 import { Floor } from "../src/scene/floors";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -166,6 +166,11 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
       if (parts.length === 3 && method === "POST") {
         const floor = (await readJsonBody(req)) as Floor;
         createFloor(floor);
+        return sendJson(res, 200, { ok: true }), true;
+      }
+      if (parts.length === 4 && method === "PATCH") {
+        const floor = (await readJsonBody(req)) as { label: string; baseRoomId: string };
+        updateFloor(Number(parts[3]), floor);
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 4 && method === "DELETE") {
