@@ -1186,24 +1186,25 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     return allRooms.map((r) => (r.id === roomId ? { ...r, connectedTo } : r));
   }
 
-  async function connect(direction: ConnectionDirection, targetRoomId: string, gapTiles: number, lateralOffset: number) {
+  /**
+   * Throws (cycle/missing-room rejection, or a failed PATCH) rather than
+   * swallowing its own error, specifically so the caller — openConnectPicker
+   * below — can keep its dialog open and show the failure right there. It
+   * used to call showInlineError() on the parent modal itself and `return`,
+   * but openConnectPicker's confirm handler closed its own picker dialog
+   * unconditionally right afterward — closing right on top of an error that
+   * WAS being shown, just on a modal now hidden behind the one that just
+   * closed. Looked exactly like "nothing happened, no explanation."
+   */
+  async function connect(direction: ConnectionDirection, targetRoomId: string, gapTiles: number, lateralOffset: number): Promise<void> {
     const targetRoom = allRooms.find((r) => r.id === targetRoomId)!;
     const newConnectedTo = [...(targetRoom.connectedTo ?? []), { roomId: room.id, direction, gapTiles, lateralOffset }];
-    try {
-      assertNoCycle(withConnections(targetRoomId, newConnectedTo));
-    } catch (err) {
-      showInlineError(err);
-      return;
-    }
-    try {
-      await adminFetch(`/api/admin/rooms/${targetRoomId}`, { method: "PATCH", body: JSON.stringify({ ...targetRoom, connectedTo: newConnectedTo }) });
-      targetRoom.connectedTo = newConnectedTo; // keep the local allRooms copy in sync, no refetch needed
-      clearInlineError();
-      renderTable();
-      await renderPreview();
-    } catch (err) {
-      showError(err);
-    }
+    assertNoCycle(withConnections(targetRoomId, newConnectedTo));
+    await adminFetch(`/api/admin/rooms/${targetRoomId}`, { method: "PATCH", body: JSON.stringify({ ...targetRoom, connectedTo: newConnectedTo }) });
+    targetRoom.connectedTo = newConnectedTo; // keep the local allRooms copy in sync, no refetch needed
+    clearInlineError();
+    renderTable();
+    await renderPreview();
   }
 
   async function updateEdge(edge: EdgeConnection, gapTiles: number, lateralOffset: number) {
@@ -1277,12 +1278,26 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     offsetInput.style.width = "50px";
     form.append(document.createTextNode("Lateral offset:"), offsetInput);
 
+    const pickerErrorEl = document.createElement("div");
+    pickerErrorEl.className = "admin-error";
+    pickerErrorEl.style.display = "none";
+    pickerModal.body.appendChild(pickerErrorEl);
+
     const confirmBtn = document.createElement("button");
     confirmBtn.type = "button";
     confirmBtn.textContent = "Connect";
     confirmBtn.onclick = async () => {
-      await connect(direction, roomSelect.value, Number(gapInput.value), Number(offsetInput.value));
-      pickerModal.close();
+      try {
+        await connect(direction, roomSelect.value, Number(gapInput.value), Number(offsetInput.value));
+        pickerModal.close();
+      } catch (err) {
+        // Only close on success — closing unconditionally here used to mask
+        // a cycle-rejection error shown on the parent modal, since this
+        // dialog closed right on top of it. Shown right here instead, where
+        // the user is actually looking.
+        pickerErrorEl.textContent = err instanceof Error ? err.message : String(err);
+        pickerErrorEl.style.display = "";
+      }
     };
     form.appendChild(confirmBtn);
 
