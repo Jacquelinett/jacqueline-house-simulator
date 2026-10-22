@@ -28,8 +28,11 @@ import { assetUrl, buildFloorAndWalls, buildLayer, preloadRoomAssets } from "./s
 import { AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
 import {
+  buildFloorTree,
   ConnectedToEntry,
   ConnectionDirection,
+  floorLevelForRoom,
+  FloorTreeNode,
   getUsedRoomIds,
   gridToScreen,
   ObjectTypeDef,
@@ -1385,93 +1388,14 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
   modal.open();
 }
 
-async function renderRooms(body: HTMLElement) {
-  body.textContent = "";
-  const [rooms, objectTypes, floors] = await Promise.all([
-    adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
-    adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
-    adminFetch<Floor[]>("/api/admin/floors"),
-  ]);
+/** Rooms nothing else connects to (plus not already another floor's own base room) — `exemptFloorLevel` keeps one floor's own current base room selectable in its own edit dropdown even though it'd otherwise count as "another floor's base room" against itself. */
+function pickableBaseRooms(rooms: RoomSpecWire[], floors: Floor[], exemptFloorLevel?: number): RoomSpecWire[] {
+  const otherFloorBaseRoomIds = floors.filter((f) => f.level !== exemptFloorLevel).map((f) => f.baseRoomId);
+  const used = getUsedRoomIds(rooms, otherFloorBaseRoomIds);
+  return rooms.filter((r) => !used.has(r.id));
+}
 
-  const table = document.createElement("table");
-  table.className = "admin-table";
-  table.innerHTML = "<tr><th>Room</th><th>Size</th><th>Level</th><th>Objects</th><th></th></tr>";
-  for (const room of rooms) {
-    const row = document.createElement("tr");
-    row.innerHTML = `<td>${room.name} (${room.id})</td><td>${room.cols}×${room.rows}</td><td>${room.level}</td><td>${room.objects.length}</td>`;
-
-    const actionCell = document.createElement("td");
-    const editBtn = document.createElement("button");
-    editBtn.textContent = "Edit";
-    editBtn.onclick = () => openRoomEditModal(room, objectTypes, () => renderRooms(body));
-    const connectionsBtn = document.createElement("button");
-    connectionsBtn.type = "button";
-    connectionsBtn.textContent = "Connections";
-    connectionsBtn.onclick = () => openRoomConnectionsModal(room, rooms, floors, () => renderRooms(body));
-    const deleteBtn = document.createElement("button");
-    deleteBtn.textContent = "Delete";
-    deleteBtn.onclick = async () => {
-      if (!confirm(`Delete room "${room.name}" and all its objects?`)) return;
-      try {
-        await adminFetch(`/api/admin/rooms/${room.id}`, { method: "DELETE" });
-        renderRooms(body);
-      } catch (err) {
-        showError(err);
-      }
-    };
-    actionCell.append(editBtn, connectionsBtn, deleteBtn);
-    row.appendChild(actionCell);
-
-    table.appendChild(row);
-  }
-  body.appendChild(table);
-
-  const form = document.createElement("form");
-  form.className = "admin-form";
-  const idInput = document.createElement("input");
-  idInput.placeholder = "id (e.g. attic)";
-  idInput.required = true;
-  const nameInput = document.createElement("input");
-  nameInput.placeholder = "Name";
-  nameInput.required = true;
-  const colsInput = document.createElement("input");
-  colsInput.type = "number";
-  colsInput.placeholder = "cols";
-  colsInput.value = "10";
-  const rowsInput = document.createElement("input");
-  rowsInput.type = "number";
-  rowsInput.placeholder = "rows";
-  rowsInput.value = "10";
-  const levelInput = document.createElement("input");
-  levelInput.type = "number";
-  levelInput.placeholder = "level";
-  levelInput.value = "0";
-  const submitBtn = document.createElement("button");
-  submitBtn.type = "submit";
-  submitBtn.textContent = "Add Room (floor1/wall1, unconnected)";
-  form.append(idInput, nameInput, colsInput, rowsInput, levelInput, submitBtn);
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    try {
-      await adminFetch("/api/admin/rooms", {
-        method: "POST",
-        body: JSON.stringify({
-          id: idInput.value,
-          name: nameInput.value,
-          cols: Number(colsInput.value),
-          rows: Number(rowsInput.value),
-          level: Number(levelInput.value),
-          floorVariant: "floor1",
-          wallVariant: "wall1",
-        }),
-      });
-      renderRooms(body);
-    } catch (err) {
-      showError(err);
-    }
-  };
-  body.appendChild(form);
-
+function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: Floor[]) {
   const floorsHeading = document.createElement("h3");
   floorsHeading.textContent = "Floors";
   body.appendChild(floorsHeading);
@@ -1480,13 +1404,6 @@ async function renderRooms(body: HTMLElement) {
   floorsHint.className = "admin-hint";
   floorsHint.textContent = "Each floor is a level plus which room the floor-switch button jumps to. The pickers below only offer rooms nothing connects to, so a base room stays that way as long as you edit through here.";
   body.appendChild(floorsHint);
-
-  /** Rooms nothing else connects to (plus not already another floor's own base room) — `exemptBaseRoomId` keeps one floor's own current base room selectable in its own edit dropdown even though it'd otherwise count as "another floor's base room" against itself. */
-  function pickableBaseRooms(exemptFloorLevel?: number): RoomSpecWire[] {
-    const otherFloorBaseRoomIds = floors.filter((f) => f.level !== exemptFloorLevel).map((f) => f.baseRoomId);
-    const used = getUsedRoomIds(rooms, otherFloorBaseRoomIds);
-    return rooms.filter((r) => !used.has(r.id));
-  }
 
   const floorsTable = document.createElement("table");
   floorsTable.className = "admin-table";
@@ -1517,7 +1434,7 @@ async function renderRooms(body: HTMLElement) {
       const select = document.createElement("select");
       // The floor's own current base room is always included even if it
       // would otherwise read as "used" against itself.
-      const candidates = pickableBaseRooms(floor.level);
+      const candidates = pickableBaseRooms(rooms, floors, floor.level);
       const options = baseRoom && !candidates.some((r) => r.id === baseRoom.id) ? [baseRoom, ...candidates] : candidates;
       for (const r of options) {
         const opt = document.createElement("option");
@@ -1565,7 +1482,7 @@ async function renderRooms(body: HTMLElement) {
   floorLabelInput.placeholder = "label (e.g. 3F)";
   floorLabelInput.required = true;
   const floorBaseRoomSelect = document.createElement("select");
-  const availableBaseRooms = pickableBaseRooms();
+  const availableBaseRooms = pickableBaseRooms(rooms, floors);
   for (const r of availableBaseRooms) {
     const opt = document.createElement("option");
     opt.value = r.id;
@@ -1590,6 +1507,177 @@ async function renderRooms(body: HTMLElement) {
     }
   };
   body.appendChild(floorForm);
+}
+
+/** One `<li>` per node, nested `<ul>`s for children — a plain indented tree, not a graphical chart, consistent with the rest of this tool's plain-table style. */
+function buildTreeNodeEl(node: FloorTreeNode): HTMLLIElement {
+  const li = document.createElement("li");
+  li.textContent = `${node.room.name} (${node.room.id})`;
+  if (node.children.length > 0) {
+    const ul = document.createElement("ul");
+    for (const child of node.children) ul.appendChild(buildTreeNodeEl(child));
+    li.appendChild(ul);
+  }
+  return li;
+}
+
+function buildTreeChartEl(node: FloorTreeNode): HTMLElement {
+  const container = document.createElement("div");
+  container.className = "admin-tree";
+  const ul = document.createElement("ul");
+  ul.appendChild(buildTreeNodeEl(node));
+  container.appendChild(ul);
+  return container;
+}
+
+async function renderRooms(body: HTMLElement) {
+  body.textContent = "";
+  const [rooms, objectTypes, floors] = await Promise.all([
+    adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
+    adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
+    adminFetch<Floor[]>("/api/admin/floors"),
+  ]);
+
+  renderFloorsSection(body, rooms, floors);
+
+  function buildRoomsTable(roomsForTab: RoomSpecWire[]): HTMLElement {
+    const table = document.createElement("table");
+    table.className = "admin-table";
+    table.innerHTML = "<tr><th>Room</th><th>Size</th><th>Level</th><th>Objects</th><th></th></tr>";
+    for (const room of roomsForTab) {
+      const row = document.createElement("tr");
+      row.innerHTML = `<td>${room.name} (${room.id})</td><td>${room.cols}×${room.rows}</td><td>${room.level}</td><td>${room.objects.length}</td>`;
+
+      const actionCell = document.createElement("td");
+      const editBtn = document.createElement("button");
+      editBtn.textContent = "Edit";
+      editBtn.onclick = () => openRoomEditModal(room, objectTypes, () => renderRooms(body));
+      const connectionsBtn = document.createElement("button");
+      connectionsBtn.type = "button";
+      connectionsBtn.textContent = `Connections (${room.connectedTo?.length ?? 0})`;
+      connectionsBtn.onclick = () => openRoomConnectionsModal(room, rooms, floors, () => renderRooms(body));
+      const deleteBtn = document.createElement("button");
+      deleteBtn.textContent = "Delete";
+      deleteBtn.onclick = async () => {
+        if (!confirm(`Delete room "${room.name}" and all its objects?`)) return;
+        try {
+          await adminFetch(`/api/admin/rooms/${room.id}`, { method: "DELETE" });
+          renderRooms(body);
+        } catch (err) {
+          showError(err);
+        }
+      };
+      actionCell.append(editBtn, connectionsBtn, deleteBtn);
+      row.appendChild(actionCell);
+
+      table.appendChild(row);
+    }
+    return table;
+  }
+
+  function buildAddRoomForm(): HTMLElement {
+    const form = document.createElement("form");
+    form.className = "admin-form";
+    const idInput = document.createElement("input");
+    idInput.placeholder = "id (e.g. attic)";
+    idInput.required = true;
+    const nameInput = document.createElement("input");
+    nameInput.placeholder = "Name";
+    nameInput.required = true;
+    const colsInput = document.createElement("input");
+    colsInput.type = "number";
+    colsInput.placeholder = "cols";
+    colsInput.value = "10";
+    const rowsInput = document.createElement("input");
+    rowsInput.type = "number";
+    rowsInput.placeholder = "rows";
+    rowsInput.value = "10";
+    const levelInput = document.createElement("input");
+    levelInput.type = "number";
+    levelInput.placeholder = "level";
+    levelInput.value = "0";
+    const submitBtn = document.createElement("button");
+    submitBtn.type = "submit";
+    submitBtn.textContent = "Add Room (floor1/wall1, unconnected)";
+    form.append(idInput, nameInput, colsInput, rowsInput, levelInput, submitBtn);
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      try {
+        await adminFetch("/api/admin/rooms", {
+          method: "POST",
+          body: JSON.stringify({
+            id: idInput.value,
+            name: nameInput.value,
+            cols: Number(colsInput.value),
+            rows: Number(rowsInput.value),
+            level: Number(levelInput.value),
+            floorVariant: "floor1",
+            wallVariant: "wall1",
+          }),
+        });
+        renderRooms(body);
+      } catch (err) {
+        showError(err);
+      }
+    };
+    return form;
+  }
+
+  // --- Room sub-tabs: one per floor (highest level first, matching
+  // floorButtons.ts's own ordering) plus one "Unorganized" tab for rooms
+  // not reachable from any floor's base room. A room's tab is derived
+  // (floorLevelForRoom, walking its own connectedTo chain), never a field
+  // you set directly — connect it to something already on a floor and it
+  // moves there on its own next render.
+  const subTabBar = document.createElement("div");
+  subTabBar.className = "admin-subtab-bar";
+  body.appendChild(subTabBar);
+
+  interface SubTab {
+    id: string;
+    label: string;
+    floor: Floor | null;
+  }
+  const sortedFloors = [...floors].sort((a, b) => b.level - a.level);
+  const subTabs: SubTab[] = [...sortedFloors.map((f): SubTab => ({ id: `floor-${f.level}`, label: f.label, floor: f })), { id: "unorganized", label: "Unorganized", floor: null }];
+
+  const subPages: Record<string, HTMLElement> = {};
+  const subButtons: Record<string, HTMLButtonElement> = {};
+  for (const tab of subTabs) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = tab.label;
+    btn.onclick = () => showSubTab(tab.id);
+    subTabBar.appendChild(btn);
+    subButtons[tab.id] = btn;
+
+    const page = document.createElement("div");
+    page.className = "admin-subtab-page";
+    body.appendChild(page);
+    subPages[tab.id] = page;
+  }
+
+  function showSubTab(id: string) {
+    for (const tab of subTabs) {
+      subPages[tab.id].classList.toggle("active", tab.id === id);
+      subButtons[tab.id].classList.toggle("active", tab.id === id);
+    }
+  }
+  showSubTab(subTabs[0]?.id ?? "unorganized");
+
+  for (const tab of subTabs) {
+    const page = subPages[tab.id];
+    if (tab.floor) {
+      const tree = buildFloorTree(tab.floor.baseRoomId, rooms);
+      if (tree) page.appendChild(buildTreeChartEl(tree));
+    }
+    const roomsForTab = rooms.filter((r) => {
+      const level = floorLevelForRoom(r.id, rooms, floors);
+      return tab.floor ? level === tab.floor.level : level === null;
+    });
+    page.appendChild(buildRoomsTable(roomsForTab));
+    if (!tab.floor) page.appendChild(buildAddRoomForm());
+  }
 }
 
 async function main() {

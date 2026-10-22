@@ -9,6 +9,7 @@
 // `below`/`overlay`/`above`.
 import { FLOOR_VARIANTS, FloorVariant, TileOverride, WALL_VARIANTS, WallVariant, floor1, wall1 } from "./tileset";
 import { ACTIVITIES, findActivityById } from "./activities";
+import { Floor } from "./floors";
 
 export interface SpriteLayer {
   texture?: string; // path to art asset; omitted -> rendered as a placeholder color box
@@ -350,6 +351,61 @@ export function getUsedRoomIds(allRooms: RoomSpecWire[], baseRoomIds: string[], 
     for (const entry of r.connectedTo ?? []) used.add(entry.roomId);
   }
   return used;
+}
+
+/**
+ * Which floor (by level) `roomId` belongs to, for the admin tool's
+ * per-floor room grouping — walks UP the room's own entries[0] chain
+ * (the same position-determining entry resolveRooms() follows) until it
+ * either reaches a floor's base room (that floor's level) or runs out of
+ * chain (no connectedTo at all, or a cycle) without finding one (null —
+ * "unorganized"). Only entries[0] is consulted, same as resolveRooms(),
+ * since that's the entry that actually determines a room's position —
+ * secondary entries are just additional declared attachments, not
+ * necessarily "which floor this room is really on."
+ */
+export function floorLevelForRoom(roomId: string, allRooms: RoomSpecWire[], floors: Floor[]): number | null {
+  const baseRoomLevel = new Map(floors.map((f) => [f.baseRoomId, f.level]));
+  const visited = new Set<string>();
+  let current: string | undefined = roomId;
+  while (current) {
+    const level = baseRoomLevel.get(current);
+    if (level !== undefined) return level;
+    if (visited.has(current)) return null; // cycle — give up rather than loop forever
+    visited.add(current);
+    current = allRooms.find((r) => r.id === current)?.connectedTo?.[0]?.roomId;
+  }
+  return null;
+}
+
+export interface FloorTreeNode {
+  room: RoomSpecWire;
+  children: FloorTreeNode[];
+}
+
+/**
+ * The inverse walk of floorLevelForRoom — starting at a floor's base room,
+ * find every room whose entries[0] points AT it (its "children" in the
+ * admin tool's hierarchy chart), then recurse into each of those. A
+ * `visited` set (seeded with the root) makes this cycle-safe the same way
+ * resolveRooms() is, just by silently not re-descending into an
+ * already-visited room rather than throwing — this is a read-only
+ * visualization, not something that needs to reject bad data.
+ */
+export function buildFloorTree(baseRoomId: string, allRooms: RoomSpecWire[]): FloorTreeNode | null {
+  const base = allRooms.find((r) => r.id === baseRoomId);
+  if (!base) return null;
+
+  const visited = new Set<string>([baseRoomId]);
+  function childrenOf(parentId: string): FloorTreeNode[] {
+    return allRooms
+      .filter((r) => r.connectedTo?.[0]?.roomId === parentId && !visited.has(r.id))
+      .map((r) => {
+        visited.add(r.id);
+        return { room: r, children: childrenOf(r.id) };
+      });
+  }
+  return { room: base, children: childrenOf(baseRoomId) };
 }
 
 export function resolveRooms(specs: RoomSpec[]): RoomDef[] {
