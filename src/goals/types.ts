@@ -20,4 +20,17 @@ export interface Goal {
    * rather than guessed.
    */
   createdAt?: string;
+  /**
+   * Streak bookkeeping for recurring goals only (a one-off "once" goal has
+   * no repetition to streak), maintained incrementally by
+   * `settleGoalHistory()` as each new scheduled day settles — never
+   * recomputed from scratch, so these are always current as of the last
+   * settle. `streakStartDate` ("YYYY-MM-DD") anchors the *current* streak:
+   * set to the day a streak starts, and re-set to the day of a loss
+   * whenever one happens (even though that day itself isn't a completion —
+   * see history.ts's `getCurrentStreakLength` for why that's still
+   * correct). `highestStreak` only ever ratchets up, never resets.
+   */
+  streakStartDate?: string;
+  highestStreak?: number;
 }

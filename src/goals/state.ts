@@ -27,6 +27,16 @@ export const getGoals = goalsState.get;
 /** Called after every mutation — subscribe to keep a view in sync with the shared list. */
 export const onGoalsChange = goalsState.onChange;
 
+/**
+ * Saves whatever's currently in `getGoals()` as-is — for a caller that
+ * mutated goal objects in place (e.g. `settleGoalHistory()` updating
+ * streak fields) rather than building a new array, so there's no new
+ * value to pass in beyond "persist what's already there."
+ */
+export async function persistGoals(): Promise<void> {
+  await goalsState.persist(getGoals());
+}
+
 export function todayDateString(): string {
   return localDateString(new Date());
 }

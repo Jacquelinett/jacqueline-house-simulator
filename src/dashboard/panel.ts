@@ -3,6 +3,7 @@ import { getActivityStatsForDate } from "./stats";
 import { getGoalProgressForDate } from "../goals/progress";
 import { onGoalsChange } from "../goals/state";
 import { describeScheduleForDate } from "../goals/goalGroups";
+import { describeStreak, getGoalHistory } from "../goals/history";
 import { localDateString, parseDateString } from "../goals/recurrence";
 import { formatMinutes } from "../goals/ui";
 import { buildDashboardSections, renderActivityList, renderGoalList } from "./render";
@@ -56,6 +57,7 @@ export function setupDashboardContent(container: HTMLElement, providedDateInput?
 
   async function renderGoals() {
     const progress = await getGoalProgressForDate(dateInput.value);
+    const history = getGoalHistory();
     renderGoalList(
       goalList,
       progress.map((p) => ({
@@ -63,7 +65,10 @@ export function setupDashboardContent(container: HTMLElement, providedDateInput?
         minutes: p.minutes,
         targetMinutes: p.targetMinutes,
         done: p.done,
-        subRows: p.goals.map((g) => `${describeScheduleForDate(g.recurrence, dateInput.value)} — ${formatMinutes(g.targetMinutes)}`),
+        subRows: p.goals.map((g) => {
+          const streakText = describeStreak(g, history);
+          return `${describeScheduleForDate(g.recurrence, dateInput.value)} — ${formatMinutes(g.targetMinutes)}${streakText ? ` — ${streakText}` : ""}`;
+        }),
       })),
       isViewingToday() ? "No goals today" : "No goals that day",
     );

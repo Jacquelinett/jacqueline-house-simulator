@@ -2,7 +2,7 @@ import { getDurationMinutes } from "../aw/client";
 import { createJsonFileStore } from "../lib/jsonFileStore";
 import { createPersistedState } from "../lib/persistedState";
 import { addDaysToDateString, isScheduledOn, parseDateString } from "./recurrence";
-import { getGoals, todayDateString } from "./state";
+import { getGoals, persistGoals, todayDateString } from "./state";
 import { Goal } from "./types";
 
 export interface GoalHistoryEntry {
@@ -66,6 +66,58 @@ function lastSettledDateFor(goalId: string, history: GoalHistoryEntry[]): string
   return dates.length ? dates.reduce((max, d) => (d > max ? d : max)) : null;
 }
 
+/**
+ * Current streak length for a recurring goal, derived from its stored
+ * `streakStartDate` anchor rather than re-walked from scratch — just a
+ * count of this goal's `completed` entries on or after that date. This is
+ * correct even on the day right after a loss (when `streakStartDate` has
+ * just been re-anchored to that loss day, which itself wasn't completed):
+ * the count naturally comes out to 0 until the next real completion,
+ * without needing a separate "is there currently a streak at all" flag.
+ * Returns 0 for a "once" goal (no repetition to streak) or a goal with no
+ * streak data yet.
+ */
+export function getCurrentStreakLength(goal: Goal, history: GoalHistoryEntry[]): number {
+  if (goal.recurrence.type === "once" || !goal.streakStartDate) return 0;
+  return history.filter((h) => h.goalId === goal.id && h.outcome === "completed" && h.date >= goal.streakStartDate!).length;
+}
+
+/** "Streak: 3 (best 7)" for a recurring goal with any streak history, else null (nothing worth showing yet, or not a recurring goal). */
+export function describeStreak(goal: Goal, history: GoalHistoryEntry[]): string | null {
+  const current = getCurrentStreakLength(goal, history);
+  const best = goal.highestStreak ?? 0;
+  if (current === 0 && best === 0) return null;
+  return `Streak: ${current} (best ${best})`;
+}
+
+/**
+ * Walks a single recurring goal's newly-scheduled days and updates its
+ * streak fields in place as it goes (mutates `goal` directly, same
+ * pattern `skipGoalToday`/`unskipGoalToday` use) — incremental, not
+ * recomputed from the full history, so this stays cheap no matter how
+ * long a goal's history gets. A "once" goal is skipped entirely: it has
+ * exactly one scheduled day ever, nothing to streak.
+ *
+ * `streakStartDate` is re-anchored to *today* on every loss, not just left
+ * unset — see `getCurrentStreakLength`'s comment for why a loss day being
+ * the anchor still produces a correct (0) count.
+ */
+function updateStreak(goal: Goal, history: GoalHistoryEntry[], cursor: string, outcome: GoalHistoryEntry["outcome"]): void {
+  if (goal.recurrence.type === "once") return;
+
+  if (outcome === "completed") {
+    // The streak-as-of-yesterday, read before today's entry exists in
+    // `history` — today's completion either starts a new streak (if there
+    // wasn't one) or extends the existing one by exactly 1, so there's no
+    // need to re-derive the new length from history at all.
+    const previousLength = getCurrentStreakLength(goal, history);
+    if (previousLength === 0) goal.streakStartDate = cursor;
+    goal.highestStreak = Math.max(goal.highestStreak ?? 0, previousLength + 1);
+  } else {
+    goal.streakStartDate = cursor;
+  }
+}
+
 async function settleGoal(goal: Goal, todayStr: string, history: GoalHistoryEntry[]): Promise<GoalHistoryEntry[]> {
   // No reliable starting point for a goal that predates this field — rather
   // than guess, it simply gets no history before whichever day it's first
@@ -91,6 +143,7 @@ async function settleGoal(goal: Goal, todayStr: string, history: GoalHistoryEntr
         });
         outcome = actualMinutes >= goal.targetMinutes ? "completed" : "missed";
       }
+      updateStreak(goal, [...history, ...entries], cursor, outcome);
       entries.push({
         goalId: goal.id,
         date: cursor,
@@ -114,17 +167,30 @@ async function settleGoal(goal: Goal, todayStr: string, history: GoalHistoryEntr
  * re-derived after the fact once a goal's target/schedule has changed —
  * this is why it's an append-only log instead of being recomputed on
  * demand the way "is this done today" is.
+ *
+ * Also updates each goal's streak fields in place as new days settle (see
+ * updateStreak) — if any goal actually changed, the updated goals get
+ * persisted alongside the new history entries, so streaks reach val.town
+ * for free the next time goals are pushed (they're just more fields on
+ * the same Goal objects).
  */
 export async function settleGoalHistory(): Promise<void> {
   const todayStr = todayDateString();
   const history = getGoalHistory();
 
   const newEntries: GoalHistoryEntry[] = [];
+  let goalsChanged = false;
   for (const goal of getGoals()) {
+    const beforeStreakStart = goal.streakStartDate;
+    const beforeHighest = goal.highestStreak;
     newEntries.push(...(await settleGoal(goal, todayStr, history)));
+    if (goal.streakStartDate !== beforeStreakStart || goal.highestStreak !== beforeHighest) goalsChanged = true;
   }
 
   if (newEntries.length > 0) {
     await goalHistoryState.persist([...history, ...newEntries]);
+  }
+  if (goalsChanged) {
+    await persistGoals();
   }
 }

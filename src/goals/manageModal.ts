@@ -1,5 +1,6 @@
 import { addGoal, deleteGoal, getGoals, onGoalsChange, skipGoalToday, unskipGoalToday, updateGoal } from "./state";
 import { buildActivitySelect, buildMinutesInput, buildRecurrencePicker, describeRecurrence, formatMinutes } from "./ui";
+import { describeStreak, getGoalHistory } from "./history";
 import { Goal, Recurrence } from "./types";
 import { localDateString } from "./recurrence";
 import { buildModal } from "../ui/modal";
@@ -176,9 +177,11 @@ export function setupGoalsManageModal(): { open: () => void } {
 
     const skippedToday = goal.recurrence.type !== "once" && (goal.skipDates?.includes(todayDateString()) ?? false);
 
+    const streakText = describeStreak(goal, getGoalHistory());
+
     const text = document.createElement("span");
     text.className = "goal-manage-text";
-    text.textContent = `${goal.activityLabel} — ${formatMinutes(goal.targetMinutes)} — ${describeRecurrence(goal.recurrence)}${skippedToday ? " (skipped today)" : ""}`;
+    text.textContent = `${goal.activityLabel} — ${formatMinutes(goal.targetMinutes)} — ${describeRecurrence(goal.recurrence)}${skippedToday ? " (skipped today)" : ""}${streakText ? ` — ${streakText}` : ""}`;
     row.appendChild(text);
 
     const editBtn = document.createElement("button");
