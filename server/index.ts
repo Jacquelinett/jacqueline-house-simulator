@@ -18,12 +18,16 @@ import { localDateString } from "../src/goals/recurrence";
 import { seedActivitiesIfEmpty } from "./activities";
 import { seedObjectTypesIfEmpty } from "./objectTypes";
 import { seedRoomsIfEmpty } from "./rooms";
+import { handleAdminApi } from "./adminApi";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // The Tauri app's own `npm run build` output — same bundle its webview
 // loads from disk, served over HTTP here for a plain browser on the LAN.
 // See CLAUDE.md's "One build, two delivery mechanisms".
 const DIST_DIR = resolve(__dirname, "../dist");
+// The admin tool's own build — a separate Vite entry, served under /admin/
+// rather than at the root (see server/staticServer.ts's urlPathOverride).
+const ADMIN_DIST_DIR = resolve(__dirname, "../dist-admin");
 
 const PORT = Number(process.env.PORT ?? 4000);
 const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
@@ -44,8 +48,17 @@ async function main() {
   if (!getServerConfig().broadcastUrl) {
     console.warn("[server] no broadcast_url set in server_config — val.town pushes will silently no-op.");
   }
+  if (!getServerConfig().adminSecret) {
+    console.warn(
+      "[server] no admin_secret set in server_config — the admin tool is unreachable. " +
+        "Set one via: UPDATE server_config SET admin_secret = '...' WHERE id = 1;",
+    );
+  }
   if (!existsSync(DIST_DIR)) {
     console.warn(`[server] ${DIST_DIR} does not exist — run \`npm run build\` first, or the frontend won't be servable over HTTP.`);
+  }
+  if (!existsSync(ADMIN_DIST_DIR)) {
+    console.warn(`[server] ${ADMIN_DIST_DIR} does not exist — run \`npm run build:admin\` first, or the admin tool won't be servable.`);
   }
 
   await initGoalsState();
@@ -107,11 +120,16 @@ async function main() {
     setInterval(runStatsPushes, STATS_PUSH_INTERVAL_MS);
   }
 
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     if (req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true, goalsCount: getAllGoals().length }));
       return;
+    }
+    if (await handleAdminApi(req, res)) return;
+    if (req.url === "/admin" || req.url?.startsWith("/admin/")) {
+      const strippedPath = req.url.replace(/^\/admin/, "") || "/";
+      if (serveStatic(ADMIN_DIST_DIR, req, res, strippedPath)) return;
     }
     if (serveStatic(DIST_DIR, req, res)) return;
     res.writeHead(404);

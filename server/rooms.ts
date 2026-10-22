@@ -118,3 +118,81 @@ export function seedRoomsIfEmpty(): void {
   });
   tx();
 }
+
+export type RoomSpecInput = Omit<RoomSpecWire, "objects">;
+
+const roomUpsert = db.prepare(`
+  INSERT INTO rooms (id, name, cols, rows, level, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json,
+    connected_to_room_id, connected_to_direction, connected_to_gap_tiles)
+  VALUES (@id, @name, @cols, @rows, @level, @floorVariant, @wallVariant, @floorOverridesJson, @wallOverridesJson,
+    @connectedToRoomId, @connectedToDirection, @connectedToGapTiles)
+  ON CONFLICT(id) DO UPDATE SET name=excluded.name, cols=excluded.cols, rows=excluded.rows, level=excluded.level,
+    floor_variant=excluded.floor_variant, wall_variant=excluded.wall_variant,
+    floor_overrides_json=excluded.floor_overrides_json, wall_overrides_json=excluded.wall_overrides_json,
+    connected_to_room_id=excluded.connected_to_room_id, connected_to_direction=excluded.connected_to_direction,
+    connected_to_gap_tiles=excluded.connected_to_gap_tiles
+`);
+
+function roomUpsertParams(spec: RoomSpecInput) {
+  return {
+    id: spec.id,
+    name: spec.name,
+    cols: spec.cols,
+    rows: spec.rows,
+    level: spec.level,
+    floorVariant: spec.floorVariant,
+    wallVariant: spec.wallVariant,
+    floorOverridesJson: spec.floorOverrides ? JSON.stringify(spec.floorOverrides) : null,
+    wallOverridesJson: spec.wallOverrides ? JSON.stringify(spec.wallOverrides) : null,
+    connectedToRoomId: spec.connectedTo?.roomId ?? null,
+    connectedToDirection: spec.connectedTo?.direction ?? null,
+    connectedToGapTiles: spec.connectedTo?.gapTiles ?? null,
+  };
+}
+
+export function createRoom(spec: RoomSpecInput): void {
+  roomUpsert.run(roomUpsertParams(spec));
+}
+
+export function updateRoom(spec: RoomSpecInput): void {
+  roomUpsert.run(roomUpsertParams(spec));
+}
+
+export function deleteRoom(id: string): void {
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM objects WHERE room_id = ?").run(id);
+    db.prepare("DELETE FROM rooms WHERE id = ?").run(id);
+  });
+  tx();
+}
+
+const objectUpsert = db.prepare(`
+  INSERT INTO objects (id, room_id, type_id, x, y, enabled, action_json)
+  VALUES (@id, @roomId, @typeId, @x, @y, @enabled, @actionJson)
+  ON CONFLICT(room_id, id) DO UPDATE SET type_id=excluded.type_id, x=excluded.x, y=excluded.y,
+    enabled=excluded.enabled, action_json=excluded.action_json
+`);
+
+function objectUpsertParams(roomId: string, placement: ObjectPlacement) {
+  return {
+    id: placement.id ?? placement.type,
+    roomId,
+    typeId: placement.type,
+    x: placement.x,
+    y: placement.y,
+    enabled: placement.enabled === false ? 0 : 1,
+    actionJson: placement.actions ? JSON.stringify(placement.actions) : null,
+  };
+}
+
+export function createObject(roomId: string, placement: ObjectPlacement): void {
+  objectUpsert.run(objectUpsertParams(roomId, placement));
+}
+
+export function updateObject(roomId: string, placement: ObjectPlacement): void {
+  objectUpsert.run(objectUpsertParams(roomId, placement));
+}
+
+export function deleteObject(roomId: string, objectId: string): void {
+  db.prepare("DELETE FROM objects WHERE room_id = ? AND id = ?").run(roomId, objectId);
+}

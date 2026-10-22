@@ -25,11 +25,11 @@ const MIME_TYPES: Record<string, string> = {
  * Returns false (and sends nothing) if dist/ itself doesn't exist yet, so
  * the caller can fall through to its own 404 rather than this throwing.
  */
-export function serveStatic(distDir: string, req: IncomingMessage, res: ServerResponse): boolean {
+export function serveStatic(distDir: string, req: IncomingMessage, res: ServerResponse, urlPathOverride?: string): boolean {
   const root = resolve(distDir);
   if (!existsSync(root)) return false;
 
-  const urlPath = decodeURIComponent((req.url ?? "/").split("?")[0]);
+  const urlPath = decodeURIComponent((urlPathOverride ?? req.url ?? "/").split("?")[0]);
   // Collapses any leading "../" before resolving, then the startsWith(root)
   // check below catches the rest (e.g. a path that is itself just "..") —
   // this is a server exposed to the whole LAN, so path traversal out of

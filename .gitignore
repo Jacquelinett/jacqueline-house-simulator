@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 dist-viewer
+dist-admin
 *.local
 
 # Server's local SQLite DB + hand-edited server-only config (val.town

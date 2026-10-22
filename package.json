@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "build:viewer": "vite build --config vite.viewer.config.ts && mv dist-viewer/viewer.html dist-viewer/index.html",
+    "build:admin": "vite build --config vite.admin.config.ts && mv dist-admin/admin.html dist-admin/index.html",
     "server": "tsx watch server/index.ts",
     "typecheck:server": "tsc --noEmit -p server/tsconfig.json"
   },

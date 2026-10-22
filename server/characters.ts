@@ -56,6 +56,10 @@ export function createCharacter(name: string): Character {
   return { id, name, secret, awBucketId: bucketId };
 }
 
+export function renameCharacter(id: string, name: string): void {
+  db.prepare("UPDATE characters SET name = ? WHERE id = ?").run(name, id);
+}
+
 export function deleteCharacter(id: string): void {
   db.prepare("DELETE FROM characters WHERE id = ?").run(id);
 }
