@@ -354,28 +354,59 @@ export function getUsedRoomIds(allRooms: RoomSpecWire[], baseRoomIds: string[], 
 }
 
 /**
- * Which floor (by level) `roomId` belongs to, for the admin tool's
- * per-floor room grouping — walks UP the room's own entries[0] chain
- * (the same position-determining entry resolveRooms() follows) until it
- * either reaches a floor's base room (that floor's level) or runs out of
- * chain (no connectedTo at all, or a cycle) without finding one (null —
- * "unorganized"). Only entries[0] is consulted, same as resolveRooms(),
- * since that's the entry that actually determines a room's position —
- * secondary entries are just additional declared attachments, not
- * necessarily "which floor this room is really on."
+ * Every connectedTo entry, from either room, as one undirected edge —
+ * floor organization is "is this room attached to the floor's base room
+ * at all," not "does this room's position specifically derive from it,"
+ * so ALL entries count here (not just entries[0], which is the one
+ * resolveRooms() treats specially for POSITION — a different concern
+ * from which floor a room organizationally belongs to). A room with 3
+ * connections is reachable via any of the 3, regardless of which one
+ * happens to be entries[0].
  */
-export function floorLevelForRoom(roomId: string, allRooms: RoomSpecWire[], floors: Floor[]): number | null {
-  const baseRoomLevel = new Map(floors.map((f) => [f.baseRoomId, f.level]));
-  const visited = new Set<string>();
-  let current: string | undefined = roomId;
-  while (current) {
-    const level = baseRoomLevel.get(current);
-    if (level !== undefined) return level;
-    if (visited.has(current)) return null; // cycle — give up rather than loop forever
-    visited.add(current);
-    current = allRooms.find((r) => r.id === current)?.connectedTo?.[0]?.roomId;
+function buildUndirectedAdjacency(allRooms: RoomSpecWire[]): Map<string, Set<string>> {
+  const adj = new Map<string, Set<string>>();
+  function ensure(id: string): Set<string> {
+    let set = adj.get(id);
+    if (!set) {
+      set = new Set();
+      adj.set(id, set);
+    }
+    return set;
   }
-  return null;
+  for (const r of allRooms) {
+    ensure(r.id);
+    for (const entry of r.connectedTo ?? []) {
+      ensure(r.id).add(entry.roomId);
+      ensure(entry.roomId).add(r.id);
+    }
+  }
+  return adj;
+}
+
+/**
+ * Which floor every room belongs to, computed once for the whole house —
+ * a BFS from each floor's base room over the undirected connectedTo graph
+ * (see buildUndirectedAdjacency). A room not reachable from any floor's
+ * base room is simply absent from the returned map ("unorganized").
+ */
+export function computeFloorMembership(allRooms: RoomSpecWire[], floors: Floor[]): Map<string, number> {
+  const adj = buildUndirectedAdjacency(allRooms);
+  const membership = new Map<string, number>();
+  for (const floor of floors) {
+    if (membership.has(floor.baseRoomId)) continue; // already claimed by an earlier floor's walk
+    const queue = [floor.baseRoomId];
+    const visited = new Set([floor.baseRoomId]);
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      membership.set(current, floor.level);
+      for (const neighbor of adj.get(current) ?? []) {
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        queue.push(neighbor);
+      }
+    }
+  }
+  return membership;
 }
 
 export interface FloorTreeNode {
@@ -384,28 +415,32 @@ export interface FloorTreeNode {
 }
 
 /**
- * The inverse walk of floorLevelForRoom — starting at a floor's base room,
- * find every room whose entries[0] points AT it (its "children" in the
- * admin tool's hierarchy chart), then recurse into each of those. A
- * `visited` set (seeded with the root) makes this cycle-safe the same way
- * resolveRooms() is, just by silently not re-descending into an
- * already-visited room rather than throwing — this is a read-only
- * visualization, not something that needs to reject bad data.
+ * Starting at a floor's base room, walk the same undirected connectedTo
+ * graph computeFloorMembership() uses — each room appears exactly once
+ * (first discovery wins, via the `visited` set threaded through the
+ * recursion), becoming a child of whichever already-visited room led to
+ * it. Cycle-safe the same way resolveRooms() is, just by silently not
+ * re-descending into an already-visited room rather than throwing — this
+ * is a read-only visualization, not something that needs to reject bad
+ * data.
  */
 export function buildFloorTree(baseRoomId: string, allRooms: RoomSpecWire[]): FloorTreeNode | null {
   const base = allRooms.find((r) => r.id === baseRoomId);
   if (!base) return null;
 
+  const adj = buildUndirectedAdjacency(allRooms);
   const visited = new Set<string>([baseRoomId]);
-  function childrenOf(parentId: string): FloorTreeNode[] {
-    return allRooms
-      .filter((r) => r.connectedTo?.[0]?.roomId === parentId && !visited.has(r.id))
-      .map((r) => {
-        visited.add(r.id);
-        return { room: r, children: childrenOf(r.id) };
-      });
+  function buildNode(roomId: string): FloorTreeNode {
+    const room = allRooms.find((r) => r.id === roomId)!;
+    const children: FloorTreeNode[] = [];
+    for (const neighbor of adj.get(roomId) ?? []) {
+      if (visited.has(neighbor)) continue;
+      visited.add(neighbor);
+      children.push(buildNode(neighbor));
+    }
+    return { room, children };
   }
-  return { room: base, children: childrenOf(baseRoomId) };
+  return buildNode(baseRoomId);
 }
 
 export function resolveRooms(specs: RoomSpec[]): RoomDef[] {

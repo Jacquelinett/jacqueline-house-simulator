@@ -31,7 +31,7 @@ import {
   buildFloorTree,
   ConnectedToEntry,
   ConnectionDirection,
-  floorLevelForRoom,
+  computeFloorMembership,
   FloorTreeNode,
   getUsedRoomIds,
   gridToScreen,
@@ -1626,9 +1626,10 @@ async function renderRooms(body: HTMLElement) {
   // --- Room sub-tabs: one per floor (highest level first, matching
   // floorButtons.ts's own ordering) plus one "Unorganized" tab for rooms
   // not reachable from any floor's base room. A room's tab is derived
-  // (floorLevelForRoom, walking its own connectedTo chain), never a field
-  // you set directly — connect it to something already on a floor and it
-  // moves there on its own next render.
+  // (computeFloorMembership, BFS over every connectedTo edge from either
+  // room — any connection counts, not just the one that determines
+  // position), never a field you set directly — connect a room to
+  // anything already on a floor and it moves there on its own next render.
   const subTabBar = document.createElement("div");
   subTabBar.className = "admin-subtab-bar";
   body.appendChild(subTabBar);
@@ -1665,6 +1666,7 @@ async function renderRooms(body: HTMLElement) {
   }
   showSubTab(subTabs[0]?.id ?? "unorganized");
 
+  const membership = computeFloorMembership(rooms, floors);
   for (const tab of subTabs) {
     const page = subPages[tab.id];
     if (tab.floor) {
@@ -1672,7 +1674,7 @@ async function renderRooms(body: HTMLElement) {
       if (tree) page.appendChild(buildTreeChartEl(tree));
     }
     const roomsForTab = rooms.filter((r) => {
-      const level = floorLevelForRoom(r.id, rooms, floors);
+      const level = membership.get(r.id) ?? null;
       return tab.floor ? level === tab.floor.level : level === null;
     });
     page.appendChild(buildRoomsTable(roomsForTab));

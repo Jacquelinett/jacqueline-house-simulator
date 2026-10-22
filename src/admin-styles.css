@@ -59,7 +59,7 @@ body {
   display: flex;
   gap: 4px;
   border-bottom: 1px solid var(--border);
-  margin: 12px 0 12px;
+  margin: 28px 0 12px;
 }
 
 .admin-subtab-bar button {
