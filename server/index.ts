@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { migrate } from "./db";
-import { getGoals, initGoalsState, onGoalsChange } from "./goals";
+import { getAllGoals, initGoalsState, onGoalsChange } from "./goals";
 import { initTodosState } from "./todos";
 import { settleGoalHistory } from "./goalHistory";
 import { ensureStopwatchBucket, resumeActivity } from "../src/aw/client";
@@ -12,6 +12,7 @@ import { setupRpc } from "./rpc";
 import { getServerConfig } from "./serverConfig";
 import { pushGoals, pushPeriodStats, pushStats, pushStatus, pushTodayStreaks, pushYesterdayStats } from "./broadcast";
 import { serveStatic } from "./staticServer";
+import { listCharacters } from "./characters";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // The Tauri app's own `npm run build` output — same bundle its webview
@@ -29,13 +30,9 @@ const SETTLE_INTERVAL_MS = 60 * 60 * 1000;
 async function main() {
   migrate();
 
-  const { lanSecret } = getServerConfig();
-  if (!lanSecret) {
-    console.warn(
-      "[server] no lan_secret set in server_config — the WebSocket is unauthenticated. " +
-        "Set one via: INSERT INTO server_config (id, lan_secret) VALUES (1, '...') ON CONFLICT(id) DO UPDATE SET lan_secret = excluded.lan_secret;",
-    );
-  }
+  const characters = listCharacters();
+  console.log(`[server] characters: ${characters.map((c) => c.name).join(", ")}`);
+
   if (!getServerConfig().broadcastUrl) {
     console.warn("[server] no broadcast_url set in server_config — val.town pushes will silently no-op.");
   }
@@ -45,50 +42,62 @@ async function main() {
 
   await initGoalsState();
   await initTodosState();
-  await ensureStopwatchBucket();
 
-  // Picks back up whatever AW still has marked running from a previous
-  // session (e.g. the server restarted mid-activity) — same reasoning
-  // main.ts's own resumeActivity() call had, just with no House/UI to
-  // hand the result to here; the next status broadcast/push already
-  // reflects it since getCurrentActivity() is now correct.
-  await resumeActivity().catch((err) => console.error("[server] failed to resume previous activity", err));
+  // Every character gets their own AW bucket, set up and resumed
+  // independently — see src/aw/client.ts's per-bucket state.
+  for (const character of characters) {
+    await ensureStopwatchBucket(character.awBucketId);
+    // Picks back up whatever AW still has marked running from a previous
+    // session (e.g. the server restarted mid-activity) — same reasoning
+    // main.ts's own resumeActivity() call had, just with no House/UI to
+    // hand the result to here; the next status broadcast/push already
+    // reflects it since getCurrentActivity() is now correct.
+    await resumeActivity(character.awBucketId).catch((err) =>
+      console.error(`[server] failed to resume previous activity for ${character.name}`, err),
+    );
+  }
+
+  const jacqueline = characters.find((c) => c.name === "Jacqueline");
 
   onGoalsChange(() => {
-    pushGoals().catch((err) => console.error("[server] pushGoals after change failed", err));
+    // val.town/the public viewer only ever show Jacqueline's goals for now.
+    if (jacqueline) pushGoals(jacqueline.id).catch((err) => console.error("[server] pushGoals after change failed", err));
   });
 
   // Never blocks startup — settlement is gamification bookkeeping, not
   // core function. Runs once now, then hourly (see SETTLE_INTERVAL_MS).
+  // Settles every character's goals, not just Jacqueline's.
   settleGoalHistory().catch((err) => console.error("[server] failed to settle goal history", err));
   setInterval(() => {
     settleGoalHistory().catch((err) => console.error("[server] failed to settle goal history", err));
   }, SETTLE_INTERVAL_MS);
 
-  // Pushed once on startup so a viewer isn't stuck showing stale data from
-  // last session; pushStatus also re-fires on every activity change (see
-  // rpc.ts), pushGoals on every goal change (above).
-  pushStatus().catch((err) => console.error("[server] initial pushStatus failed", err));
-  pushGoals().catch((err) => console.error("[server] initial pushGoals failed", err));
+  if (jacqueline) {
+    // Pushed once on startup so a viewer isn't stuck showing stale data
+    // from last session; pushStatus also re-fires on every activity
+    // change (see rpc.ts), pushGoals on every goal change (above).
+    pushStatus(jacqueline.id).catch((err) => console.error("[server] initial pushStatus failed", err));
+    pushGoals(jacqueline.id).catch((err) => console.error("[server] initial pushGoals failed", err));
 
-  // Stats scan much more AW history (or, for streaks, more of the history
-  // log) than pushStatus's today-only query, so they get their own slow
-  // timer — see CLAUDE.md's "Broadcasting" section for why none of these
-  // get their own separate cadence even though some are static between
-  // boundary crossings.
-  const runStatsPushes = () => {
-    pushStats().catch((err) => console.error("[server] pushStats failed", err));
-    pushPeriodStats().catch((err) => console.error("[server] pushPeriodStats failed", err));
-    pushYesterdayStats().catch((err) => console.error("[server] pushYesterdayStats failed", err));
-    pushTodayStreaks().catch((err) => console.error("[server] pushTodayStreaks failed", err));
-  };
-  runStatsPushes();
-  setInterval(runStatsPushes, STATS_PUSH_INTERVAL_MS);
+    // Stats scan much more AW history (or, for streaks, more of the
+    // history log) than pushStatus's today-only query, so they get their
+    // own slow timer — see CLAUDE.md's "Broadcasting" section for why
+    // none of these get their own separate cadence even though some are
+    // static between boundary crossings.
+    const runStatsPushes = () => {
+      pushStats(jacqueline.id).catch((err) => console.error("[server] pushStats failed", err));
+      pushPeriodStats(jacqueline.id).catch((err) => console.error("[server] pushPeriodStats failed", err));
+      pushYesterdayStats(jacqueline.id).catch((err) => console.error("[server] pushYesterdayStats failed", err));
+      pushTodayStreaks(jacqueline.id).catch((err) => console.error("[server] pushTodayStreaks failed", err));
+    };
+    runStatsPushes();
+    setInterval(runStatsPushes, STATS_PUSH_INTERVAL_MS);
+  }
 
   const server = http.createServer((req, res) => {
     if (req.url === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, goalsCount: getGoals().length }));
+      res.end(JSON.stringify({ ok: true, goalsCount: getAllGoals().length }));
       return;
     }
     if (serveStatic(DIST_DIR, req, res)) return;
@@ -97,7 +106,7 @@ async function main() {
   });
 
   const wss = new WebSocketServer({ server });
-  setupRpc(wss, lanSecret);
+  setupRpc(wss);
 
   server.listen(PORT, () => {
     console.log(`[server] listening on http://0.0.0.0:${PORT}`);

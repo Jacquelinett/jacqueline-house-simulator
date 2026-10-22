@@ -6,6 +6,7 @@ import { getActivityStats, getActivityStatsForDate } from "./stats";
 import { computeFixedPeriodStats } from "./periodStats";
 import { addDaysToDateString, localDateString } from "../src/goals/recurrence";
 import { getServerConfig } from "./serverConfig";
+import { getCharacterById } from "./characters";
 
 /**
  * Server-side home for src/broadcast/client.ts's push functions — same
@@ -13,7 +14,18 @@ import { getServerConfig } from "./serverConfig";
  * (hand-edited on the home server) instead of per-device Settings, since
  * only the server pushes to val.town now. Scheduling (what used to be
  * main.ts's setInterval) lives in server/index.ts, not here.
+ *
+ * val.town/the public viewer stay scoped to one character (Jacqueline) —
+ * every push function below takes that character's id explicitly rather
+ * than assuming a single global account, so the decision to keep the
+ * public surface single-character is visible at each call site
+ * (server/index.ts/rpc.ts) instead of hardcoded in here.
  */
+function bucketIdFor(characterId: string): string {
+  const bucketId = getCharacterById(characterId)?.awBucketId;
+  if (!bucketId) throw new Error(`unknown character: ${characterId}`);
+  return bucketId;
+}
 function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${getServerConfig().broadcastSecret ?? ""}` };
 }
@@ -56,9 +68,9 @@ async function pushWithHealth(path: string, body: unknown, errorContext: string)
   }
 }
 
-export async function pushStatus(): Promise<void> {
-  const current = getCurrentActivity();
-  const todayMinutesByLabel = await getTodayMinutesByLabel();
+export async function pushStatus(characterId: string): Promise<void> {
+  const current = getCurrentActivity(bucketIdFor(characterId));
+  const todayMinutesByLabel = await getTodayMinutesByLabel(characterId);
   await pushWithHealth(
     "/api/status",
     { activityLabel: current?.label ?? null, startedAt: current?.startedAt.toISOString() ?? null, todayMinutesByLabel },
@@ -66,26 +78,26 @@ export async function pushStatus(): Promise<void> {
   );
 }
 
-export async function pushGoals(): Promise<void> {
-  await pushWithHealth("/api/goals", getGoals(), "goals");
+export async function pushGoals(characterId: string): Promise<void> {
+  await pushWithHealth("/api/goals", getGoals(characterId), "goals");
 }
 
-export async function pushStats(): Promise<void> {
-  await pushWithHealth("/api/stats", await getActivityStats(), "stats");
+export async function pushStats(characterId: string): Promise<void> {
+  await pushWithHealth("/api/stats", await getActivityStats(characterId), "stats");
 }
 
-export async function pushPeriodStats(): Promise<void> {
-  await pushWithHealth("/api/period-stats", await computeFixedPeriodStats(), "period stats");
+export async function pushPeriodStats(characterId: string): Promise<void> {
+  await pushWithHealth("/api/period-stats", await computeFixedPeriodStats(characterId), "period stats");
 }
 
 let yesterdayPushedForToday: string | null = null;
 
-export async function pushYesterdayStats(): Promise<void> {
+export async function pushYesterdayStats(characterId: string): Promise<void> {
   const todayStr = localDateString(new Date());
   if (yesterdayPushedForToday === todayStr) return;
 
   const yesterday = addDaysToDateString(todayStr, -1);
-  const stats = await getActivityStatsForDate(yesterday);
+  const stats = await getActivityStatsForDate(characterId, yesterday);
   const minutesByLabel = Object.fromEntries(stats.map((s) => [s.label, s.minutes]));
   const ok = await pushWithHealth("/api/yesterday", minutesByLabel, "yesterday stats");
   if (ok) yesterdayPushedForToday = todayStr;
@@ -93,11 +105,11 @@ export async function pushYesterdayStats(): Promise<void> {
 
 let streaksPushedForToday: string | null = null;
 
-export async function pushTodayStreaks(): Promise<void> {
+export async function pushTodayStreaks(characterId: string): Promise<void> {
   const todayStr = localDateString(new Date());
   if (streaksPushedForToday === todayStr) return;
 
-  const ok = await pushWithHealth("/api/streaks", getTodayStreaksByGoalId(), "today's streaks");
+  const ok = await pushWithHealth("/api/streaks", getTodayStreaksByGoalId(characterId), "today's streaks");
   if (ok) streaksPushedForToday = todayStr;
 }
 

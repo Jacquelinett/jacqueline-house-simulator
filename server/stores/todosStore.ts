@@ -3,12 +3,13 @@ import { Todo } from "../../src/todos/types";
 
 interface TodoRow {
   id: string;
+  character_id: string;
   text: string;
   done: number;
 }
 
 function rowToTodo(row: TodoRow): Todo {
-  return { id: row.id, text: row.text, done: !!row.done };
+  return { id: row.id, characterId: row.character_id, text: row.text, done: !!row.done };
 }
 
 /** Same {load, save} shape as goalsStore.ts — see its comment for why "rewrite the whole table" is fine here. */
@@ -18,11 +19,11 @@ export const todosStore = {
     return rows.map(rowToTodo);
   },
   async save(todos: Todo[]): Promise<void> {
-    const insert = db.prepare("INSERT INTO todos (id, text, done) VALUES (@id, @text, @done)");
+    const insert = db.prepare("INSERT INTO todos (id, character_id, text, done) VALUES (@id, @characterId, @text, @done)");
     const tx = db.transaction((todos: Todo[]) => {
       db.prepare("DELETE FROM todos").run();
       for (const t of todos) {
-        insert.run({ id: t.id, text: t.text, done: t.done ? 1 : 0 });
+        insert.run({ id: t.id, characterId: t.characterId, text: t.text, done: t.done ? 1 : 0 });
       }
     });
     tx(todos);

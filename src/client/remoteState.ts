@@ -127,10 +127,19 @@ export interface RemoteStatus {
   startedAt: string | null;
 }
 
+export interface RemoteCharacter {
+  id: string;
+  name: string;
+}
+
 const goalsStore = createRemoteStore<Goal[]>([]);
 const todosStore = createRemoteStore<Todo[]>([]);
 const statusStore = createRemoteStore<RemoteStatus>({ activityLabel: null, startedAt: null });
 const settingsStore = createRemoteStore<DeviceSettings>(DEFAULT_DEVICE_SETTINGS);
+// Which character this connection's secret authenticated as — replaces the
+// old hardcoded CURRENT_USER_NAME for any surface that needs to work for
+// whichever character is actually connected (see goals/panel.ts).
+const characterStore = createRemoteStore<RemoteCharacter>({ id: "", name: "" });
 
 export const getGoals = goalsStore.get;
 export const onGoalsChange = goalsStore.onChange;
@@ -140,12 +149,15 @@ export const getRemoteStatus = statusStore.get;
 export const onRemoteStatusChange = statusStore.onChange;
 export const getDeviceSettings = settingsStore.get;
 export const onDeviceSettingsChange = settingsStore.onChange;
+export const getCharacter = characterStore.get;
+export const onCharacterChange = characterStore.onChange;
 
 const storesByKey: Record<string, { _set(data: unknown): void }> = {
   goals: goalsStore,
   todos: todosStore,
   status: statusStore,
   settings: settingsStore,
+  character: characterStore,
 };
 
 let socket: WebSocket | null = null;

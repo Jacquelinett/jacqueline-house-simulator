@@ -3,6 +3,7 @@ import { Goal } from "../../src/goals/types";
 
 interface GoalRow {
   id: string;
+  character_id: string;
   activity_label: string;
   target_minutes: number;
   recurrence_json: string;
@@ -15,6 +16,7 @@ interface GoalRow {
 function rowToGoal(row: GoalRow): Goal {
   return {
     id: row.id,
+    characterId: row.character_id,
     activityLabel: row.activity_label,
     targetMinutes: row.target_minutes,
     recurrence: JSON.parse(row.recurrence_json),
@@ -40,14 +42,15 @@ export const goalsStore = {
   },
   async save(goals: Goal[]): Promise<void> {
     const insert = db.prepare(`
-      INSERT INTO goals (id, activity_label, target_minutes, recurrence_json, skip_dates_json, created_at, streak_start_date, highest_streak)
-      VALUES (@id, @activityLabel, @targetMinutes, @recurrenceJson, @skipDatesJson, @createdAt, @streakStartDate, @highestStreak)
+      INSERT INTO goals (id, character_id, activity_label, target_minutes, recurrence_json, skip_dates_json, created_at, streak_start_date, highest_streak)
+      VALUES (@id, @characterId, @activityLabel, @targetMinutes, @recurrenceJson, @skipDatesJson, @createdAt, @streakStartDate, @highestStreak)
     `);
     const tx = db.transaction((goals: Goal[]) => {
       db.prepare("DELETE FROM goals").run();
       for (const g of goals) {
         insert.run({
           id: g.id,
+          characterId: g.characterId,
           activityLabel: g.activityLabel,
           targetMinutes: g.targetMinutes,
           recurrenceJson: JSON.stringify(g.recurrence),

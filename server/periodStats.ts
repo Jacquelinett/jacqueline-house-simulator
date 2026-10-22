@@ -12,15 +12,15 @@ export interface PeriodStatsResult {
   activityStats: ActivityStat[];
 }
 
-export async function computePeriodStats(start: Date, end: Date): Promise<PeriodStatsResult> {
-  const goalProgress = await getGoalProgressForRange(start, end);
+export async function computePeriodStats(characterId: string, start: Date, end: Date): Promise<PeriodStatsResult> {
+  const goalProgress = await getGoalProgressForRange(characterId, start, end);
 
   const startStr = localDateString(start);
   const endStr = localDateString(end);
-  const history = goalHistoryStore.getInRange(startStr, endStr);
+  const history = goalHistoryStore.getInRange(characterId, startStr, endStr);
   const { mostCompleted, mostSkipped } = summarizeGoalHistory(history);
 
-  const activityStats = await getActivityStatsForRange(start, end).catch((err) => {
+  const activityStats = await getActivityStatsForRange(characterId, start, end).catch((err) => {
     console.error("[periodStats] failed to load activity stats", err);
     return [];
   });
@@ -54,9 +54,9 @@ function anchorFor(key: FixedPeriodKey, today: Date): Date {
   }
 }
 
-async function computeNamedPeriod(key: FixedPeriodKey, today: Date): Promise<FixedPeriodStats> {
+async function computeNamedPeriod(characterId: string, key: FixedPeriodKey, today: Date): Promise<FixedPeriodStats> {
   const { start, end, label } = periodRange(FIXED_PERIOD_MODE[key], anchorFor(key, today));
-  const stats = await computePeriodStats(start, end);
+  const stats = await computePeriodStats(characterId, start, end);
   return { key, label, ...stats };
 }
 
@@ -68,21 +68,27 @@ interface CachedPeriod {
 let cachedLastWeek: CachedPeriod | null = null;
 let cachedLastMonth: CachedPeriod | null = null;
 
-async function computeCachedPeriod(key: "lastWeek" | "lastMonth", today: Date, cache: CachedPeriod | null): Promise<CachedPeriod> {
+async function computeCachedPeriod(
+  characterId: string,
+  key: "lastWeek" | "lastMonth",
+  today: Date,
+  cache: CachedPeriod | null,
+): Promise<CachedPeriod> {
   const { start } = periodRange(FIXED_PERIOD_MODE[key], anchorFor(key, today));
   const startKey = localDateString(start);
   if (cache && cache.startKey === startKey) return cache;
-  return { startKey, stats: await computeNamedPeriod(key, today) };
+  return { startKey, stats: await computeNamedPeriod(characterId, key, today) };
 }
 
-export async function computeFixedPeriodStats(): Promise<FixedPeriodStats[]> {
+/** Only ever called for Jacqueline (the push scheduler's val.town-bound data) — see server/broadcast.ts. No RPC client caller; the Statistic modal's Period tab uses computePeriodStats() above instead. */
+export async function computeFixedPeriodStats(characterId: string): Promise<FixedPeriodStats[]> {
   const today = new Date();
 
   const [thisWeek, thisMonth, lastWeekCache, lastMonthCache] = await Promise.all([
-    computeNamedPeriod("thisWeek", today),
-    computeNamedPeriod("thisMonth", today),
-    computeCachedPeriod("lastWeek", today, cachedLastWeek),
-    computeCachedPeriod("lastMonth", today, cachedLastMonth),
+    computeNamedPeriod(characterId, "thisWeek", today),
+    computeNamedPeriod(characterId, "thisMonth", today),
+    computeCachedPeriod(characterId, "lastWeek", today, cachedLastWeek),
+    computeCachedPeriod(characterId, "lastMonth", today, cachedLastMonth),
   ]);
   cachedLastWeek = lastWeekCache;
   cachedLastMonth = lastMonthCache;

@@ -3,6 +3,7 @@ import { GoalHistoryEntry } from "../../src/goals/types";
 
 interface HistoryRow {
   goal_id: string;
+  character_id: string;
   date: string;
   activity_label: string;
   target_minutes: number;
@@ -13,6 +14,7 @@ interface HistoryRow {
 function rowToEntry(row: HistoryRow): GoalHistoryEntry {
   return {
     goalId: row.goal_id,
+    characterId: row.character_id,
     date: row.date,
     activityLabel: row.activity_label,
     targetMinutes: row.target_minutes,
@@ -30,15 +32,17 @@ function rowToEntry(row: HistoryRow): GoalHistoryEntry {
  * else should prefer getInRange().
  */
 export const goalHistoryStore = {
-  getAll(): GoalHistoryEntry[] {
-    return (db.prepare("SELECT * FROM goal_history").all() as HistoryRow[]).map(rowToEntry);
+  getAll(characterId: string): GoalHistoryEntry[] {
+    return (db.prepare("SELECT * FROM goal_history WHERE character_id = ?").all(characterId) as HistoryRow[]).map(
+      rowToEntry,
+    );
   },
 
-  getInRange(startDateStr: string, endDateStrExclusive: string): GoalHistoryEntry[] {
+  getInRange(characterId: string, startDateStr: string, endDateStrExclusive: string): GoalHistoryEntry[] {
     return (
       db
-        .prepare("SELECT * FROM goal_history WHERE date >= ? AND date < ? ORDER BY date")
-        .all(startDateStr, endDateStrExclusive) as HistoryRow[]
+        .prepare("SELECT * FROM goal_history WHERE character_id = ? AND date >= ? AND date < ? ORDER BY date")
+        .all(characterId, startDateStr, endDateStrExclusive) as HistoryRow[]
     ).map(rowToEntry);
   },
 
@@ -58,8 +62,8 @@ export const goalHistoryStore = {
   insertMany(entries: GoalHistoryEntry[]): void {
     if (entries.length === 0) return;
     const insert = db.prepare(`
-      INSERT INTO goal_history (goal_id, date, activity_label, target_minutes, actual_minutes, outcome)
-      VALUES (@goalId, @date, @activityLabel, @targetMinutes, @actualMinutes, @outcome)
+      INSERT INTO goal_history (goal_id, character_id, date, activity_label, target_minutes, actual_minutes, outcome)
+      VALUES (@goalId, @characterId, @date, @activityLabel, @targetMinutes, @actualMinutes, @outcome)
     `);
     const tx = db.transaction((entries: GoalHistoryEntry[]) => {
       for (const e of entries) insert.run(e);

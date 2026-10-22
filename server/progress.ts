@@ -4,8 +4,9 @@ import { addDaysToDateString, localDateString, parseDateString } from "../src/go
 import { Goal } from "../src/goals/types";
 import { ACTIVITIES } from "../src/scene/activities";
 import { getGoals } from "./goals";
+import { getCharacterById } from "./characters";
 
-/** Server-side home for src/goals/progress.ts's logic — identical except getGoals comes from ./goals (SQLite-backed) instead of the client's Tauri-fs ./state. See server/goals.ts's header comment for why this is a deliberate, temporary duplicate. */
+/** Server-side home for src/goals/progress.ts's logic — identical except getGoals comes from ./goals (SQLite-backed, now character-scoped) instead of the client's Tauri-fs ./state. See server/goals.ts's header comment for why this is a deliberate, temporary duplicate. */
 export interface GoalProgress {
   activityLabel: string;
   targetMinutes: number;
@@ -14,14 +15,21 @@ export interface GoalProgress {
   goals: Goal[];
 }
 
-export async function getGoalProgressForDate(dateStr: string): Promise<GoalProgress[]> {
+function bucketIdFor(characterId: string): string {
+  const bucketId = getCharacterById(characterId)?.awBucketId;
+  if (!bucketId) throw new Error(`unknown character: ${characterId}`);
+  return bucketId;
+}
+
+export async function getGoalProgressForDate(characterId: string, dateStr: string): Promise<GoalProgress[]> {
+  const bucketId = bucketIdFor(characterId);
   const date = parseDateString(dateStr);
   const isToday = dateStr === localDateString(new Date());
   return Promise.all(
-    groupGoalsForDate(getGoals(), date).map(async ({ activityLabel, targetMinutes, goals }) => {
+    groupGoalsForDate(getGoals(characterId), date).map(async ({ activityLabel, targetMinutes, goals }) => {
       const minutes = await (isToday
-        ? getTodayDurationMinutes(activityLabel)
-        : getDurationMinutes(activityLabel, { start: date, end: parseDateString(addDaysToDateString(dateStr, 1)) })
+        ? getTodayDurationMinutes(bucketId, activityLabel)
+        : getDurationMinutes(bucketId, activityLabel, { start: date, end: parseDateString(addDaysToDateString(dateStr, 1)) })
       ).catch(() => 0);
       return { activityLabel, targetMinutes, minutes, done: minutes >= targetMinutes, goals };
     }),
@@ -47,20 +55,22 @@ export interface RangeGoalProgress {
   done: boolean;
 }
 
-export async function getGoalProgressForRange(start: Date, endExclusive: Date): Promise<RangeGoalProgress[]> {
-  const targets = sumGoalTargetsForRange(getGoals(), start, endExclusive);
+export async function getGoalProgressForRange(characterId: string, start: Date, endExclusive: Date): Promise<RangeGoalProgress[]> {
+  const bucketId = bucketIdFor(characterId);
+  const targets = sumGoalTargetsForRange(getGoals(characterId), start, endExclusive);
   return Promise.all(
     Object.entries(targets).map(async ([activityLabel, targetMinutes]) => {
-      const minutes = await getDurationMinutes(activityLabel, { start, end: endExclusive }).catch(() => 0);
+      const minutes = await getDurationMinutes(bucketId, activityLabel, { start, end: endExclusive }).catch(() => 0);
       return { activityLabel, targetMinutes, minutes, done: minutes >= targetMinutes };
     }),
   );
 }
 
-export async function getTodayMinutesByLabel(): Promise<Record<string, number>> {
+export async function getTodayMinutesByLabel(characterId: string): Promise<Record<string, number>> {
+  const bucketId = bucketIdFor(characterId);
   const result: Record<string, number> = {};
   for (const activity of Object.values(ACTIVITIES)) {
-    result[activity.label] = await getTodayDurationMinutes(activity.label, { excludeRunning: true }).catch(() => 0);
+    result[activity.label] = await getTodayDurationMinutes(bucketId, activity.label, { excludeRunning: true }).catch(() => 0);
   }
   return result;
 }

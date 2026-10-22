@@ -1,7 +1,7 @@
 import { getBroadcastHealth } from "../broadcast/client";
 import { buildFloatingPanel } from "../ui/draggablePanel";
-import { getRemoteStatus, onRemoteStatusChange } from "../client/remoteState";
-import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "../status/render";
+import { getCharacter, getRemoteStatus, onRemoteStatusChange } from "../client/remoteState";
+import { renderCurrentActivity, renderSyncStatus } from "../status/render";
 
 const REFRESH_INTERVAL_MS = 30_000;
 
@@ -24,7 +24,7 @@ export function setupJacquelineStatus(container: HTMLElement, options?: { showTi
   if (options?.showTitle) {
     const title = document.createElement("div");
     title.className = "mobile-status-title";
-    title.textContent = CURRENT_USER_NAME;
+    title.textContent = getCharacter().name;
     container.appendChild(title);
   }
 
@@ -80,7 +80,7 @@ export function setupGoalsPanel(): void {
   // Same title-bar component the Dashboard uses, just not closable (always
   // visible, no button that opens it) and not draggable (always lives in
   // the same corner — nothing to gain from being able to move it).
-  const panel = buildFloatingPanel(CURRENT_USER_NAME, {
+  const panel = buildFloatingPanel(getCharacter().name, {
     closable: false,
     draggable: false,
     className: "goals-panel",

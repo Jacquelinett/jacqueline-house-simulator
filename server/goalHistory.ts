@@ -2,16 +2,17 @@ import { getDurationMinutes } from "../src/aw/client";
 import { addDaysToDateString, isScheduledOn, parseDateString } from "../src/goals/recurrence";
 import { formatStreak } from "../src/goals/format";
 import { Goal, GoalHistoryEntry } from "../src/goals/types";
-import { getGoals, persistGoals, todayDateString } from "./goals";
+import { getAllGoals, getGoals, persistGoals, todayDateString } from "./goals";
+import { getCharacterById } from "./characters";
 import { goalHistoryStore } from "./stores/goalHistoryStore";
 
-export function historyForGoal(goalId: string): GoalHistoryEntry[] {
-  return goalHistoryStore.getForGoal(goalId);
+export function historyForGoal(characterId: string, goalId: string): GoalHistoryEntry[] {
+  return goalHistoryStore.getForGoal(goalId).filter((h) => h.characterId === characterId);
 }
 
-/** The full log — only for the Statistic modal's All-Time tab, which genuinely needs every goal's history to find the single most-completed/skipped activity overall. Everything else should prefer historyForGoal() or a date-range query. */
-export function getAllHistory(): GoalHistoryEntry[] {
-  return goalHistoryStore.getAll();
+/** The full log, scoped to one character — only for the Statistic modal's All-Time tab, which genuinely needs every goal's history to find the single most-completed/skipped activity overall. Everything else should prefer historyForGoal() or a date-range query. */
+export function getAllHistory(characterId: string): GoalHistoryEntry[] {
+  return goalHistoryStore.getAll(characterId);
 }
 
 export interface GoalHistorySummary {
@@ -51,12 +52,12 @@ export function describeStreak(goal: Goal, history: GoalHistoryEntry[]): string 
   return formatStreak(getCurrentStreakLength(goal, history), goal.highestStreak ?? 0);
 }
 
-export function getTodayStreaksByGoalId(): Record<string, number> {
+export function getTodayStreaksByGoalId(characterId: string): Record<string, number> {
   const today = new Date();
   const result: Record<string, number> = {};
-  for (const goal of getGoals()) {
+  for (const goal of getGoals(characterId)) {
     if (goal.recurrence.type === "once" || !isScheduledOn(goal.recurrence, today)) continue;
-    result[goal.id] = getCurrentStreakLength(goal, historyForGoal(goal.id));
+    result[goal.id] = getCurrentStreakLength(goal, historyForGoal(characterId, goal.id));
   }
   return result;
 }
@@ -73,7 +74,7 @@ function updateStreak(goal: Goal, historySoFar: GoalHistoryEntry[], cursor: stri
   }
 }
 
-async function settleGoal(goal: Goal, todayStr: string): Promise<GoalHistoryEntry[]> {
+async function settleGoal(goal: Goal, bucketId: string, todayStr: string): Promise<GoalHistoryEntry[]> {
   if (!goal.createdAt) return [];
 
   const lastSettled = goalHistoryStore.lastSettledDateFor(goal.id);
@@ -90,7 +91,7 @@ async function settleGoal(goal: Goal, todayStr: string): Promise<GoalHistoryEntr
       if (skipped) {
         outcome = "skipped";
       } else {
-        actualMinutes = await getDurationMinutes(goal.activityLabel, {
+        actualMinutes = await getDurationMinutes(bucketId, goal.activityLabel, {
           start: cursorDate,
           end: parseDateString(addDaysToDateString(cursor, 1)),
         });
@@ -99,6 +100,7 @@ async function settleGoal(goal: Goal, todayStr: string): Promise<GoalHistoryEntr
       updateStreak(goal, [...existingHistory, ...entries], cursor, outcome);
       entries.push({
         goalId: goal.id,
+        characterId: goal.characterId,
         date: cursor,
         activityLabel: goal.activityLabel,
         targetMinutes: goal.targetMinutes,
@@ -112,16 +114,19 @@ async function settleGoal(goal: Goal, todayStr: string): Promise<GoalHistoryEntr
   return entries;
 }
 
-/** Same contract as the client's settleGoalHistory() — backfills every scheduled day since each goal's last settle (or creation) up to yesterday, and updates streak fields in place. Runs on server startup + the hourly scheduler (server/index.ts) instead of once on Tauri app launch, so it keeps happening even with no client connected. */
+/** Same contract as the client's settleGoalHistory() — backfills every scheduled day since each goal's last settle (or creation) up to yesterday, and updates streak fields in place. Runs on server startup + the hourly scheduler (server/index.ts) instead of once on Tauri app launch, so it keeps happening even with no client connected. Iterates every character's goals (getAllGoals(), not the per-connection getGoals()) since this is a global background job, not something triggered by any one connection. */
 export async function settleGoalHistory(): Promise<void> {
   const todayStr = todayDateString();
 
   const newEntries: GoalHistoryEntry[] = [];
   let goalsChanged = false;
-  for (const goal of getGoals()) {
+  for (const goal of getAllGoals()) {
+    const bucketId = getCharacterById(goal.characterId)?.awBucketId;
+    if (!bucketId) continue; // character was deleted but a goal still references it — skip rather than throw
+
     const beforeStreakStart = goal.streakStartDate;
     const beforeHighest = goal.highestStreak;
-    newEntries.push(...(await settleGoal(goal, todayStr)));
+    newEntries.push(...(await settleGoal(goal, bucketId, todayStr)));
     if (goal.streakStartDate !== beforeStreakStart || goal.highestStreak !== beforeHighest) goalsChanged = true;
   }
 

@@ -13,63 +13,93 @@ import {
 } from "./goals";
 import { getAllHistory, getTodayStreaksByGoalId, historyForGoal } from "./goalHistory";
 import { getGoalProgressForDate, getTodayMinutesByLabel } from "./progress";
-import { computeFixedPeriodStats, computePeriodStats } from "./periodStats";
+import { computePeriodStats } from "./periodStats";
 import { addTodo, deleteTodo, getTodos, onTodosChange, toggleTodo } from "./todos";
 import { deleteMessage, fetchMessages, getBroadcastHealthInfo, pushStatus } from "./broadcast";
 import { getDeviceSettings, updateDeviceSettings } from "./deviceSettings";
+import { Character, getCharacterBySecret } from "./characters";
 
 /**
  * One WebSocket connection per client carries everything — commands
- * (fire-and-forget writes, server rebroadcasts the affected state to all
- * clients after applying), queries (request/response, correlated by
- * requestId), and unsolicited state broadcasts on change. See the
- * migration plan's "RPC protocol" section for the shape. Command/query
- * names map 1:1 onto the functions above via these two dispatch tables.
- * `updateSettings` is handled separately below (not in this table) since
- * it needs the connection's own deviceId, which the other commands don't.
+ * (fire-and-forget writes, server rebroadcasts the affected state to the
+ * SAME character's other connected clients after applying), queries
+ * (request/response, correlated by requestId), and unsolicited state
+ * broadcasts on change. Command/query names map 1:1 onto the functions
+ * above via these two dispatch tables, now always taking the connection's
+ * resolved characterId as their first argument. `updateSettings` is
+ * handled separately below (not in this table) since settings are scoped
+ * by deviceId, not characterId.
  */
-const commands: Record<string, (args: any) => Promise<void>> = {
-  startActivity: ({ label }) => startActivity(label),
-  stopActivity: () => stopActivity(),
-  addGoal: ({ activityLabel, targetMinutes, recurrence }) => addGoal(activityLabel, targetMinutes, recurrence),
-  updateGoal: ({ id, activityLabel, targetMinutes, recurrence }) => updateGoal(id, activityLabel, targetMinutes, recurrence),
-  deleteGoal: ({ id }) => deleteGoal(id),
-  skipGoalToday: ({ goalId }) => skipGoalToday(goalId),
-  unskipGoalToday: ({ goalId }) => unskipGoalToday(goalId),
-  addTodo: ({ text }) => addTodo(text),
-  toggleTodo: ({ id }) => toggleTodo(id),
-  deleteTodo: ({ id }) => deleteTodo(id),
-  deleteMessage: ({ id }) => deleteMessage(id),
+const commands: Record<string, (characterId: string, args: any) => Promise<void>> = {
+  startActivity: (characterId, { label }) => startActivity(bucketIdFor(characterId), label),
+  stopActivity: (characterId) => stopActivity(bucketIdFor(characterId)),
+  addGoal: (characterId, { activityLabel, targetMinutes, recurrence }) =>
+    addGoal(characterId, activityLabel, targetMinutes, recurrence),
+  updateGoal: (characterId, { id, activityLabel, targetMinutes, recurrence }) =>
+    updateGoal(characterId, id, activityLabel, targetMinutes, recurrence),
+  deleteGoal: (characterId, { id }) => deleteGoal(characterId, id),
+  skipGoalToday: (characterId, { goalId }) => skipGoalToday(characterId, goalId),
+  unskipGoalToday: (characterId, { goalId }) => unskipGoalToday(characterId, goalId),
+  addTodo: (characterId, { text }) => addTodo(characterId, text),
+  toggleTodo: (characterId, { id }) => toggleTodo(characterId, id),
+  deleteTodo: (characterId, { id }) => deleteTodo(characterId, id),
+  deleteMessage: (_characterId, { id }) => deleteMessage(id),
 };
 
-const queries: Record<string, (args: any) => Promise<unknown>> = {
-  getGoalProgressForDate: ({ dateStr }) => getGoalProgressForDate(dateStr),
-  getTodayMinutesByLabel: () => getTodayMinutesByLabel(),
-  getActivityStatsForDate: ({ dateStr }) => getActivityStatsForDate(dateStr),
-  getActivityStats: () => getActivityStats(),
-  computeFixedPeriodStats: () => computeFixedPeriodStats(),
-  computePeriodStats: ({ startIso, endIso }) => computePeriodStats(new Date(startIso), new Date(endIso)),
-  getTodayStreaksByGoalId: async () => getTodayStreaksByGoalId(),
-  getCurrentActivity: async () => getCurrentActivity(),
-  getGoalHistory: async () => getAllHistory(),
-  historyForGoal: async ({ goalId }) => historyForGoal(goalId),
+const queries: Record<string, (characterId: string, args: any) => Promise<unknown>> = {
+  getGoalProgressForDate: (characterId, { dateStr }) => getGoalProgressForDate(characterId, dateStr),
+  getTodayMinutesByLabel: (characterId) => getTodayMinutesByLabel(characterId),
+  getActivityStatsForDate: (characterId, { dateStr }) => getActivityStatsForDate(characterId, dateStr),
+  getActivityStats: (characterId) => getActivityStats(characterId),
+  computePeriodStats: (characterId, { startIso, endIso }) => computePeriodStats(characterId, new Date(startIso), new Date(endIso)),
+  getTodayStreaksByGoalId: async (characterId) => getTodayStreaksByGoalId(characterId),
+  getCurrentActivity: async (characterId) => getCurrentActivity(bucketIdFor(characterId)),
+  getGoalHistory: async (characterId) => getAllHistory(characterId),
+  historyForGoal: async (characterId, { goalId }) => historyForGoal(characterId, goalId),
   fetchMessages: () => fetchMessages(),
   getBroadcastHealth: async () => getBroadcastHealthInfo(),
 };
 
-function currentStatus() {
-  const current = getCurrentActivity();
+const characterCache = new Map<string, Character>();
+function bucketIdFor(characterId: string): string {
+  const character = characterCache.get(characterId);
+  if (!character) throw new Error(`unknown character: ${characterId}`);
+  return character.awBucketId;
+}
+
+function currentStatus(bucketId: string) {
+  const current = getCurrentActivity(bucketId);
   return { activityLabel: current?.label ?? null, startedAt: current?.startedAt.toISOString() ?? null };
 }
 
-export function setupRpc(wss: WebSocketServer, lanSecret: string | null): void {
+export function setupRpc(wss: WebSocketServer): void {
   const clients = new Set<WebSocket>();
   const deviceIdByClient = new Map<WebSocket, string>();
+  const characterByClient = new Map<WebSocket, Character>();
 
-  function broadcast(key: string, data: unknown) {
+  /** Sends one character's data to only that character's own connected clients. */
+  function broadcastToCharacter(characterId: string, key: string, data: unknown) {
     const message = JSON.stringify({ type: "state", key, data });
     for (const client of clients) {
-      if (client.readyState === WebSocket.OPEN) client.send(message);
+      if (client.readyState === WebSocket.OPEN && characterByClient.get(client)?.id === characterId) {
+        client.send(message);
+      }
+    }
+  }
+
+  /**
+   * goals/todos changing doesn't carry *which* character changed (one
+   * shared in-memory store underneath, see server/goals.ts's own comment)
+   * — so on any change, every connected client gets its own re-sent slice
+   * recomputed from its own characterId, rather than threading "who
+   * changed" through the generic onGoalsChange/onTodosChange signal.
+   */
+  function broadcastEachClient(key: string, computeData: (characterId: string) => unknown) {
+    for (const client of clients) {
+      if (client.readyState !== WebSocket.OPEN) continue;
+      const character = characterByClient.get(client);
+      if (!character) continue;
+      client.send(JSON.stringify({ type: "state", key, data: computeData(character.id) }));
     }
   }
 
@@ -77,19 +107,17 @@ export function setupRpc(wss: WebSocketServer, lanSecret: string | null): void {
     ws.send(JSON.stringify({ type: "state", key: "settings", data: getDeviceSettings(deviceId) }));
   }
 
-  // Re-broadcast whenever goals/todos change for any reason (an RPC
-  // command here, or settleGoalHistory's own periodic mutation) — one
-  // notification path instead of each command handler remembering to
-  // broadcast after itself.
-  onGoalsChange(() => broadcast("goals", getGoals()));
-  onTodosChange(() => broadcast("todos", getTodos()));
+  onGoalsChange(() => broadcastEachClient("goals", (characterId) => getGoals(characterId)));
+  onTodosChange(() => broadcastEachClient("todos", (characterId) => getTodos(characterId)));
 
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url ?? "", "http://localhost");
-    if (lanSecret && url.searchParams.get("secret") !== lanSecret) {
+    const character = getCharacterBySecret(url.searchParams.get("secret") ?? "");
+    if (!character) {
       ws.close(4001, "unauthorized");
       return;
     }
+    characterCache.set(character.id, character);
 
     // One id per browser/device (generated client-side, stored in
     // localStorage) — settings are scoped to it so a phone and a Mac can
@@ -100,16 +128,19 @@ export function setupRpc(wss: WebSocketServer, lanSecret: string | null): void {
       return;
     }
     deviceIdByClient.set(ws, deviceId);
+    characterByClient.set(ws, character);
 
     clients.add(ws);
-    ws.send(JSON.stringify({ type: "state", key: "goals", data: getGoals() }));
-    ws.send(JSON.stringify({ type: "state", key: "todos", data: getTodos() }));
-    ws.send(JSON.stringify({ type: "state", key: "status", data: currentStatus() }));
+    ws.send(JSON.stringify({ type: "state", key: "character", data: { id: character.id, name: character.name } }));
+    ws.send(JSON.stringify({ type: "state", key: "goals", data: getGoals(character.id) }));
+    ws.send(JSON.stringify({ type: "state", key: "todos", data: getTodos(character.id) }));
+    ws.send(JSON.stringify({ type: "state", key: "status", data: currentStatus(character.awBucketId) }));
     sendSettings(ws, deviceId);
 
     ws.on("close", () => {
       clients.delete(ws);
       deviceIdByClient.delete(ws);
+      characterByClient.delete(ws);
     });
 
     ws.on("message", async (raw) => {
@@ -138,13 +169,14 @@ export function setupRpc(wss: WebSocketServer, lanSecret: string | null): void {
           return;
         }
         try {
-          await handler(msg.args ?? {});
+          await handler(character.id, msg.args ?? {});
           if (msg.name === "startActivity" || msg.name === "stopActivity") {
-            broadcast("status", currentStatus());
-            // Pushed on every activity change (not just the hourly timer)
-            // so a viewer isn't stuck showing stale data between pushes —
-            // same reasoning main.ts's onActivityChange callback had.
-            pushStatus().catch((err) => console.error("[rpc] pushStatus after activity change failed", err));
+            broadcastToCharacter(character.id, "status", currentStatus(character.awBucketId));
+            // val.town/the public viewer only ever show one character
+            // (Jacqueline) for now — see server/broadcast.ts's own comment.
+            if (character.name === "Jacqueline") {
+              pushStatus(character.id).catch((err) => console.error("[rpc] pushStatus after activity change failed", err));
+            }
           }
         } catch (err) {
           console.error(`[rpc] command ${msg.name} failed`, err);
@@ -160,7 +192,7 @@ export function setupRpc(wss: WebSocketServer, lanSecret: string | null): void {
           return;
         }
         try {
-          const data = await handler(msg.args ?? {});
+          const data = await handler(character.id, msg.args ?? {});
           ws.send(JSON.stringify({ type: "queryResult", requestId: msg.requestId, data }));
         } catch (err) {
           console.error(`[rpc] query ${msg.name} failed`, err);

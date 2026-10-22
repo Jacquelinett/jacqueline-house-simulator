@@ -19,8 +19,17 @@ db.pragma("journal_mode = WAL");
  */
 export function migrate(): void {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS characters (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      secret TEXT UNIQUE NOT NULL,
+      aw_bucket_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS goals (
       id TEXT PRIMARY KEY,
+      character_id TEXT,
       activity_label TEXT NOT NULL,
       target_minutes INTEGER NOT NULL,
       recurrence_json TEXT NOT NULL,
@@ -32,6 +41,7 @@ export function migrate(): void {
 
     CREATE TABLE IF NOT EXISTS goal_history (
       goal_id TEXT NOT NULL,
+      character_id TEXT,
       date TEXT NOT NULL,
       activity_label TEXT NOT NULL,
       target_minutes INTEGER NOT NULL,
@@ -43,6 +53,7 @@ export function migrate(): void {
 
     CREATE TABLE IF NOT EXISTS todos (
       id TEXT PRIMARY KEY,
+      character_id TEXT,
       text TEXT NOT NULL,
       done INTEGER NOT NULL
     );
@@ -58,7 +69,104 @@ export function migrate(): void {
       id INTEGER PRIMARY KEY CHECK (id = 1),
       broadcast_url TEXT,
       broadcast_secret TEXT,
-      lan_secret TEXT
+      lan_secret TEXT,
+      admin_secret TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS workout_sessions (
+      id TEXT PRIMARY KEY,
+      character_id TEXT NOT NULL,
+      date TEXT NOT NULL,
+      notes TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_workout_sessions_date ON workout_sessions(character_id, date);
+
+    CREATE TABLE IF NOT EXISTS workout_sets (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      exercise_name TEXT NOT NULL,
+      weight REAL,
+      reps INTEGER NOT NULL,
+      set_order INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS activities (
+      id TEXT PRIMARY KEY,
+      label TEXT UNIQUE NOT NULL,
+      color INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS object_types (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      below_json TEXT,
+      overlay_json TEXT,
+      above_json TEXT,
+      width INTEGER NOT NULL,
+      height INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS rooms (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      cols INTEGER NOT NULL,
+      rows INTEGER NOT NULL,
+      x INTEGER NOT NULL,
+      y INTEGER NOT NULL,
+      level INTEGER NOT NULL,
+      floor_variant TEXT NOT NULL,
+      wall_variant TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS objects (
+      id TEXT PRIMARY KEY,
+      room_id TEXT NOT NULL,
+      type_id TEXT NOT NULL,
+      x INTEGER NOT NULL,
+      y INTEGER NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      action_json TEXT
     );
   `);
+
+  // ALTER TABLE for columns added to tables that may already exist on a
+  // pre-multi-character install — CREATE TABLE IF NOT EXISTS above is a
+  // no-op for those, see this function's own long-standing comment.
+  for (const stmt of [
+    "ALTER TABLE goals ADD COLUMN character_id TEXT",
+    "ALTER TABLE goal_history ADD COLUMN character_id TEXT",
+    "ALTER TABLE todos ADD COLUMN character_id TEXT",
+    "ALTER TABLE server_config ADD COLUMN admin_secret TEXT",
+  ]) {
+    try {
+      db.exec(stmt);
+    } catch {
+      // column already exists
+    }
+  }
+
+  seedJacquelineCharacter();
+  backfillCharacterId();
+}
+
+/** Keeps Jacqueline's existing lan_secret working unchanged as her character secret, so none of her already-configured devices need to re-enter anything. */
+function seedJacquelineCharacter(): void {
+  const existing = db.prepare("SELECT id FROM characters WHERE name = 'Jacqueline'").get();
+  if (existing) return;
+
+  const config = db.prepare("SELECT lan_secret FROM server_config WHERE id = 1").get() as
+    | { lan_secret: string | null }
+    | undefined;
+  const secret = config?.lan_secret || crypto.randomUUID();
+  db.prepare(
+    "INSERT INTO characters (id, name, secret, aw_bucket_id, created_at) VALUES (?, 'Jacqueline', ?, 'aw-stopwatch', ?)",
+  ).run(crypto.randomUUID(), secret, new Date().toISOString());
+}
+
+/** One-time backfill for rows that predate the character_id column. */
+function backfillCharacterId(): void {
+  const jacqueline = db.prepare("SELECT id FROM characters WHERE name = 'Jacqueline'").get() as { id: string };
+  db.prepare("UPDATE goals SET character_id = ? WHERE character_id IS NULL").run(jacqueline.id);
+  db.prepare("UPDATE goal_history SET character_id = ? WHERE character_id IS NULL").run(jacqueline.id);
+  db.prepare("UPDATE todos SET character_id = ? WHERE character_id IS NULL").run(jacqueline.id);
 }

@@ -8,6 +8,7 @@ export type Weekday = "Sun" | "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat";
 
 export interface Goal {
   id: string;
+  characterId: string;
   activityLabel: string;
   targetMinutes: number;
   recurrence: Recurrence;
@@ -43,6 +44,7 @@ export interface Goal {
  */
 export interface GoalHistoryEntry {
   goalId: string;
+  characterId: string;
   date: string; // "YYYY-MM-DD" — the day this outcome applies to, always a past (settled) day, never today
   activityLabel: string;
   targetMinutes: number;
