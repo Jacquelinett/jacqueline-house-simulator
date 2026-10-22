@@ -2,7 +2,7 @@ import { db } from "./db";
 import { ActivityDef, STATIC_ACTIVITIES } from "../src/scene/activities";
 
 interface ActivityRow {
-  id: string;
+  id: number;
   label: string;
   color: number;
 }
@@ -26,16 +26,16 @@ export function seedActivitiesIfEmpty(): void {
   tx();
 }
 
+/** id omitted from the INSERT — SQLite auto-assigns the next INTEGER PRIMARY KEY. */
 export function createActivity(label: string, color: number): ActivityDef {
-  const id = crypto.randomUUID();
-  db.prepare("INSERT INTO activities (id, label, color) VALUES (?, ?, ?)").run(id, label, color);
-  return { id, label, color };
+  const { lastInsertRowid } = db.prepare("INSERT INTO activities (label, color) VALUES (?, ?)").run(label, color);
+  return { id: Number(lastInsertRowid), label, color };
 }
 
-export function updateActivity(id: string, label: string, color: number): void {
+export function updateActivity(id: number, label: string, color: number): void {
   db.prepare("UPDATE activities SET label = ?, color = ? WHERE id = ?").run(label, color, id);
 }
 
-export function deleteActivity(id: string): void {
+export function deleteActivity(id: number): void {
   db.prepare("DELETE FROM activities WHERE id = ?").run(id);
 }

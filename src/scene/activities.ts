@@ -4,7 +4,7 @@
 // second piano somewhere) share the exact same label by construction,
 // rather than by coincidentally typing the same string twice.
 export interface ActivityDef {
-  id: string;
+  id: number;
   label: string; // the AW-facing label — what actually gets tracked
   color: number; // for color-coded goal/dashboard UI
 }
@@ -18,18 +18,26 @@ export interface ActivityDef {
  * as rooms.ts's `rooms`/`objectTypes`. rooms.ts's STATIC_OBJECT_TYPES
  * literal reads from this constant directly (not the mutable export) at
  * module-eval time, before setActivities() is ever called — so its
- * baked-in activityId strings are unaffected by ACTIVITIES later being
+ * baked-in activityId references are unaffected by ACTIVITIES later being
  * re-keyed by id instead of by these camelCase names.
+ *
+ * `id` is now a plain serial integer (was a hand-authored kebab-case
+ * string) matching the activities table's own INTEGER PRIMARY KEY — these
+ * explicit values are what server/activities.ts's seedActivitiesIfEmpty()
+ * inserts verbatim (SQLite accepts an explicit value for an INTEGER
+ * PRIMARY KEY column same as it always has; only an *omitted* id
+ * auto-assigns, which is what every admin-tool-created activity gets
+ * instead — see createActivity()).
  */
 export const STATIC_ACTIVITIES: Record<string, ActivityDef> = {
-  practicingPiano: { id: "practicing-piano", label: "Practicing Piano", color: 0xff69b4 },
-  working: { id: "working", label: "Working", color: 0x5a5a6a },
-  programming: { id: "programming", label: "Programming", color: 0x4a6a9a },
-  administrativeWork: { id: "administrative-work", label: "Administrative Work", color: 0x9a7a4a },
-  gaming: { id: "gaming", label: "Gaming", color: 0x4a4a4a },
-  streaming: { id: "streaming", label: "Streaming", color: 0x9a4a9a },
-  ddr: { id: "ddr", label: "DDR", color: 0x7a2b5a },
-  weightlifting: { id: "weightlifting", label: "Weightlifting", color: 0x5a5a6a },
+  practicingPiano: { id: 1, label: "Practicing Piano", color: 0xff69b4 },
+  working: { id: 2, label: "Working", color: 0x5a5a6a },
+  programming: { id: 3, label: "Programming", color: 0x4a6a9a },
+  administrativeWork: { id: 4, label: "Administrative Work", color: 0x9a7a4a },
+  gaming: { id: 5, label: "Gaming", color: 0x4a4a4a },
+  streaming: { id: 6, label: "Streaming", color: 0x9a4a9a },
+  ddr: { id: 7, label: "DDR", color: 0x7a2b5a },
+  weightlifting: { id: 8, label: "Weightlifting", color: 0x5a5a6a },
 };
 
 export let ACTIVITIES: Record<string, ActivityDef> = STATIC_ACTIVITIES;
@@ -45,7 +53,7 @@ export function findActivityByLabel(label: string): ActivityDef | undefined {
   return Object.values(ACTIVITIES).find((a) => a.label === label);
 }
 
-export function findActivityById(id: string): ActivityDef | undefined {
+export function findActivityById(id: number): ActivityDef | undefined {
   return Object.values(ACTIVITIES).find((a) => a.id === id);
 }
 

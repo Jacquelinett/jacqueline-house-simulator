@@ -4,7 +4,7 @@ import { Floor, STATIC_FLOORS } from "../src/scene/floors";
 interface FloorRow {
   level: number;
   label: string;
-  base_room_id: string;
+  base_room_id: number;
 }
 
 function rowToFloor(row: FloorRow): Floor {
@@ -34,7 +34,7 @@ export function createFloor(floor: Floor): void {
   });
 }
 
-export function updateFloor(level: number, floor: { label: string; baseRoomId: string }): void {
+export function updateFloor(level: number, floor: { label: string; baseRoomId: number }): void {
   db.prepare("UPDATE floors SET label = @label, base_room_id = @baseRoomId WHERE level = @level").run({
     level,
     label: floor.label,

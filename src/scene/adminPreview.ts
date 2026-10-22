@@ -46,8 +46,8 @@ interface RegisteredObject {
   def: ObjectDef;
 }
 
-const objectContainersByRenderer = new WeakMap<AdminPreviewRenderer, Map<string, RegisteredObject>>();
-function objectContainersFor(renderer: AdminPreviewRenderer): Map<string, RegisteredObject> {
+const objectContainersByRenderer = new WeakMap<AdminPreviewRenderer, Map<number, RegisteredObject>>();
+function objectContainersFor(renderer: AdminPreviewRenderer): Map<number, RegisteredObject> {
   let map = objectContainersByRenderer.get(renderer);
   if (!map) {
     map = new Map();
@@ -68,12 +68,12 @@ export class AdminPreviewRenderer extends SceneRenderer {
   private hoverDiamond: Graphics | null = null;
   private placingRoomContainer: Container | null = null;
   private placingGhost: Container | null = null;
-  private placingObjectId: string | null = null;
+  private placingObjectId: number | null = null;
 
   constructor(
     app: ConstructorParameters<typeof SceneRenderer>[0],
     onRoomChange: (roomName: string) => void,
-    private onObjectClick: (roomId: string, objectId: string) => void,
+    private onObjectClick: (roomId: number, objectId: number) => void,
   ) {
     const instanceId = ++AdminPreviewRenderer.instanceCounter;
     AdminPreviewRenderer.currentlyConstructingId = instanceId;
@@ -93,7 +93,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
     container.on("pointertap", () => this.setViewedRoom(room.id));
   }
 
-  protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
+  protected attachObjectInteraction(container: Container, roomId: number, obj: ObjectDef) {
     objectContainersFor(this).set(obj.id, { container, def: obj });
     console.log(
       `[adminPreview] instance #${AdminPreviewRenderer.currentlyConstructingId} registered "${obj.id}" at (${container.position.x}, ${container.position.y})`,
@@ -108,7 +108,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
   }
 
   /** Moves one object's own sprite directly — no scene rebuild, so this never blips. Only valid for an already-built object (same type/size as when the scene was last built). */
-  public moveObject(objectId: string, x: number, y: number): void {
+  public moveObject(objectId: number, x: number, y: number): void {
     const entry = objectContainersFor(this).get(objectId);
     if (!entry) {
       console.warn(
@@ -127,7 +127,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
   }
 
   /** Same idea as moveObject, one level up: repositions an already-built room's own container directly — no scene rebuild — for the room-connections editor's gap/lateral-offset edits, which only ever change where an already-shown room sits, never which rooms are shown. roomContainers is SceneRenderer's own (protected) map, already populated at construction — no parallel tracking needed the way objects required a WeakMap workaround. */
-  public moveRoom(roomId: string, x: number, y: number): void {
+  public moveRoom(roomId: number, x: number, y: number): void {
     const container = this.roomContainers.get(roomId);
     if (!container) {
       console.warn(`[adminPreview] instance #${this.instanceId} moveRoom("${roomId}") — no container registered for this id.`);
@@ -150,7 +150,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
    * auto-disable itself on click, since the caller may want to keep placing
    * more objects.
    */
-  public enablePlacement(objectId: string, onTileClick: (u: number, v: number) => void): void {
+  public enablePlacement(objectId: number, onTileClick: (u: number, v: number) => void): void {
     this.disablePlacement();
 
     const container = this.roomContainers.get(this.viewedRoomId);

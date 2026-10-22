@@ -22,13 +22,13 @@ function levelOfRoomName(roomName: string): number {
  * figure out construction order itself.
  */
 export function setupFloorButtons(): {
-  bindGoToRoom(goToRoom: (roomId: string) => void): void;
+  bindGoToRoom(goToRoom: (roomId: number) => void): void;
   onRoomChange(currentRoomName: string): void;
 } {
   const container = document.createElement("div");
   container.id = "floor-buttons";
 
-  let goToRoom: (roomId: string) => void = () => {};
+  let goToRoom: (roomId: number) => void = () => {};
 
   const buttons = FLOORS.map(({ level, label, baseRoomId }) => {
     const btn = document.createElement("button");

@@ -43,7 +43,7 @@ export class HouseViewer extends SceneRenderer {
     });
   }
 
-  protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
+  protected attachObjectInteraction(container: Container, roomId: number, obj: ObjectDef) {
     if (!obj.actions?.length) return;
 
     const navigateAction = obj.actions.find((a) => a.kind === "navigate");

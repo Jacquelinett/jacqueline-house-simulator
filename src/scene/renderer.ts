@@ -156,27 +156,27 @@ export function buildFloorAndWalls(room: RoomDef): Container {
  */
 export class SceneRenderer {
   protected world = new Container();
-  protected roomContainers = new Map<string, Container>();
+  protected roomContainers = new Map<number, Container>();
   // Dimming the room via per-child alpha lets overlapping/adjacent opaque
   // tiles show through each other ("x-ray" look). AlphaFilter flattens the
   // whole container to a texture first and applies alpha to that single
   // result instead, so a dimmed room reads as one solid translucent room.
-  protected roomAlphaFilters = new Map<string, AlphaFilter>();
+  protected roomAlphaFilters = new Map<number, AlphaFilter>();
   // Sprites shown only while one of their object's activity labels is the
   // currently-running activity (e.g. a character sprite at the piano).
   protected activeOverlays: { labels: string[]; sprite: Sprite }[] = [];
   // Objects are only clickable (when interaction is wired up) in the room
   // currently viewed — a dimmed neighboring room shows what's there, but you
   // have to click into it first before you can interact with anything inside.
-  protected interactiveObjects: { roomId: string; container: Container }[] = [];
+  protected interactiveObjects: { roomId: number; container: Container }[] = [];
   // Built always (not just when dev mode is on) so toggling it in Settings
   // can just flip visibility live, without rebuilding any room/object.
   protected devOutlines: Graphics[] = [];
-  protected viewedRoomId: string;
+  protected viewedRoomId: number;
   // Which object (if any) within viewedRoomId the camera is centered on,
   // rather than the room's own silhouette center — set whenever a specific
   // object is clicked or an activity starts; cleared by a plain room click.
-  protected viewedObjectId: string | null = null;
+  protected viewedObjectId: number | null = null;
   protected cameraTarget = { x: 0, y: 0 };
   protected scale: number;
   protected devMode: boolean;
@@ -247,7 +247,7 @@ export class SceneRenderer {
     return container;
   }
 
-  protected buildObject(roomId: string, obj: ObjectDef): Container {
+  protected buildObject(roomId: number, obj: ObjectDef): Container {
     const container = new Container();
     // Plain pixel offset from the room's own origin (same (0,0) the floor
     // and wall tiles are placed from) — not grid-snapped, negative allowed.
@@ -296,7 +296,7 @@ export class SceneRenderer {
   protected attachRoomInteraction(_container: Container, _room: RoomDef): void {}
 
   /** Override to wire up object click-to-act — the base renderer has none (used by the read-only public viewer). */
-  protected attachObjectInteraction(_container: Container, _roomId: string, _obj: ObjectDef): void {}
+  protected attachObjectInteraction(_container: Container, _roomId: number, _obj: ObjectDef): void {}
 
   protected updateActiveOverlays(current: { label: string } | null) {
     for (const { labels, sprite } of this.activeOverlays) {
@@ -312,7 +312,7 @@ export class SceneRenderer {
    * object actually changes, since the same room can still need a camera
    * re-center when the focused object within it changes.
    */
-  protected setViewedRoom(roomId: string, objectId: string | null = null) {
+  protected setViewedRoom(roomId: number, objectId: number | null = null) {
     const roomChanged = this.viewedRoomId !== roomId;
     if (!roomChanged && this.viewedObjectId === objectId) return;
     this.viewedRoomId = roomId;
@@ -325,7 +325,7 @@ export class SceneRenderer {
   }
 
   /** For external UI (e.g. a floor-switcher) — same path as clicking a room/object. */
-  public goToRoom(roomId: string) {
+  public goToRoom(roomId: number) {
     this.setViewedRoom(roomId);
   }
 

@@ -13,7 +13,7 @@
 export interface Floor {
   level: number;
   label: string;
-  baseRoomId: string;
+  baseRoomId: number;
 }
 
 /**
@@ -23,11 +23,14 @@ export interface Floor {
  * server-fetched data right after connecting (setFloors), same
  * live-binding pattern as rooms.ts's `rooms`/`objectTypes`. Mirrors
  * exactly what floorButtons.ts used to hardcode as its own FLOORS const.
+ *
+ * baseRoomId values here match STATIC_ROOM_SPECS's own explicit numeric
+ * ids (rooms.ts) — bedroom=5, office=1, basement=6.
  */
 export const STATIC_FLOORS: Floor[] = [
-  { level: 1, label: "2F", baseRoomId: "bedroom" },
-  { level: 0, label: "1F", baseRoomId: "office" },
-  { level: -1, label: "B", baseRoomId: "basement" },
+  { level: 1, label: "2F", baseRoomId: 5 },
+  { level: 0, label: "1F", baseRoomId: 1 },
+  { level: -1, label: "B", baseRoomId: 6 },
 ];
 
 export let FLOORS: Floor[] = STATIC_FLOORS;

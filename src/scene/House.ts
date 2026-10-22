@@ -9,7 +9,7 @@ export { preloadRoomAssets } from "./renderer";
 // Mobile has no floor buttons and nowhere obvious to go otherwise — used
 // only when toggleActivity() (the mobile Pick Action list) starts an
 // activity with no object of its own to focus instead.
-const FALLBACK_ROOM_ID = "office"; // Jacqueline's Office
+const FALLBACK_ROOM_ID = 1; // Jacqueline's Office
 
 /** Adds click/interaction handling on top of the shared scene renderer — the desktop app's interactive view. Starting/stopping activities is a fire-and-forget command to the Node server now; the overlay highlight and (on startup only) camera focus are driven back by its `status` broadcast via applyRemoteStatus(), not by awaiting the command itself. */
 export class House extends SceneRenderer {
@@ -23,7 +23,7 @@ export class House extends SceneRenderer {
   // client's own clicks — never touched by applyRemoteStatus, so an
   // in-flight click's optimistic attribution isn't wiped out by the status
   // broadcast echoing its own change straight back.
-  private currentActivitySource: { roomId: string; objectId: string } | null = null;
+  private currentActivitySource: { roomId: number; objectId: number } | null = null;
 
   constructor(
     app: Application,
@@ -55,7 +55,7 @@ export class House extends SceneRenderer {
     });
   }
 
-  protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
+  protected attachObjectInteraction(container: Container, roomId: number, obj: ObjectDef) {
     if (!obj.actions?.length) return;
 
     container.eventMode = "static";
@@ -80,7 +80,7 @@ export class House extends SceneRenderer {
     });
   }
 
-  private runAction(roomId: string, objectId: string, action: ObjectAction) {
+  private runAction(roomId: number, objectId: number, action: ObjectAction) {
     if (action.kind === "navigate") {
       // Mobile: nothing left to do here at all — no object is being
       // toggled, and panning to the destination room is exactly the
@@ -116,7 +116,7 @@ export class House extends SceneRenderer {
     else if (activityLabel) sendCommand("startActivity", { label: activityLabel });
   }
 
-  private openMenu(roomId: string, objectId: string, actions: ObjectAction[], clientX: number, clientY: number) {
+  private openMenu(roomId: number, objectId: number, actions: ObjectAction[], clientX: number, clientY: number) {
     this.closeMenu();
 
     const menu = document.createElement("div");

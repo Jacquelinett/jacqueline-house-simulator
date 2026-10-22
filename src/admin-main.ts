@@ -59,25 +59,27 @@ interface Character {
 }
 
 interface ActivityDef {
-  id: string;
+  id: number;
   label: string;
   color: number;
 }
 
+// id is omitted for a not-yet-saved placement (the room editor's draft for
+// a brand-new object the admin just added) — same "global objects.id,
+// absent until persisted" contract as ObjectPlacement itself (rooms.ts).
 interface ObjectPlacementWire {
-  id: string;
-  type: string;
+  id?: number;
+  type: number;
   x: number;
   y: number;
   enabled: boolean;
 }
 
 interface RoomSpecWire {
-  id: string;
+  id: number;
   name: string;
   cols: number;
   rows: number;
-  level: number;
   floorVariant: string;
   wallVariant: string;
   connectedTo?: ConnectedToEntry[];
@@ -352,14 +354,17 @@ const TYPE_PREVIEW_ORIGIN = { x: 110, y: 70 };
 // buildFloorAndWalls() the actual game renders with, just small (2x2) and
 // with no objects of its own, so the anchor can be judged against a real
 // room corner instead of a bare wireframe grid.
-const TYPE_PREVIEW_ROOM: RoomDef = { id: "preview", name: "preview", cols: 2, rows: 2, level: 0, floor: floor1, wall: wall1, objects: [], x: 0, y: 0, width: 0, height: 0 };
+const TYPE_PREVIEW_ROOM: RoomDef = { id: 0, name: "preview", cols: 2, rows: 2, level: 0, floor: floor1, wall: wall1, objects: [], x: 0, y: 0, width: 0, height: 0 };
 
 function makeDefaultObjectType(): ObjectTypeDef {
   // Anchor defaults to dead center (half width, half height) rather than
   // (0,0) — a much more common "floor contact point" for a generic new
   // object than the sprite's own top-left, and it's what every existing
   // type got bulk-set to when anchors were introduced.
-  return { name: "", width: 32, height: 32, below: [{ color: 0x888888 }], anchorX: 16, anchorY: 16 };
+  // id: 0 is a placeholder only — never read for a not-yet-saved type (the
+  // server assigns the real id on create); harmless if it rides along in
+  // the POST payload since the server never trusts a client-supplied id.
+  return { id: 0, name: "", width: 32, height: 32, below: [{ color: 0x888888 }], anchorX: 16, anchorY: 16 };
 }
 
 async function ensureTextureLoaded(path: string | undefined): Promise<void> {
@@ -693,8 +698,8 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
   const draft = cloneObjects(room.objects);
 
   /** Pixel offset from a type's top-left to its "floor contact" point — see ObjectTypeDef.anchorX/anchorY. Unknown/unset types default to (0,0), i.e. today's behavior. */
-  function anchorFor(typeId: string): { x: number; y: number } {
-    const type = objectTypes[typeId];
+  function anchorFor(typeId: number): { x: number; y: number } {
+    const type = objectTypes[String(typeId)];
     return { x: type?.anchorX ?? 0, y: type?.anchorY ?? 0 };
   }
 
@@ -754,7 +759,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
 
   let currentApp: Application | null = null;
   let currentRenderer: AdminPreviewRenderer | null = null;
-  let placingObjectId: string | null = null;
+  let placingObjectId: number | null = null;
 
   function isDirty(): boolean {
     return JSON.stringify(original) !== JSON.stringify(draft);
@@ -764,7 +769,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
     saveBtn.disabled = !isDirty();
   }
 
-  function highlightRow(_roomId: string, objectId: string) {
+  function highlightRow(_roomId: number, objectId: number) {
     const row = document.getElementById(`modal-obj-row-${objectId}`);
     if (!row) return;
     row.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -796,7 +801,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
       // at all) sent resolveRooms() chasing a connectedTo.roomId that
       // doesn't exist in this one-room array, throwing inside setRooms()
       // before the Pixi app ever got far enough to render anything.
-      setRooms(roomSpecsFromWire([{ ...room, objects: draft, connectedTo: undefined }]));
+      setRooms(roomSpecsFromWire([{ ...room, objects: draft, connectedTo: undefined }]), []);
 
       currentApp = new Application();
       await currentApp.init({ width: 420, height: 320, background: 0x222228 });
@@ -817,7 +822,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
       row.id = `modal-obj-row-${obj.id}`;
 
       const idCell = document.createElement("td");
-      idCell.textContent = obj.id;
+      idCell.textContent = obj.id !== undefined ? String(obj.id) : "(new)";
       row.appendChild(idCell);
 
       const typeSelect = document.createElement("select");
@@ -825,7 +830,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
         const opt = document.createElement("option");
         opt.value = typeId;
         opt.textContent = typeId;
-        opt.selected = typeId === obj.type;
+        opt.selected = Number(typeId) === obj.type;
         typeSelect.appendChild(opt);
       }
       const typeCell = document.createElement("td");
@@ -879,7 +884,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
         }
         updateSaveState();
         console.log(`[admin] applyPosition("${obj.id}") -> (${obj.x},${obj.y}), currentRenderer:`, !!currentRenderer);
-        currentRenderer?.moveObject(obj.id, obj.x, obj.y);
+        currentRenderer?.moveObject(obj.id ?? -1, obj.x, obj.y);
       }
       xInput.onchange = applyPosition;
       yInput.onchange = applyPosition;
@@ -888,7 +893,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
       // (or whether it renders at all) actually changes, not just its
       // position, so there's nothing to "move" in place.
       function applyTypeAndEnabled() {
-        obj.type = typeSelect.value;
+        obj.type = Number(typeSelect.value);
         obj.enabled = checkbox.checked;
         updateSaveState();
         renderPreview();
@@ -905,15 +910,19 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
       }
       setPlacingUI(false);
       placeBtn.onclick = () => {
-        if (placingObjectId === obj.id) {
+        // Unsaved placements have no real id yet, so they all resolve to
+        // the same -1 sentinel in the preview (see resolveObjectPlacement) —
+        // fine as long as only one is ever being placed at a time.
+        const previewId = obj.id ?? -1;
+        if (placingObjectId === previewId) {
           currentRenderer?.disablePlacement();
           placingObjectId = null;
           setPlacingUI(false);
           return;
         }
-        placingObjectId = obj.id;
+        placingObjectId = previewId;
         setPlacingUI(true);
-        currentRenderer?.enablePlacement(obj.id, (u, v) => {
+        currentRenderer?.enablePlacement(previewId, (u, v) => {
           const screen = gridToScreen(u, v);
           const a = anchorFor(obj.type);
           obj.x = screen.x - a.x;
@@ -926,7 +935,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
             yInput.value = String(obj.y);
           }
           updateSaveState();
-          currentRenderer?.moveObject(obj.id, obj.x, obj.y);
+          currentRenderer?.moveObject(previewId, obj.x, obj.y);
           currentRenderer?.disablePlacement();
           placingObjectId = null;
           setPlacingUI(false);
@@ -957,9 +966,9 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
 
   function renderAddForm() {
     addForm.textContent = "";
-    const newIdInput = document.createElement("input");
-    newIdInput.placeholder = "object id";
-    newIdInput.required = true;
+    // No id input anymore — objects.id is now a global server-assigned
+    // serial id (see ObjectPlacementWire's own comment); a brand-new
+    // placement simply has no id until Save persists it.
     const newTypeSelect = document.createElement("select");
     for (const typeId of typeIds) {
       const opt = document.createElement("option");
@@ -980,14 +989,10 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
     const addBtn = document.createElement("button");
     addBtn.type = "submit";
     addBtn.textContent = "Add Object";
-    addForm.append(newIdInput, newTypeSelect, newXInput, newYInput, addBtn);
+    addForm.append(newTypeSelect, newXInput, newYInput, addBtn);
     addForm.onsubmit = (e) => {
       e.preventDefault();
-      if (draft.some((o) => o.id === newIdInput.value)) {
-        showError(new Error(`"${newIdInput.value}" already exists in this room`));
-        return;
-      }
-      draft.push({ id: newIdInput.value, type: newTypeSelect.value, x: Number(newXInput.value), y: Number(newYInput.value), enabled: true });
+      draft.push({ type: Number(newTypeSelect.value), x: Number(newXInput.value), y: Number(newYInput.value), enabled: true });
       renderTable();
       updateSaveState();
       renderPreview();
@@ -997,8 +1002,12 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
   saveBtn.onclick = async () => {
     if (!isDirty()) return;
     try {
-      const draftIds = new Set(draft.map((o) => o.id));
+      const draftIds = new Set(draft.filter((o): o is ObjectPlacementWire & { id: number } => o.id !== undefined).map((o) => o.id));
       for (const obj of draft) {
+        if (obj.id === undefined) {
+          await adminFetch(`/api/admin/rooms/${room.id}/objects`, { method: "POST", body: JSON.stringify(obj) });
+          continue;
+        }
         const orig = original.find((o) => o.id === obj.id);
         if (!orig) {
           await adminFetch(`/api/admin/rooms/${room.id}/objects`, { method: "POST", body: JSON.stringify(obj) });
@@ -1007,7 +1016,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
         }
       }
       for (const orig of original) {
-        if (!draftIds.has(orig.id)) {
+        if (orig.id !== undefined && !draftIds.has(orig.id)) {
           await adminFetch(`/api/admin/rooms/${room.id}/objects/${orig.id}`, { method: "DELETE" });
         }
       }
@@ -1140,7 +1149,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     currentApp?.destroy();
     previewContainer.textContent = "";
     try {
-      setRooms(roomSpecsFromWire(buildPreviewRoomSet()));
+      setRooms(roomSpecsFromWire(buildPreviewRoomSet()), floors);
       currentApp = new Application();
       await currentApp.init({ width: 480, height: 380, background: 0x222228 });
       previewContainer.appendChild(currentApp.canvas);
@@ -1165,7 +1174,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
    */
   function repositionNeighbors() {
     try {
-      const resolved = resolveRooms(roomSpecsFromWire(buildPreviewRoomSet()));
+      const resolved = resolveRooms(roomSpecsFromWire(buildPreviewRoomSet()), floors);
       for (const r of resolved) {
         if (r.id === room.id) continue; // room itself is the fixed local anchor, never moves
         currentRenderer?.moveRoom(r.id, r.x, r.y);
@@ -1179,7 +1188,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
   /** Cycle/missing-room check reusing the engine's own resolveRooms() — thrown errors surface as a blocking inline error instead of silently corrupting the layout. */
   function assertNoCycle(newConnectedTo: ConnectedToEntry[] | undefined) {
     const candidateRooms = allRooms.map((r) => (r.id === room.id ? { ...r, connectedTo: newConnectedTo } : r));
-    resolveRooms(roomSpecsFromWire(candidateRooms));
+    resolveRooms(roomSpecsFromWire(candidateRooms), floors);
   }
 
   /**
@@ -1192,7 +1201,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
    * WAS being shown, just on a modal now hidden behind the one that just
    * closed. Looked exactly like "nothing happened, no explanation."
    */
-  async function addConnection(targetRoomId: string, direction: ConnectionDirection, gapTiles: number, lateralOffset: number): Promise<void> {
+  async function addConnection(targetRoomId: number, direction: ConnectionDirection, gapTiles: number, lateralOffset: number): Promise<void> {
     const newConnectedTo = [...(room.connectedTo ?? []), { roomId: targetRoomId, direction, gapTiles, lateralOffset }];
     assertNoCycle(newConnectedTo);
     await adminFetch(`/api/admin/rooms/${room.id}/connections`, { method: "PATCH", body: JSON.stringify({ connectedTo: newConnectedTo }) });
@@ -1260,7 +1269,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     const roomSelect = document.createElement("select");
     for (const r of candidates) {
       const opt = document.createElement("option");
-      opt.value = r.id;
+      opt.value = String(r.id);
       opt.textContent = `${r.name} (${r.id})`;
       roomSelect.appendChild(opt);
     }
@@ -1297,7 +1306,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     confirmBtn.textContent = "Connect";
     confirmBtn.onclick = async () => {
       try {
-        await addConnection(roomSelect.value, directionSelect.value as ConnectionDirection, Number(gapInput.value), Number(offsetInput.value));
+        await addConnection(Number(roomSelect.value), directionSelect.value as ConnectionDirection, Number(gapInput.value), Number(offsetInput.value));
         pickerModal.close();
       } catch (err) {
         // Only close on success — closing unconditionally here used to mask
@@ -1438,7 +1447,7 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
       const options = baseRoom && !candidates.some((r) => r.id === baseRoom.id) ? [baseRoom, ...candidates] : candidates;
       for (const r of options) {
         const opt = document.createElement("option");
-        opt.value = r.id;
+        opt.value = String(r.id);
         opt.textContent = `${r.name} (${r.id})`;
         opt.selected = r.id === floor.baseRoomId;
         select.appendChild(opt);
@@ -1448,7 +1457,7 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
       editFloorBtn.textContent = "Save";
       editFloorBtn.onclick = async () => {
         try {
-          await adminFetch(`/api/admin/floors/${floor.level}`, { method: "PATCH", body: JSON.stringify({ label: floor.label, baseRoomId: select.value }) });
+          await adminFetch(`/api/admin/floors/${floor.level}`, { method: "PATCH", body: JSON.stringify({ label: floor.label, baseRoomId: Number(select.value) }) });
           renderRooms(body);
         } catch (err) {
           showError(err);
@@ -1485,7 +1494,7 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
   const availableBaseRooms = pickableBaseRooms(rooms, floors);
   for (const r of availableBaseRooms) {
     const opt = document.createElement("option");
-    opt.value = r.id;
+    opt.value = String(r.id);
     opt.textContent = `${r.name} (${r.id})`;
     floorBaseRoomSelect.appendChild(opt);
   }
@@ -1499,7 +1508,7 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
     try {
       await adminFetch("/api/admin/floors", {
         method: "POST",
-        body: JSON.stringify({ level: Number(floorLevelInput.value), label: floorLabelInput.value, baseRoomId: floorBaseRoomSelect.value }),
+        body: JSON.stringify({ level: Number(floorLevelInput.value), label: floorLabelInput.value, baseRoomId: Number(floorBaseRoomSelect.value) }),
       });
       renderRooms(body);
     } catch (err) {
@@ -1554,7 +1563,8 @@ async function renderRooms(body: HTMLElement) {
     table.innerHTML = "<tr><th>Room</th><th>Size</th><th>Level</th><th>Objects</th><th></th></tr>";
     for (const room of roomsForTab) {
       const row = document.createElement("tr");
-      row.innerHTML = `<td>${room.name} (${room.id})</td><td>${room.cols}×${room.rows}</td><td>${room.level}</td><td>${room.objects.length}</td>`;
+      const level = membership.get(room.id) ?? 0;
+      row.innerHTML = `<td>${room.name} (${room.id})</td><td>${room.cols}×${room.rows}</td><td>${level}</td><td>${room.objects.length}</td>`;
 
       const actionCell = document.createElement("td");
       const editBtn = document.createElement("button");
@@ -1586,9 +1596,9 @@ async function renderRooms(body: HTMLElement) {
   function buildAddRoomForm(): HTMLElement {
     const form = document.createElement("form");
     form.className = "admin-form";
-    const idInput = document.createElement("input");
-    idInput.placeholder = "id (e.g. attic)";
-    idInput.required = true;
+    // No id/level inputs — rooms.id is now a server-assigned serial id, and
+    // level is derived from floor-connection membership (see RoomDef.level's
+    // own comment), not something to pick when creating a room.
     const nameInput = document.createElement("input");
     nameInput.placeholder = "Name";
     nameInput.required = true;
@@ -1600,25 +1610,19 @@ async function renderRooms(body: HTMLElement) {
     rowsInput.type = "number";
     rowsInput.placeholder = "rows";
     rowsInput.value = "10";
-    const levelInput = document.createElement("input");
-    levelInput.type = "number";
-    levelInput.placeholder = "level";
-    levelInput.value = "0";
     const submitBtn = document.createElement("button");
     submitBtn.type = "submit";
     submitBtn.textContent = "Add Room (floor1/wall1, unconnected)";
-    form.append(idInput, nameInput, colsInput, rowsInput, levelInput, submitBtn);
+    form.append(nameInput, colsInput, rowsInput, submitBtn);
     form.onsubmit = async (e) => {
       e.preventDefault();
       try {
         await adminFetch("/api/admin/rooms", {
           method: "POST",
           body: JSON.stringify({
-            id: idInput.value,
             name: nameInput.value,
             cols: Number(colsInput.value),
             rows: Number(rowsInput.value),
-            level: Number(levelInput.value),
             floorVariant: "floor1",
             wallVariant: "wall1",
           }),

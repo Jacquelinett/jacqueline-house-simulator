@@ -94,11 +94,11 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
       }
       if (parts.length === 4 && method === "PATCH") {
         const { label, color } = await readJsonBody(req);
-        updateActivity(parts[3], label, color);
+        updateActivity(Number(parts[3]), label, color);
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 4 && method === "DELETE") {
-        deleteActivity(parts[3]);
+        deleteActivity(Number(parts[3]));
         return sendJson(res, 200, { ok: true }), true;
       }
     }
@@ -112,11 +112,11 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
       }
       if (parts.length === 4 && method === "PATCH") {
         const def = await readJsonBody(req);
-        updateObjectType(parts[3], def);
+        updateObjectType(Number(parts[3]), def);
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 4 && method === "DELETE") {
-        deleteObjectType(parts[3]);
+        deleteObjectType(Number(parts[3]));
         return sendJson(res, 200, { ok: true }), true;
       }
     }
@@ -132,35 +132,33 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
       if (parts.length === 3 && method === "GET") return sendJson(res, 200, getRoomSpecs()), true;
       if (parts.length === 3 && method === "POST") {
         const spec = await readJsonBody(req);
-        createRoom(spec);
-        return sendJson(res, 200, { ok: true }), true;
+        return sendJson(res, 200, { id: createRoom(spec) }), true;
       }
       if (parts.length === 4 && method === "PATCH") {
         const spec = await readJsonBody(req);
-        updateRoom({ ...spec, id: parts[3] });
+        updateRoom({ ...spec, id: Number(parts[3]) });
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 4 && method === "DELETE") {
-        deleteRoom(parts[3]);
+        deleteRoom(Number(parts[3]));
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 5 && parts[4] === "connections" && method === "PATCH") {
         const { connectedTo } = await readJsonBody(req);
-        updateRoomConnections(parts[3], connectedTo);
+        updateRoomConnections(Number(parts[3]), connectedTo);
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 5 && parts[4] === "objects" && method === "POST") {
         const placement = (await readJsonBody(req)) as ObjectPlacement;
-        createObject(parts[3], placement);
-        return sendJson(res, 200, { ok: true }), true;
+        return sendJson(res, 200, { id: createObject(Number(parts[3]), placement) }), true;
       }
       if (parts.length === 6 && parts[4] === "objects" && method === "PATCH") {
         const placement = (await readJsonBody(req)) as ObjectPlacement;
-        updateObject(parts[3], { ...placement, id: parts[5] });
+        updateObject(Number(parts[3]), { ...placement, id: Number(parts[5]) });
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 6 && parts[4] === "objects" && method === "DELETE") {
-        deleteObject(parts[3], parts[5]);
+        deleteObject(Number(parts[3]), Number(parts[5]));
         return sendJson(res, 200, { ok: true }), true;
       }
     }
@@ -174,7 +172,7 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 4 && method === "PATCH") {
-        const floor = (await readJsonBody(req)) as { label: string; baseRoomId: string };
+        const floor = (await readJsonBody(req)) as { label: string; baseRoomId: number };
         updateFloor(Number(parts[3]), floor);
         return sendJson(res, 200, { ok: true }), true;
       }

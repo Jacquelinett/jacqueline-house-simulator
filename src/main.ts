@@ -190,8 +190,8 @@ async function main() {
   // objectTypes/ACTIVITIES as live module bindings, not a parameter.
   setActivities(getRemoteActivities());
   setObjectTypes(getRemoteObjectTypes());
-  setRooms(roomSpecsFromWire(getRemoteRoomSpecs()));
   setFloors(getRemoteFloors());
+  setRooms(roomSpecsFromWire(getRemoteRoomSpecs()), getRemoteFloors());
 
   const house = await setupHouse(app);
   // Applied once right after connecting (mirrors the old AW-resume-on-launch

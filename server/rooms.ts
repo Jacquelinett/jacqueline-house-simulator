@@ -3,11 +3,10 @@ import { ConnectedToEntry, ConnectionDirection, ObjectAction, ObjectPlacement, R
 import { TileOverride } from "../src/scene/tileset";
 
 interface RoomRow {
-  id: string;
+  id: number;
   name: string;
   cols: number;
   rows: number;
-  level: number;
   floor_variant: string;
   wall_variant: string;
   floor_overrides_json: string | null;
@@ -15,18 +14,18 @@ interface RoomRow {
 }
 
 interface ConnectionRow {
-  room_id: string;
+  room_id: number;
   idx: number;
-  target_room_id: string;
+  target_room_id: number;
   direction: ConnectionDirection;
   gap_tiles: number;
   lateral_offset: number;
 }
 
 interface ObjectRow {
-  id: string;
-  room_id: string;
-  type_id: string;
+  id: number;
+  room_id: number;
+  type_id: number;
   x: number;
   y: number;
   enabled: number;
@@ -50,14 +49,14 @@ export function getRoomSpecs(): RoomSpecWire[] {
   const objectRows = db.prepare("SELECT * FROM objects").all() as ObjectRow[];
   const connectionRows = db.prepare("SELECT * FROM room_connections ORDER BY room_id, idx").all() as ConnectionRow[];
 
-  const objectsByRoom = new Map<string, ObjectPlacement[]>();
+  const objectsByRoom = new Map<number, ObjectPlacement[]>();
   for (const row of objectRows) {
     const list = objectsByRoom.get(row.room_id) ?? [];
     list.push(rowToPlacement(row));
     objectsByRoom.set(row.room_id, list);
   }
 
-  const connectionsByRoom = new Map<string, ConnectedToEntry[]>();
+  const connectionsByRoom = new Map<number, ConnectedToEntry[]>();
   for (const row of connectionRows) {
     const list = connectionsByRoom.get(row.room_id) ?? [];
     list.push({ roomId: row.target_room_id, direction: row.direction, gapTiles: row.gap_tiles, lateralOffset: row.lateral_offset });
@@ -69,7 +68,6 @@ export function getRoomSpecs(): RoomSpecWire[] {
     name: row.name,
     cols: row.cols,
     rows: row.rows,
-    level: row.level,
     floorVariant: row.floor_variant,
     wallVariant: row.wall_variant,
     floorOverrides: row.floor_overrides_json ? (JSON.parse(row.floor_overrides_json) as TileOverride[]) : undefined,
@@ -79,7 +77,7 @@ export function getRoomSpecs(): RoomSpecWire[] {
   }));
 }
 
-function replaceConnections(roomId: string, entries: ConnectedToEntry[] | undefined): void {
+function replaceConnections(roomId: number, entries: ConnectedToEntry[] | undefined): void {
   db.prepare("DELETE FROM room_connections WHERE room_id = ?").run(roomId);
   const insert = db.prepare(`
     INSERT INTO room_connections (room_id, idx, target_room_id, direction, gap_tiles, lateral_offset)
@@ -95,15 +93,18 @@ function replaceConnections(roomId: string, entries: ConnectedToEntry[] | undefi
  * room spec uses the same floor1/wall1 variant pair, so the variant
  * objects are seeded by their known registry names directly rather than
  * needing a reverse object->name lookup (not worth building for a
- * two-variant registry).
+ * two-variant registry). Explicit ids throughout, matching STATIC_ROOM_SPECS'
+ * own literal ids (rooms.ts), same as seedObjectTypesIfEmpty()/
+ * seedActivitiesIfEmpty() — no `level` column (dropped; derived at resolve
+ * time instead, see RoomDef.level's own comment in scene/rooms.ts).
  */
 export function seedRoomsIfEmpty(): void {
   const { n } = db.prepare("SELECT COUNT(*) as n FROM rooms").get() as { n: number };
   if (n > 0) return;
 
   const insertRoom = db.prepare(`
-    INSERT INTO rooms (id, name, cols, rows, level, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json)
-    VALUES (@id, @name, @cols, @rows, @level, 'floor1', 'wall1', @floorOverridesJson, @wallOverridesJson)
+    INSERT INTO rooms (id, name, cols, rows, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json)
+    VALUES (@id, @name, @cols, @rows, 'floor1', 'wall1', @floorOverridesJson, @wallOverridesJson)
   `);
   const insertObject = db.prepare(`
     INSERT INTO objects (id, room_id, type_id, x, y, enabled, action_json)
@@ -117,14 +118,13 @@ export function seedRoomsIfEmpty(): void {
         name: spec.name,
         cols: spec.cols,
         rows: spec.rows,
-        level: spec.level ?? 0,
         floorOverridesJson: spec.floorOverrides ? JSON.stringify(spec.floorOverrides) : null,
         wallOverridesJson: spec.wallOverrides ? JSON.stringify(spec.wallOverrides) : null,
       });
       replaceConnections(spec.id, spec.connectedTo);
       for (const placement of spec.objects) {
         insertObject.run({
-          id: placement.id ?? placement.type,
+          id: placement.id, // always set explicitly in STATIC_ROOM_SPECS
           roomId: spec.id,
           typeId: placement.type,
           x: placement.x,
@@ -140,39 +140,45 @@ export function seedRoomsIfEmpty(): void {
 
 export type RoomSpecInput = Omit<RoomSpecWire, "objects">;
 
-const roomUpsert = db.prepare(`
-  INSERT INTO rooms (id, name, cols, rows, level, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json)
-  VALUES (@id, @name, @cols, @rows, @level, @floorVariant, @wallVariant, @floorOverridesJson, @wallOverridesJson)
-  ON CONFLICT(id) DO UPDATE SET name=excluded.name, cols=excluded.cols, rows=excluded.rows, level=excluded.level,
-    floor_variant=excluded.floor_variant, wall_variant=excluded.wall_variant,
-    floor_overrides_json=excluded.floor_overrides_json, wall_overrides_json=excluded.wall_overrides_json
-`);
-
-function roomUpsertParams(spec: RoomSpecInput) {
-  return {
-    id: spec.id,
-    name: spec.name,
-    cols: spec.cols,
-    rows: spec.rows,
-    level: spec.level,
-    floorVariant: spec.floorVariant,
-    wallVariant: spec.wallVariant,
-    floorOverridesJson: spec.floorOverrides ? JSON.stringify(spec.floorOverrides) : null,
-    wallOverridesJson: spec.wallOverrides ? JSON.stringify(spec.wallOverrides) : null,
-  };
-}
-
-export function createRoom(spec: RoomSpecInput): void {
-  const tx = db.transaction(() => {
-    roomUpsert.run(roomUpsertParams(spec));
-    replaceConnections(spec.id, spec.connectedTo);
+/** No id — rooms.id is server-assigned (INTEGER PRIMARY KEY, omitted from the INSERT so SQLite auto-assigns the next one). */
+export function createRoom(spec: Omit<RoomSpecInput, "id">): number {
+  const tx = db.transaction((): number => {
+    const { lastInsertRowid } = db
+      .prepare(
+        `INSERT INTO rooms (name, cols, rows, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json)
+       VALUES (@name, @cols, @rows, @floorVariant, @wallVariant, @floorOverridesJson, @wallOverridesJson)`,
+      )
+      .run({
+        name: spec.name,
+        cols: spec.cols,
+        rows: spec.rows,
+        floorVariant: spec.floorVariant,
+        wallVariant: spec.wallVariant,
+        floorOverridesJson: spec.floorOverrides ? JSON.stringify(spec.floorOverrides) : null,
+        wallOverridesJson: spec.wallOverrides ? JSON.stringify(spec.wallOverrides) : null,
+      });
+    const id = Number(lastInsertRowid);
+    replaceConnections(id, spec.connectedTo);
+    return id;
   });
-  tx();
+  return tx();
 }
 
 export function updateRoom(spec: RoomSpecInput): void {
   const tx = db.transaction(() => {
-    roomUpsert.run(roomUpsertParams(spec));
+    db.prepare(
+      `UPDATE rooms SET name = @name, cols = @cols, rows = @rows, floor_variant = @floorVariant, wall_variant = @wallVariant,
+       floor_overrides_json = @floorOverridesJson, wall_overrides_json = @wallOverridesJson WHERE id = @id`,
+    ).run({
+      id: spec.id,
+      name: spec.name,
+      cols: spec.cols,
+      rows: spec.rows,
+      floorVariant: spec.floorVariant,
+      wallVariant: spec.wallVariant,
+      floorOverridesJson: spec.floorOverrides ? JSON.stringify(spec.floorOverrides) : null,
+      wallOverridesJson: spec.wallOverrides ? JSON.stringify(spec.wallOverrides) : null,
+    });
     replaceConnections(spec.id, spec.connectedTo);
   });
   tx();
@@ -189,14 +195,14 @@ export function updateRoom(spec: RoomSpecInput): void {
  * impossible by construction rather than relying on every caller
  * remembering to keep its snapshot fresh.
  */
-export function updateRoomConnections(roomId: string, connectedTo: ConnectedToEntry[] | undefined): void {
+export function updateRoomConnections(roomId: number, connectedTo: ConnectedToEntry[] | undefined): void {
   const tx = db.transaction(() => {
     replaceConnections(roomId, connectedTo);
   });
   tx();
 }
 
-export function deleteRoom(id: string): void {
+export function deleteRoom(id: number): void {
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM objects WHERE room_id = ?").run(id);
     db.prepare("DELETE FROM room_connections WHERE room_id = ?").run(id);
@@ -211,33 +217,39 @@ export function deleteRoom(id: string): void {
   tx();
 }
 
-const objectUpsert = db.prepare(`
-  INSERT INTO objects (id, room_id, type_id, x, y, enabled, action_json)
-  VALUES (@id, @roomId, @typeId, @x, @y, @enabled, @actionJson)
-  ON CONFLICT(room_id, id) DO UPDATE SET type_id=excluded.type_id, x=excluded.x, y=excluded.y,
-    enabled=excluded.enabled, action_json=excluded.action_json
-`);
+/** No id — objects.id is server-assigned (global INTEGER PRIMARY KEY, omitted from the INSERT so SQLite auto-assigns the next one). */
+export function createObject(roomId: number, placement: Omit<ObjectPlacement, "id">): number {
+  const { lastInsertRowid } = db
+    .prepare(
+      `INSERT INTO objects (room_id, type_id, x, y, enabled, action_json)
+     VALUES (@roomId, @typeId, @x, @y, @enabled, @actionJson)`,
+    )
+    .run({
+      roomId,
+      typeId: placement.type,
+      x: placement.x,
+      y: placement.y,
+      enabled: placement.enabled === false ? 0 : 1,
+      actionJson: placement.actions ? JSON.stringify(placement.actions) : null,
+    });
+  return Number(lastInsertRowid);
+}
 
-function objectUpsertParams(roomId: string, placement: ObjectPlacement) {
-  return {
-    id: placement.id ?? placement.type,
+export function updateObject(roomId: number, placement: ObjectPlacement & { id: number }): void {
+  db.prepare(
+    `UPDATE objects SET type_id = @typeId, x = @x, y = @y, enabled = @enabled, action_json = @actionJson
+     WHERE id = @id AND room_id = @roomId`,
+  ).run({
+    id: placement.id,
     roomId,
     typeId: placement.type,
     x: placement.x,
     y: placement.y,
     enabled: placement.enabled === false ? 0 : 1,
     actionJson: placement.actions ? JSON.stringify(placement.actions) : null,
-  };
+  });
 }
 
-export function createObject(roomId: string, placement: ObjectPlacement): void {
-  objectUpsert.run(objectUpsertParams(roomId, placement));
-}
-
-export function updateObject(roomId: string, placement: ObjectPlacement): void {
-  objectUpsert.run(objectUpsertParams(roomId, placement));
-}
-
-export function deleteObject(roomId: string, objectId: string): void {
+export function deleteObject(roomId: number, objectId: number): void {
   db.prepare("DELETE FROM objects WHERE room_id = ? AND id = ?").run(roomId, objectId);
 }

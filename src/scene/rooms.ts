@@ -9,7 +9,7 @@
 // `below`/`overlay`/`above`.
 import { FLOOR_VARIANTS, FloorVariant, TileOverride, WALL_VARIANTS, WallVariant, floor1, wall1 } from "./tileset";
 import { ACTIVITIES, findActivityById } from "./activities";
-import { Floor } from "./floors";
+import { Floor, STATIC_FLOORS } from "./floors";
 
 export interface SpriteLayer {
   texture?: string; // path to art asset; omitted -> rendered as a placeholder color box
@@ -22,11 +22,11 @@ export interface SpriteLayer {
 // cascades to every object that triggers it, instead of orphaning a
 // hardcoded label string that was only ever resolved at authoring time.
 export type ObjectAction =
-  | { kind: "activity"; activityId: string }
-  | { kind: "navigate"; roomId: string }; // e.g. a staircase — jumps the view to another room, no AW tracking
+  | { kind: "activity"; activityId: number }
+  | { kind: "navigate"; roomId: number }; // e.g. a staircase — jumps the view to another room, no AW tracking
 
 export interface ObjectDef {
-  id: string;
+  id: number;
   name: string;
   enabled?: boolean; // default true; set false to skip rendering entirely (e.g. no real art yet)
   // Pixel position relative to the room's own origin (the same (0,0) floor
@@ -67,6 +67,7 @@ export interface ObjectDef {
 // identical sprites/actions by construction, not by coincidentally
 // duplicating the same fields twice.
 export interface ObjectTypeDef {
+  id: number;
   name: string;
   width: number;
   height: number;
@@ -102,9 +103,16 @@ export interface ObjectTypeDef {
  * built — every other module that `import`s them gets the live ES-module
  * binding, so House.ts/viewer.ts/renderer.ts/floorButtons.ts need no
  * changes at all despite reading what's now server-provided data.
+ *
+ * `id` is a plain serial integer matching object_types' own INTEGER
+ * PRIMARY KEY — explicit here the same way STATIC_ACTIVITIES's ids are
+ * (see that file's own comment): seedObjectTypesIfEmpty() inserts these
+ * values verbatim; only an admin-tool-created type omits id and gets one
+ * auto-assigned.
  */
 const STATIC_OBJECT_TYPES = {
   piano: {
+    id: 1,
     name: "Piano",
     width: 64,
     height: 64,
@@ -114,6 +122,7 @@ const STATIC_OBJECT_TYPES = {
     actions: [{ kind: "activity", activityId: ACTIVITIES.practicingPiano.id }],
   },
   workLaptop: {
+    id: 2,
     name: "Work Laptop",
     width: 32,
     height: 32,
@@ -121,6 +130,7 @@ const STATIC_OBJECT_TYPES = {
     actions: [{ kind: "activity", activityId: ACTIVITIES.working.id }],
   },
   personalLaptop: {
+    id: 3,
     name: "Personal Laptop",
     width: 32,
     height: 32,
@@ -131,6 +141,7 @@ const STATIC_OBJECT_TYPES = {
     ],
   },
   pc: {
+    id: 4,
     name: "PC",
     width: 48,
     height: 32,
@@ -141,6 +152,7 @@ const STATIC_OBJECT_TYPES = {
     ],
   },
   ddrCabinet: {
+    id: 5,
     name: "DDR Cabinet",
     width: 48,
     height: 64,
@@ -148,6 +160,7 @@ const STATIC_OBJECT_TYPES = {
     actions: [{ kind: "activity", activityId: ACTIVITIES.ddr.id }],
   },
   stairs: {
+    id: 6,
     name: "Stairs",
     width: 32,
     height: 32,
@@ -160,14 +173,18 @@ export { STATIC_OBJECT_TYPES };
 
 export let objectTypes: Record<string, ObjectTypeDef> = STATIC_OBJECT_TYPES;
 
-/** Swaps in server-fetched object types — see this file's top-of-objectTypes comment. */
+/** Swaps in server-fetched object types, re-keyed by id — see this file's top-of-objectTypes comment. */
 export function setObjectTypes(types: Record<string, ObjectTypeDef>): void {
   objectTypes = types;
 }
 
+function findObjectType(typeId: number): ObjectTypeDef | undefined {
+  return Object.values(objectTypes).find((t) => t.id === typeId);
+}
+
 export interface ObjectPlacement {
-  type: string; // object_types.id — was keyof typeof objectTypes before types became dynamic
-  id?: string; // disambiguates multiple instances of the same type in one room; defaults to `type`
+  type: number; // object_types.id
+  id?: number; // global objects.id — omitted for a not-yet-saved placement (the admin tool's draft), always present once persisted
   enabled?: boolean;
   x: number;
   y: number;
@@ -175,13 +192,13 @@ export interface ObjectPlacement {
 }
 
 function resolveObjectPlacement(placement: ObjectPlacement): ObjectDef {
-  const type = objectTypes[placement.type];
+  const type = findObjectType(placement.type);
   if (!type) {
     console.error(`[rooms] unknown object type: ${placement.type}`);
-    return { id: placement.id ?? placement.type, name: "(unknown)", enabled: false, x: placement.x, y: placement.y, width: 0, height: 0 };
+    return { id: placement.id ?? -1, name: "(unknown)", enabled: false, x: placement.x, y: placement.y, width: 0, height: 0 };
   }
   return {
-    id: placement.id ?? placement.type,
+    id: placement.id ?? -1,
     name: type.name,
     enabled: placement.enabled,
     x: placement.x,
@@ -253,7 +270,7 @@ export type ConnectionDirection = "behindLeft" | "behindRight" | "frontLeft" | "
  * than assuming one can't happen.
  */
 export interface ConnectedToEntry {
-  roomId: string;
+  roomId: number;
   direction: ConnectionDirection;
   gapTiles: number; // 0 = flush shared edge, 1 = one empty tile row between
   // Shift along the wall, on whichever axis `direction` doesn't already
@@ -276,11 +293,10 @@ export const PAIR_DIRECTION: Record<ConnectionDirection, ConnectionDirection> = 
 };
 
 export interface RoomSpec {
-  id: string;
+  id: number;
   name: string;
   cols: number; // room size in tiles along the iso "u" axis
   rows: number; // room size in tiles along the iso "v" axis
-  level?: number; // default 0 (ground floor); 1 = upper floor, -1 = basement, etc.
   floor: FloorVariant;
   wall: WallVariant;
   // Per-tile replacements for the default floor/wall at specific (u,v)
@@ -302,7 +318,11 @@ export interface RoomDef extends Omit<RoomSpec, "objects"> {
   y: number;
   width: number;
   height: number;
-  level: number; // resolved — always a number, never undefined, unlike RoomSpec's
+  // Which floor this room is on — DERIVED (see computeFloorMembership),
+  // not stored: a room with no path back to any floor's base room (via
+  // ANY connectedTo edge, from either side) defaults to 0 rather than
+  // being undefined, same as the old stored field's own default.
+  level: number;
 }
 
 /**
@@ -314,11 +334,10 @@ export interface RoomDef extends Omit<RoomSpec, "objects"> {
  * variants can arrive as strings at all.
  */
 export interface RoomSpecWire {
-  id: string;
+  id: number;
   name: string;
   cols: number;
   rows: number;
-  level: number;
   floorVariant: string;
   wallVariant: string;
   floorOverrides?: TileOverride[];
@@ -333,7 +352,6 @@ export function roomSpecsFromWire(wire: RoomSpecWire[]): RoomSpec[] {
     name: w.name,
     cols: w.cols,
     rows: w.rows,
-    level: w.level,
     floor: FLOOR_VARIANTS[w.floorVariant],
     wall: WALL_VARIANTS[w.wallVariant],
     floorOverrides: w.floorOverrides,
@@ -343,9 +361,15 @@ export function roomSpecsFromWire(wire: RoomSpecWire[]): RoomSpec[] {
   }));
 }
 
+/** Minimal shape computeFloorMembership/buildUndirectedAdjacency actually need — both RoomSpec[] and RoomSpecWire[] satisfy this structurally, so one implementation serves resolveRooms() (RoomSpec) and the admin tool's organization UI (RoomSpecWire) alike. */
+interface RoomConnectivity {
+  id: number;
+  connectedTo?: ConnectedToEntry[];
+}
+
 /** Every room id already claimed as a target by SOME room's connectedTo entry (any entry, by any room), or as a floor's base room (floors.ts) — excluded from "pick a room to connect to" pickers so no two connections (from the same room or different ones) ever claim the same target. `exceptRoomId` exempts one room's OWN existing targets from its own exclusion (editing/adding another connection for a room shouldn't make its already-made choices disappear from its own picker). */
-export function getUsedRoomIds(allRooms: RoomSpecWire[], baseRoomIds: string[], exceptRoomId?: string): Set<string> {
-  const used = new Set<string>(baseRoomIds);
+export function getUsedRoomIds(allRooms: RoomSpecWire[], baseRoomIds: number[], exceptRoomId?: number): Set<number> {
+  const used = new Set<number>(baseRoomIds);
   for (const r of allRooms) {
     if (r.id === exceptRoomId) continue;
     for (const entry of r.connectedTo ?? []) used.add(entry.roomId);
@@ -363,9 +387,9 @@ export function getUsedRoomIds(allRooms: RoomSpecWire[], baseRoomIds: string[], 
  * connections is reachable via any of the 3, regardless of which one
  * happens to be entries[0].
  */
-function buildUndirectedAdjacency(allRooms: RoomSpecWire[]): Map<string, Set<string>> {
-  const adj = new Map<string, Set<string>>();
-  function ensure(id: string): Set<string> {
+function buildUndirectedAdjacency(allRooms: RoomConnectivity[]): Map<number, Set<number>> {
+  const adj = new Map<number, Set<number>>();
+  function ensure(id: number): Set<number> {
     let set = adj.get(id);
     if (!set) {
       set = new Set();
@@ -389,9 +413,9 @@ function buildUndirectedAdjacency(allRooms: RoomSpecWire[]): Map<string, Set<str
  * (see buildUndirectedAdjacency). A room not reachable from any floor's
  * base room is simply absent from the returned map ("unorganized").
  */
-export function computeFloorMembership(allRooms: RoomSpecWire[], floors: Floor[]): Map<string, number> {
+export function computeFloorMembership(allRooms: RoomConnectivity[], floors: Floor[]): Map<number, number> {
   const adj = buildUndirectedAdjacency(allRooms);
-  const membership = new Map<string, number>();
+  const membership = new Map<number, number>();
   for (const floor of floors) {
     if (membership.has(floor.baseRoomId)) continue; // already claimed by an earlier floor's walk
     const queue = [floor.baseRoomId];
@@ -424,13 +448,13 @@ export interface FloorTreeNode {
  * is a read-only visualization, not something that needs to reject bad
  * data.
  */
-export function buildFloorTree(baseRoomId: string, allRooms: RoomSpecWire[]): FloorTreeNode | null {
+export function buildFloorTree(baseRoomId: number, allRooms: RoomSpecWire[]): FloorTreeNode | null {
   const base = allRooms.find((r) => r.id === baseRoomId);
   if (!base) return null;
 
   const adj = buildUndirectedAdjacency(allRooms);
-  const visited = new Set<string>([baseRoomId]);
-  function buildNode(roomId: string): FloorTreeNode {
+  const visited = new Set<number>([baseRoomId]);
+  function buildNode(roomId: number): FloorTreeNode {
     const room = allRooms.find((r) => r.id === roomId)!;
     const children: FloorTreeNode[] = [];
     for (const neighbor of adj.get(roomId) ?? []) {
@@ -443,14 +467,16 @@ export function buildFloorTree(baseRoomId: string, allRooms: RoomSpecWire[]): Fl
   return buildNode(baseRoomId);
 }
 
-export function resolveRooms(specs: RoomSpec[]): RoomDef[] {
+/** `floors` determines each room's vertical `level` — see RoomDef.level's own comment on why this is derived rather than stored. */
+export function resolveRooms(specs: RoomSpec[], floors: Floor[]): RoomDef[] {
   const specById = new Map(specs.map((s) => [s.id, s]));
-  const origins = new Map<string, { u: number; v: number }>();
+  const origins = new Map<number, { u: number; v: number }>();
+  const membership = computeFloorMembership(specs, floors);
 
   // `visiting` detects a connectedTo cycle (A's primary entry chains back to
   // A) — a fresh Set per top-level originOf() call below (default params are
   // evaluated per call), not shared across different rooms' own traversals.
-  function originOf(id: string, visiting: Set<string> = new Set()): { u: number; v: number } {
+  function originOf(id: number, visiting: Set<number> = new Set()): { u: number; v: number } {
     const cached = origins.get(id);
     if (cached) return cached;
     if (visiting.has(id)) {
@@ -504,7 +530,7 @@ export function resolveRooms(specs: RoomSpec[]): RoomDef[] {
   return specs.map((spec) => {
     const { u, v } = originOf(spec.id);
     const { x, y } = gridToScreen(u, v);
-    const level = spec.level ?? 0;
+    const level = membership.get(spec.id) ?? 0;
     return {
       ...spec,
       x,
@@ -517,9 +543,13 @@ export function resolveRooms(specs: RoomSpec[]): RoomDef[] {
   });
 }
 
+// Explicit numeric ids throughout (rooms 1-6, object placements 1-9
+// globally — not per-room anymore, see ObjectPlacement's own comment)
+// matching exactly what server/rooms.ts's seedRoomsIfEmpty() inserts
+// verbatim. STATIC_FLOORS (floors.ts) references these same room ids.
 export const STATIC_ROOM_SPECS: RoomSpec[] = [
   {
-    id: "office",
+    id: 1,
     name: "Jacqueline's Office",
     cols: 10,
     rows: 10,
@@ -531,45 +561,45 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
     // to more than one tile once you see how it looks.
     wallOverrides: [{ u: 0, v: 5, tile: null }],
     objects: [
-      { type: "piano", id: "piano", x: 48, y: 48 },
-      { type: "workLaptop", id: "work-laptop", enabled: false, x: 64, y: 40 },
-      { type: "personalLaptop", id: "personal-laptop", enabled: false, x: 80, y: 48 },
-      { type: "pc", id: "pc", enabled: false, x: 24, y: 56 },
+      { id: 1, type: STATIC_OBJECT_TYPES.piano.id, x: 48, y: 48 },
+      { id: 2, type: STATIC_OBJECT_TYPES.workLaptop.id, enabled: false, x: 64, y: 40 },
+      { id: 3, type: STATIC_OBJECT_TYPES.personalLaptop.id, enabled: false, x: 80, y: 48 },
+      { id: 4, type: STATIC_OBJECT_TYPES.pc.id, enabled: false, x: 24, y: 56 },
     ],
   },
   {
-    id: "ddr-room",
+    id: 2,
     name: "DDR Room",
     cols: 10,
     rows: 6,
     floor: floor1,
     wall: wall1,
-    connectedTo: [{ roomId: "office", direction: "behindLeft", gapTiles: 1 }],
-    objects: [{ type: "ddrCabinet", id: "ddr-cabinet", x: 8, y: 0 }],
+    connectedTo: [{ roomId: 1, direction: "behindLeft", gapTiles: 1 }],
+    objects: [{ id: 5, type: STATIC_OBJECT_TYPES.ddrCabinet.id, x: 8, y: 0 }],
   },
   {
-    id: "living-room",
+    id: 3,
     name: "Living Room",
     cols: 10,
     rows: 20,
     floor: floor1,
     wall: wall1,
-    connectedTo: [{ roomId: "ddr-room", direction: "frontLeft", gapTiles: 1 }],
+    connectedTo: [{ roomId: 2, direction: "frontLeft", gapTiles: 1 }],
     // DDR's facing edge is open by default, but this room's own v=0 wall
     // (facing back toward DDR) still gets its default wall — needs a gap too.
     wallOverrides: [{ u: 5, v: 0, tile: null }],
     objects: [
       {
-        type: "stairs",
-        id: "stairs-down",
+        id: 6,
+        type: STATIC_OBJECT_TYPES.stairs.id,
         x: 32,
         y: 48,
-        actions: [{ kind: "navigate", roomId: "basement" }],
+        actions: [{ kind: "navigate", roomId: 6 }],
       },
     ],
   },
   {
-    id: "entrance",
+    id: 4,
     name: "Entrance",
     cols: 8,
     rows: 6,
@@ -582,66 +612,65 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
     // in turn connect off office's u=0 edge. Two separate doors below: one
     // in entrance's own v=0 wall (faces office, "top right"), one in its
     // own u=0 wall (faces Living Room, "top left").
-    connectedTo: [{ roomId: "office", direction: "frontLeft", gapTiles: 1 }],
+    connectedTo: [{ roomId: 1, direction: "frontLeft", gapTiles: 1 }],
     wallOverrides: [
       { u: 4, v: 0, tile: null }, // door to office
       { u: 0, v: 3, tile: null }, // door to Living Room
     ],
     objects: [
       {
-        type: "stairs",
-        id: "stairs-up",
+        id: 7,
+        type: STATIC_OBJECT_TYPES.stairs.id,
         x: 16,
         y: 16,
-        actions: [{ kind: "navigate", roomId: "bedroom" }],
+        actions: [{ kind: "navigate", roomId: 5 }],
       },
     ],
   },
   {
-    id: "bedroom",
+    id: 5,
     name: "Bedroom",
     cols: 10,
     rows: 10,
-    level: 1,
     floor: floor1,
     wall: wall1,
     // Same (u,v) footprint as the office, directly below it (no connectedTo
-    // needed — level is a pure vertical offset, not a horizontal relationship).
+    // needed — level is derived from floor membership, a pure vertical
+    // offset, not a horizontal relationship).
     objects: [
       {
-        type: "stairs",
-        id: "stairs-down",
+        id: 8,
+        type: STATIC_OBJECT_TYPES.stairs.id,
         x: -112,
         y: 48,
-        actions: [{ kind: "navigate", roomId: "entrance" }],
+        actions: [{ kind: "navigate", roomId: 4 }],
       },
     ],
   },
   {
-    id: "basement",
+    id: 6,
     name: "Basement",
     cols: 10,
     rows: 10,
-    level: -1,
     floor: floor1,
     wall: wall1,
     objects: [
       {
-        type: "stairs",
-        id: "stairs-up",
+        id: 9,
+        type: STATIC_OBJECT_TYPES.stairs.id,
         x: -112,
         y: 48,
-        actions: [{ kind: "navigate", roomId: "living-room" }],
+        actions: [{ kind: "navigate", roomId: 3 }],
       },
     ],
   },
 ];
 
-export let rooms: RoomDef[] = resolveRooms(STATIC_ROOM_SPECS);
+export let rooms: RoomDef[] = resolveRooms(STATIC_ROOM_SPECS, STATIC_FLOORS);
 
 /** Swaps in server-fetched rooms — see this file's top-of-objectTypes comment. */
-export function setRooms(specs: RoomSpec[]): void {
-  rooms = resolveRooms(specs);
+export function setRooms(specs: RoomSpec[], floors: Floor[]): void {
+  rooms = resolveRooms(specs, floors);
 }
 
 /**
@@ -654,7 +683,7 @@ export function setRooms(specs: RoomSpec[]): void {
  * actually clicked, so this is a reasonable default rather than something
  * worth plumbing through the RPC protocol for.
  */
-export function findObjectForActivityLabel(label: string): { roomId: string; objectId: string } | undefined {
+export function findObjectForActivityLabel(label: string): { roomId: number; objectId: number } | undefined {
   for (const room of rooms) {
     for (const obj of room.objects) {
       for (const action of obj.actions ?? []) {
