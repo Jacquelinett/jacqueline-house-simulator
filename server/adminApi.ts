@@ -12,7 +12,7 @@ import {
   getObjectTypes,
   updateObjectType,
 } from "./objectTypes";
-import { createObject, createRoom, deleteObject, deleteRoom, getRoomSpecs, updateObject, updateRoom } from "./rooms";
+import { createObject, createRoom, deleteObject, deleteRoom, getRoomSpecs, updateObject, updateRoom, updateRoomConnections } from "./rooms";
 import { ObjectPlacement } from "../src/scene/rooms";
 import { createFloor, deleteFloor, getFloors, updateFloor } from "./floors";
 import { Floor } from "../src/scene/floors";
@@ -142,6 +142,11 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
       }
       if (parts.length === 4 && method === "DELETE") {
         deleteRoom(parts[3]);
+        return sendJson(res, 200, { ok: true }), true;
+      }
+      if (parts.length === 5 && parts[4] === "connections" && method === "PATCH") {
+        const { connectedTo } = await readJsonBody(req);
+        updateRoomConnections(parts[3], connectedTo);
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 5 && parts[4] === "objects" && method === "POST") {

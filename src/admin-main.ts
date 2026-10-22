@@ -1195,7 +1195,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
   async function addConnection(targetRoomId: string, direction: ConnectionDirection, gapTiles: number, lateralOffset: number): Promise<void> {
     const newConnectedTo = [...(room.connectedTo ?? []), { roomId: targetRoomId, direction, gapTiles, lateralOffset }];
     assertNoCycle(newConnectedTo);
-    await adminFetch(`/api/admin/rooms/${room.id}`, { method: "PATCH", body: JSON.stringify({ ...room, connectedTo: newConnectedTo }) });
+    await adminFetch(`/api/admin/rooms/${room.id}/connections`, { method: "PATCH", body: JSON.stringify({ connectedTo: newConnectedTo }) });
     room.connectedTo = newConnectedTo; // keep the local allRooms copy in sync, no refetch needed
     clearInlineError();
     renderTable();
@@ -1211,7 +1211,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
       return;
     }
     try {
-      await adminFetch(`/api/admin/rooms/${room.id}`, { method: "PATCH", body: JSON.stringify({ ...room, connectedTo: newConnectedTo }) });
+      await adminFetch(`/api/admin/rooms/${room.id}/connections`, { method: "PATCH", body: JSON.stringify({ connectedTo: newConnectedTo }) });
       room.connectedTo = newConnectedTo;
       clearInlineError();
       renderTable();
@@ -1225,7 +1225,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     const newConnectedTo = (room.connectedTo ?? []).filter((_, i) => i !== entryIndex);
     const payloadConnectedTo = newConnectedTo.length ? newConnectedTo : undefined;
     try {
-      await adminFetch(`/api/admin/rooms/${room.id}`, { method: "PATCH", body: JSON.stringify({ ...room, connectedTo: payloadConnectedTo }) });
+      await adminFetch(`/api/admin/rooms/${room.id}/connections`, { method: "PATCH", body: JSON.stringify({ connectedTo: payloadConnectedTo }) });
       room.connectedTo = payloadConnectedTo;
       clearInlineError();
       renderTable();
@@ -1530,6 +1530,14 @@ function buildTreeChartEl(node: FloorTreeNode): HTMLElement {
   return container;
 }
 
+// Every room/connection edit closes its modal via onSaved -> renderRooms(body),
+// which rebuilds the whole Rooms tab from scratch — including the sub-tab
+// bar, which used to always default back to the first tab (2F) regardless
+// of which floor you were actually working in. Remembered across those
+// rebuilds here so editing something on 1F doesn't keep bouncing you back
+// to 2F after every single save.
+let lastActiveRoomSubTab: string | null = null;
+
 async function renderRooms(body: HTMLElement) {
   body.textContent = "";
   const [rooms, objectTypes, floors] = await Promise.all([
@@ -1659,12 +1667,17 @@ async function renderRooms(body: HTMLElement) {
   }
 
   function showSubTab(id: string) {
+    lastActiveRoomSubTab = id;
     for (const tab of subTabs) {
       subPages[tab.id].classList.toggle("active", tab.id === id);
       subButtons[tab.id].classList.toggle("active", tab.id === id);
     }
   }
-  showSubTab(subTabs[0]?.id ?? "unorganized");
+  // Restore whichever tab was active before this rebuild, if it still
+  // exists (a floor could've been removed) — otherwise fall back to the
+  // first tab, same as before.
+  const initialSubTab = subTabs.find((t) => t.id === lastActiveRoomSubTab) ? lastActiveRoomSubTab! : (subTabs[0]?.id ?? "unorganized");
+  showSubTab(initialSubTab);
 
   const membership = computeFloorMembership(rooms, floors);
   for (const tab of subTabs) {

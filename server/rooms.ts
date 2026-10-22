@@ -178,6 +178,24 @@ export function updateRoom(spec: RoomSpecInput): void {
   tx();
 }
 
+/**
+ * Connections-only write — touches room_connections exclusively, never
+ * the rooms table's other columns. updateRoom() above always overwrites
+ * every column (it's a full upsert, not a partial update), so a caller
+ * that only means to change connectedTo but spreads a possibly-stale
+ * in-memory room snapshot into the request risks silently reverting
+ * whatever else changed server-side since that snapshot was taken (name,
+ * size, variant, wall overrides, ...) — this endpoint makes that bug
+ * impossible by construction rather than relying on every caller
+ * remembering to keep its snapshot fresh.
+ */
+export function updateRoomConnections(roomId: string, connectedTo: ConnectedToEntry[] | undefined): void {
+  const tx = db.transaction(() => {
+    replaceConnections(roomId, connectedTo);
+  });
+  tx();
+}
+
 export function deleteRoom(id: string): void {
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM objects WHERE room_id = ?").run(id);
