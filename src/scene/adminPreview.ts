@@ -126,6 +126,17 @@ export class AdminPreviewRenderer extends SceneRenderer {
     this.app.render();
   }
 
+  /** Same idea as moveObject, one level up: repositions an already-built room's own container directly — no scene rebuild — for the room-connections editor's gap/lateral-offset edits, which only ever change where an already-shown room sits, never which rooms are shown. roomContainers is SceneRenderer's own (protected) map, already populated at construction — no parallel tracking needed the way objects required a WeakMap workaround. */
+  public moveRoom(roomId: string, x: number, y: number): void {
+    const container = this.roomContainers.get(roomId);
+    if (!container) {
+      console.warn(`[adminPreview] instance #${this.instanceId} moveRoom("${roomId}") — no container registered for this id.`);
+      return;
+    }
+    container.position.set(x, y);
+    this.app.render();
+  }
+
   /**
    * Starts tile-placement mode on whichever room is currently viewed, for
    * one specific object (`objectId`): that object's existing sprite is

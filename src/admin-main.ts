@@ -1066,6 +1066,23 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
   previewContainer.id = "admin-preview-canvas";
   modal.body.appendChild(previewContainer);
 
+  const zoomRow = document.createElement("div");
+  zoomRow.className = "admin-form";
+  const zoomInput = document.createElement("input");
+  zoomInput.type = "range";
+  zoomInput.min = "0.5";
+  zoomInput.max = "2.5";
+  zoomInput.step = "0.1";
+  zoomInput.value = "1.5"; // matches AdminPreviewRenderer's own default scale
+  const zoomValueLabel = document.createElement("span");
+  zoomValueLabel.textContent = `${zoomInput.value}x`;
+  zoomRow.append(document.createTextNode("Zoom:"), zoomInput, zoomValueLabel);
+  modal.body.appendChild(zoomRow);
+  zoomInput.oninput = () => {
+    zoomValueLabel.textContent = `${zoomInput.value}x`;
+    currentRenderer?.setScale(Number(zoomInput.value));
+  };
+
   const hint = document.createElement("div");
   hint.className = "admin-hint";
   hint.textContent = "Each action below saves immediately — there's no separate Save step.";
@@ -1089,6 +1106,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
   modal.body.appendChild(table);
 
   let currentApp: Application | null = null;
+  let currentRenderer: AdminPreviewRenderer | null = null;
 
   /**
    * `room` plus every room connected to one of its edges, so the preview
@@ -1129,7 +1147,32 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
       currentApp = new Application();
       await currentApp.init({ width: 480, height: 380, background: 0x222228 });
       previewContainer.appendChild(currentApp.canvas);
-      new AdminPreviewRenderer(currentApp, () => {}, () => {});
+      currentRenderer = new AdminPreviewRenderer(currentApp, () => {}, () => {});
+      currentRenderer.setScale(Number(zoomInput.value));
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  /**
+   * Gap/lateral-offset edits only ever move an already-shown neighbor —
+   * the set of rooms in the scene doesn't change — so this recomputes
+   * positions via the engine's own resolveRooms() (cheap, pure math) and
+   * repositions each neighbor's existing container directly via
+   * moveRoom(), the same "never tear down the canvas for a position-only
+   * change" fix already applied to the room object editor's x/y fields
+   * (the "blip"). Connect/disconnect still go through the full
+   * renderPreview() rebuild — those actually add/remove a whole room's
+   * worth of containers, a genuinely structural change, same split as the
+   * object editor's type/enabled changes.
+   */
+  function repositionNeighbors() {
+    try {
+      const resolved = resolveRooms(roomSpecsFromWire(buildPreviewRoomSet()));
+      for (const r of resolved) {
+        if (r.id === room.id) continue; // room itself is the fixed local anchor, never moves
+        currentRenderer?.moveRoom(r.id, r.x, r.y);
+      }
     } catch (err) {
       showError(err);
     }
@@ -1178,7 +1221,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
       ownerRoom.connectedTo = newConnectedTo;
       clearInlineError();
       renderTable();
-      await renderPreview();
+      repositionNeighbors();
     } catch (err) {
       showError(err);
     }
