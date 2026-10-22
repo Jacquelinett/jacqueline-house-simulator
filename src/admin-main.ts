@@ -1280,8 +1280,18 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     }
   }
 
-  /** Cycle/missing-room check reusing the engine's own resolveRooms() — thrown errors surface as a blocking inline error instead of silently corrupting the layout. */
-  /** Cycle/missing-room check reusing the engine's own resolveRooms() — thrown errors surface as a blocking inline error instead of silently corrupting the layout. */
+  /**
+   * Missing-room check reusing the engine's own resolveRooms() against the
+   * FULL room list (not a subset) with this one candidate change — thrown
+   * errors surface as a blocking inline error instead of silently
+   * corrupting the layout. Despite the name, an actual connectedTo cycle
+   * is no longer an error the floor-tree algorithm can hit: it's a plain
+   * BFS over the undirected graph, so a cycle just means one of the
+   * redundant edges in the loop never gets used for position — same as
+   * any room with more than one connection already works. The only thing
+   * this can still catch is a connectedTo entry pointing at a room id that
+   * doesn't exist at all.
+   */
   function assertNoCycle(newConnectedTo: ConnectedToEntry[] | undefined) {
     const candidateRooms = allRooms.map((r) => (r.id === room.id ? { ...r, connectedTo: newConnectedTo } : r));
     resolveRooms(roomSpecsFromWire(candidateRooms), floors);

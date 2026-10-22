@@ -249,16 +249,24 @@ export function screenToGrid(x: number, y: number): { u: number; v: number } {
 export type ConnectionDirection = "behindLeft" | "behindRight" | "frontLeft" | "frontRight";
 
 /**
- * A room can connect to several other rooms (an array) — but "each room
- * only has to worry about what it connects to, not which room connects to
- * it": every entry here is always THIS room's own outgoing declaration,
- * never something read in reverse off another room's array. There's no
- * dual-ownership question to resolve (an earlier version had one — "did
- * this edge's fact come from my own array or the other room's?" — which
- * is exactly what made the whole thing hard to reason about). Only
- * entries[0] is ever used to compute this room's own position (see
- * resolveRooms()); further entries are additional declared attachments
- * that don't feed back into layout math.
+ * A room can connect to several other rooms (an array) — authored as
+ * "each room only has to worry about what it connects to, not which room
+ * connects to it": every entry here is always THIS room's own outgoing
+ * declaration when you're the one adding it through the admin tool, never
+ * something you read in reverse off another room's array.
+ *
+ * How this feeds into actual position differs by which resolveRooms()
+ * path is in play (see that function's own comment): the normal
+ * floor-tree path positions every reachable room relative to whichever
+ * neighbor discovered it in the BFS, using WHICHEVER of the two rooms'
+ * entries links them (inverting one declared by the other side — see
+ * positionNeighbor()) — so despite the "no dual-ownership" authoring
+ * rule, position resolution itself does end up reading entries from
+ * either direction, just resolved deterministically by tree-walk order
+ * rather than needing a human to reconcile the two sides. The `floors: []`
+ * fallback path (admin-tool previews only) is the one place the OLDER
+ * "only entries[0], walk up to whatever ancestor has none" rule still
+ * applies, since there's no floor/tree context to BFS from there.
  *
  * The admin tool enforces, globally across every room's entries (plus
  * every floor's base room — floors.ts), that a given target room id is
@@ -266,8 +274,7 @@ export type ConnectionDirection = "behindLeft" | "behindRight" | "frontLeft" | "
  * is removed from every "pick a room to connect to" picker until that
  * connection is removed. Not enforced by the engine itself (same
  * "hand-coordinated, no automatic validation" spirit as the rest of this
- * system) — resolveRooms() still only reports a cycle as an error rather
- * than assuming one can't happen.
+ * system).
  */
 export interface ConnectedToEntry {
   roomId: number;
@@ -316,8 +323,8 @@ export interface RoomSpec {
   // Placement relative to another room's edge, instead of an absolute pixel
   // offset — stays correct if either room's size changes. Unset/empty means
   // this room sits at the grid origin, i.e. "the anchor" (typically a
-  // floor's own base room — see floors.ts). See ConnectedToEntry for why
-  // only entries[0] affects this room's own position.
+  // floor's own base room — see floors.ts). See ConnectedToEntry's own
+  // comment for how this feeds into actual position.
   connectedTo?: ConnectedToEntry[];
 }
 
@@ -391,14 +398,13 @@ export function getUsedRoomIds(allRooms: RoomSpecWire[], baseRoomIds: number[], 
 }
 
 /**
- * Every connectedTo entry, from either room, as one undirected edge —
- * floor organization is "is this room attached to the floor's base room
- * at all," not "does this room's position specifically derive from it,"
- * so ALL entries count here (not just entries[0], which is the one
- * resolveRooms() treats specially for POSITION — a different concern
- * from which floor a room organizationally belongs to). A room with 3
- * connections is reachable via any of the 3, regardless of which one
- * happens to be entries[0].
+ * Every connectedTo entry, from either room, as one undirected edge — this
+ * is both "is this room attached to the floor's base room at all" (used
+ * by computeFloorMembership/buildFloorTree) and the actual graph
+ * resolveRooms()'s floor-tree path walks for position (see
+ * resolveViaFloorTree). A room with 3 connections is reachable via any of
+ * the 3, regardless of which one — unlike the `floors: []` fallback path,
+ * which only ever looks at a room's own entries[0].
  */
 function buildUndirectedAdjacency(allRooms: RoomConnectivity[]): Map<number, Set<number>> {
   const adj = new Map<number, Set<number>>();
@@ -481,34 +487,100 @@ export function buildFloorTree(baseRoomId: number, allRooms: RoomSpecWire[]): Fl
 }
 
 /**
+ * Core placement math shared by both resolution strategies below: given a
+ * known anchor origin and a connection's `direction` (which edge of the
+ * anchor it extends from — see ConnectionDirection's own comment), returns
+ * the origin of the room on the OTHER end. `cols`/`rows` are always the
+ * room being positioned's own size; `anchorCols`/`anchorRows` are the
+ * anchor's — behindLeft/behindRight shift by the positioned room's own
+ * size (clearing its own extent before reaching the anchor's edge),
+ * frontLeft/frontRight shift by the anchor's size instead (starting right
+ * where the anchor's extent ends). lateralOffset slides along whichever
+ * axis isn't being shifted to clear the gap; 0 reproduces flush-at-the-
+ * corner placement.
+ */
+function placeRelativeTo(
+  direction: ConnectionDirection,
+  anchor: { u: number; v: number },
+  cols: number,
+  rows: number,
+  anchorCols: number,
+  anchorRows: number,
+  gapTiles: number,
+  lateralOffset: number,
+): { u: number; v: number } {
+  switch (direction) {
+    case "behindLeft":
+      return { u: anchor.u - cols - gapTiles, v: anchor.v + lateralOffset };
+    case "behindRight":
+      return { u: anchor.u + lateralOffset, v: anchor.v - rows - gapTiles };
+    case "frontLeft":
+      return { u: anchor.u + lateralOffset, v: anchor.v + anchorRows + gapTiles };
+    case "frontRight":
+      return { u: anchor.u + anchorCols + gapTiles, v: anchor.v + lateralOffset };
+  }
+}
+
+/**
  * `floors` determines each room's vertical `level` — see RoomDef.level's
  * own comment on why this is derived rather than stored — and now ALSO
- * determines which rooms render at all: starting from each floor's base
- * room, only rooms reachable by following connectedTo edges (either
- * direction, same traversal as computeFloorMembership/buildFloorTree) ever
- * get resolved. A room with no path back to any floor's base room is
- * excluded entirely rather than defaulting to the origin and silently
- * overlapping whatever else is there — "not connected to anything, and not
- * a base room" means "not built into the house yet," not "render it at
- * (0,0) anyway."
+ * drives HOW rooms get positioned and which ones render at all: starting
+ * from each floor's base room (origin (0,0)), a BFS walks the same
+ * undirected connectedTo graph computeFloorMembership()/buildFloorTree()
+ * use — every room reachable this way gets positioned relative to
+ * whichever already-positioned room led to it in that walk, regardless of
+ * which of the two rooms actually DECLARED the connectedTo entry (see
+ * positionNeighbor() below for the self-vs-other-declared handling). A
+ * room with no path back to any floor's base room is excluded entirely
+ * rather than defaulting to the origin and silently overlapping whatever
+ * else is there — "not connected to anything, and not a base room" means
+ * "not built into the house yet," not "render it at (0,0) anyway."
  *
- * Passing `floors: []` opts out of this filtering (every spec resolves,
- * same as before this existed) — the admin tool's own isolated single/
- * subset-room previews rely on this: they intentionally show a room (or a
- * room plus its direct neighbors) stripped of the rest of the house, which
- * would otherwise make the whole subset unreachable from any REAL floor's
- * base room and get wrongly excluded.
+ * Passing `floors: []` opts out of all of this — every spec resolves via
+ * each room's own entries[0] chain (the pre-floor-tree algorithm,
+ * preserved below as resolveViaOwnChain()) — the admin tool's own
+ * isolated single/subset-room previews rely on this: they intentionally
+ * show a room (or a room plus synthesized neighbor entries built
+ * specifically for that chain-based algorithm) stripped of the rest of
+ * the house, which has no floor to BFS from in the first place.
  */
 export function resolveRooms(specs: RoomSpec[], floors: Floor[]): RoomDef[] {
   const membership = computeFloorMembership(specs, floors);
-  const included = floors.length === 0 ? specs : specs.filter((s) => membership.has(s.id));
+  const specById = new Map(specs.map((s) => [s.id, s]));
 
-  const specById = new Map(included.map((s) => [s.id, s]));
+  const origins = floors.length === 0 ? resolveViaOwnChain(specs, specById) : resolveViaFloorTree(specs, specById, floors);
+
+  const included = floors.length === 0 ? specs : specs.filter((s) => origins.has(s.id));
+
+  return included.map((spec) => {
+    const { u, v } = origins.get(spec.id)!;
+    const { x, y } = gridToScreen(u, v);
+    const level = membership.get(spec.id) ?? 0;
+    return {
+      ...spec,
+      x,
+      y: y - level * FLOOR_HEIGHT,
+      level,
+      width: (spec.cols + spec.rows) * (TILE_WIDTH / 2),
+      height: (spec.cols + spec.rows) * (TILE_HEIGHT / 2),
+      objects: spec.objects.map(resolveObjectPlacement),
+    };
+  });
+}
+
+/**
+ * Pre-floor-tree algorithm: each room resolves itself independently by
+ * walking up its OWN connectedTo[0] chain to whatever ancestor has none
+ * (defaulting that ancestor to the origin) — only ever used for `floors:
+ * []` now (see resolveRooms's own comment), so every spec given always
+ * gets *some* origin here, never excluded.
+ */
+function resolveViaOwnChain(specs: RoomSpec[], specById: Map<number, RoomSpec>): Map<number, { u: number; v: number }> {
   const origins = new Map<number, { u: number; v: number }>();
 
   // `visiting` detects a connectedTo cycle (A's primary entry chains back to
-  // A) — a fresh Set per top-level originOf() call below (default params are
-  // evaluated per call), not shared across different rooms' own traversals.
+  // A) — a fresh Set per top-level call below (default params are evaluated
+  // per call), not shared across different rooms' own traversals.
   function originOf(id: number, visiting: Set<number> = new Set()): { u: number; v: number } {
     const cached = origins.get(id);
     if (cached) return cached;
@@ -532,48 +604,98 @@ export function resolveRooms(specs: RoomSpec[], floors: Floor[]): RoomDef[] {
       }
       const anchor = originOf(roomId, visiting);
       const anchorSpec = specById.get(roomId)!;
-      switch (direction) {
-        // behindLeft/behindRight: this room's own far edge touches the
-        // anchor's u=0/v=0 edge, so the shift uses THIS room's own size
-        // (to clear its own extent before reaching the anchor's edge).
-        // The OTHER axis (the one not being shifted to clear the gap) is
-        // the "lateral" one — free to slide along the wall via lateralOffset,
-        // 0 reproducing the original flush-at-the-corner placement.
-        case "behindLeft":
-          origin = { u: anchor.u - spec.cols - gapTiles, v: anchor.v + lateralOffset };
-          break;
-        case "behindRight":
-          origin = { u: anchor.u + lateralOffset, v: anchor.v - spec.rows - gapTiles };
-          break;
-        // frontLeft/frontRight: this room starts right where the anchor's
-        // own extent ends, so the shift uses the ANCHOR's size instead.
-        case "frontLeft":
-          origin = { u: anchor.u + lateralOffset, v: anchor.v + anchorSpec.rows + gapTiles };
-          break;
-        case "frontRight":
-          origin = { u: anchor.u + anchorSpec.cols + gapTiles, v: anchor.v + lateralOffset };
-          break;
-      }
+      origin = placeRelativeTo(direction, anchor, spec.cols, spec.rows, anchorSpec.cols, anchorSpec.rows, gapTiles, lateralOffset);
     }
     origins.set(id, origin);
     visiting.delete(id);
     return origin;
   }
 
-  return included.map((spec) => {
-    const { u, v } = originOf(spec.id);
-    const { x, y } = gridToScreen(u, v);
-    const level = membership.get(spec.id) ?? 0;
-    return {
-      ...spec,
-      x,
-      y: y - level * FLOOR_HEIGHT,
-      level,
-      width: (spec.cols + spec.rows) * (TILE_WIDTH / 2),
-      height: (spec.cols + spec.rows) * (TILE_HEIGHT / 2),
-      objects: spec.objects.map(resolveObjectPlacement),
-    };
-  });
+  for (const spec of specs) originOf(spec.id);
+  return origins;
+}
+
+/**
+ * New floor-tree algorithm: BFS from each floor's base room over the
+ * undirected connectedTo graph, positioning each newly-discovered room
+ * relative to whichever already-positioned room discovered it —
+ * regardless of which of the two actually declared the connectedTo entry
+ * (see positionNeighbor()). A room already visited via an earlier floor's
+ * walk, or not reachable from any floor's base room at all, simply never
+ * gets an entry here — resolveRooms() filters the final output to exactly
+ * what's in this map.
+ */
+function resolveViaFloorTree(specs: RoomSpec[], specById: Map<number, RoomSpec>, floors: Floor[]): Map<number, { u: number; v: number }> {
+  const adj = buildUndirectedAdjacency(specs);
+  const origins = new Map<number, { u: number; v: number }>();
+
+  for (const floor of floors) {
+    if (origins.has(floor.baseRoomId)) continue; // already claimed by an earlier floor's walk
+    if (!specById.has(floor.baseRoomId)) continue; // floor points at a room that doesn't exist — nothing to walk from
+
+    origins.set(floor.baseRoomId, { u: 0, v: 0 });
+    const queue = [floor.baseRoomId];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const neighborId of adj.get(current) ?? []) {
+        if (origins.has(neighborId)) continue; // already visited via an earlier branch/floor
+        if (!specById.has(neighborId)) {
+          throw new Error(`[rooms] room "${current}" connects to unknown room "${neighborId}"`);
+        }
+        origins.set(neighborId, positionNeighbor(current, neighborId, specById, origins.get(current)!));
+        queue.push(neighborId);
+      }
+    }
+  }
+
+  return origins;
+}
+
+/**
+ * Positions `neighborId` relative to `knownId`'s already-resolved origin —
+ * the connectedTo entry linking them may live on EITHER room (a room only
+ * has to worry about what IT connects to when authoring, never which room
+ * connects to it, so by the time we're walking the tree both directions
+ * are equally valid data). Prefers the neighbor's own entry pointing at
+ * knownId when present (used directly, no inversion needed); otherwise
+ * inverts knownId's entry pointing at neighborId — flip the direction to
+ * its pair, negate lateralOffset, keep gapTiles, and swap which room's
+ * cols/rows plays which role in placeRelativeTo(). Derived algebraically
+ * from placeRelativeTo() itself (solve each case for the anchor's
+ * position given the far room's, confirmed to invert to exactly the
+ * paired direction with a sign-flipped lateralOffset in all four cases) —
+ * not just asserted.
+ */
+function positionNeighbor(
+  knownId: number,
+  neighborId: number,
+  specById: Map<number, RoomSpec>,
+  knownOrigin: { u: number; v: number },
+): { u: number; v: number } {
+  const neighborSpec = specById.get(neighborId)!;
+  const knownSpec = specById.get(knownId)!;
+
+  const direct = neighborSpec.connectedTo?.find((e) => e.roomId === knownId);
+  if (direct) {
+    return placeRelativeTo(direct.direction, knownOrigin, neighborSpec.cols, neighborSpec.rows, knownSpec.cols, knownSpec.rows, direct.gapTiles, direct.lateralOffset ?? 0);
+  }
+
+  const reverse = knownSpec.connectedTo?.find((e) => e.roomId === neighborId);
+  if (!reverse) {
+    // Shouldn't happen — buildUndirectedAdjacency only ever links two rooms
+    // when one of them has a real entry pointing at the other.
+    throw new Error(`[rooms] no connectedTo entry found between room "${knownId}" and room "${neighborId}"`);
+  }
+  return placeRelativeTo(
+    PAIR_DIRECTION[reverse.direction],
+    knownOrigin,
+    neighborSpec.cols,
+    neighborSpec.rows,
+    knownSpec.cols,
+    knownSpec.rows,
+    reverse.gapTiles,
+    -(reverse.lateralOffset ?? 0),
+  );
 }
 
 // Explicit numeric ids throughout (rooms 1-6, object placements 1-9
