@@ -775,6 +775,15 @@ async function main() {
   let lastSyncAt: Date | null = null;
   let lastSyncError: string | null = null;
 
+  // Coalesces overlapping refreshStatus() calls (e.g. a fast double-click
+  // on a scene object, each tap calling selectCharacter -> refreshStatus)
+  // into one in-flight request plus at most one queued follow-up, instead
+  // of letting every call fire its own full batch of fetches at val.town
+  // concurrently — which is exactly what was producing the intermittent
+  // 500s (and the resulting crash, see below) in the first place.
+  let refreshInFlight = false;
+  let refreshPending = false;
+
   function renderDashboards() {
     const input: DashboardRenderInput = {
       goals: latestGoals,
@@ -806,6 +815,14 @@ async function main() {
   }
 
   async function refreshStatus() {
+    // See refreshPending's own comment above — a call that arrives while
+    // one's already in flight just marks itself pending instead of firing
+    // a second full batch of fetches at val.town right on top of the first.
+    if (refreshInFlight) {
+      refreshPending = true;
+      return;
+    }
+    refreshInFlight = true;
     try {
       const q = characterQueryParam(selectedCharacter.id);
       const [statusRes, goalsRes, statsRes, periodStatsRes, yesterdayRes, streaksRes, allStatuses] = await Promise.all([
@@ -817,13 +834,31 @@ async function main() {
         fetch(`${STATUS_API_BASE}/api/streaks${q}`),
         fetchAllStatuses(characters),
       ]);
-      const data: StatusResponse = await statusRes.json();
-      latestGoals = await goalsRes.json();
-      latestStats = await statsRes.json();
-      latestPeriodStats = await periodStatsRes.json();
-      latestYesterdayMinutesByLabel = await yesterdayRes.json();
-      latestStreaksByGoalId = await streaksRes.json();
 
+      // Checked up front, before parsing/assigning ANY of them — val.town
+      // occasionally 500s one endpoint under concurrent load (which is what
+      // refreshPending above is for), and a 500's JSON body isn't the array/
+      // object shape its 200 response is. Previously a single bad response
+      // still got assigned into e.g. latestStats before the exception from
+      // a later .map() call surfaced, leaving that corrupted value in place
+      // for every subsequent tickElapsed() render (every second, forever,
+      // with no try/catch there) instead of just failing this one refresh.
+      for (const res of [statusRes, goalsRes, statsRes, periodStatsRes, yesterdayRes, streaksRes]) {
+        if (!res.ok) throw new Error(`${new URL(res.url).pathname} returned ${res.status}`);
+      }
+
+      const data: StatusResponse = await statusRes.json();
+      const goals = await goalsRes.json();
+      const stats = await statsRes.json();
+      const periodStats = await periodStatsRes.json();
+      const yesterdayMinutesByLabel = await yesterdayRes.json();
+      const streaksByGoalId = await streaksRes.json();
+
+      latestGoals = goals;
+      latestStats = stats;
+      latestPeriodStats = periodStats;
+      latestYesterdayMinutesByLabel = yesterdayMinutesByLabel;
+      latestStreaksByGoalId = streaksByGoalId;
       latestActivityLabel = data.activityLabel;
       latestTodayMinutesByLabel = data.todayMinutesByLabel;
       startedAtMs = data.startedAt ? new Date(data.startedAt).getTime() : null;
@@ -846,6 +881,12 @@ async function main() {
       renderCurrentMobile.showError("Couldn't load status");
       lastSyncError = (err as Error).message;
       renderSync();
+    } finally {
+      refreshInFlight = false;
+      if (refreshPending) {
+        refreshPending = false;
+        refreshStatus();
+      }
     }
   }
 
