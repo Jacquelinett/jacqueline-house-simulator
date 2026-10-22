@@ -52,15 +52,24 @@ const commands: Record<string, (characterId: string, args: any) => Promise<void>
   deleteMessage: (_characterId, { id }) => deleteMessage(id),
 };
 
+/**
+ * `viewingCharacterId` (optional, in args) lets a client ask about a
+ * DIFFERENT character than the one it authenticated as — used by the
+ * Dashboard panel's "peek at another character" feature (see
+ * House.ts/dashboard/panel.ts). No privacy boundary between household
+ * characters by design, so the server trusts this outright rather than
+ * checking it against anything; defaults to the caller's own id when
+ * absent, same as every query behaved before this existed.
+ */
 const queries: Record<string, (characterId: string, args: any) => Promise<unknown>> = {
-  getGoalProgressForDate: (characterId, { dateStr }) => getGoalProgressForDate(characterId, dateStr),
+  getGoalProgressForDate: (characterId, { dateStr, viewingCharacterId }) => getGoalProgressForDate(viewingCharacterId ?? characterId, dateStr),
   getTodayMinutesByLabel: (characterId) => getTodayMinutesByLabel(characterId),
-  getActivityStatsForDate: (characterId, { dateStr }) => getActivityStatsForDate(characterId, dateStr),
+  getActivityStatsForDate: (characterId, { dateStr, viewingCharacterId }) => getActivityStatsForDate(viewingCharacterId ?? characterId, dateStr),
   getActivityStats: (characterId) => getActivityStats(characterId),
   computePeriodStats: (characterId, { startIso, endIso }) => computePeriodStats(characterId, new Date(startIso), new Date(endIso)),
   getTodayStreaksByGoalId: async (characterId) => getTodayStreaksByGoalId(characterId),
   getCurrentActivity: async (characterId) => getCurrentActivity(bucketIdFor(characterId)),
-  getGoalHistory: async (characterId) => getAllHistory(characterId),
+  getGoalHistory: async (characterId, { viewingCharacterId }) => getAllHistory(viewingCharacterId ?? characterId),
   historyForGoal: async (characterId, { goalId }) => historyForGoal(characterId, goalId),
   getWorkoutsForDate: async (characterId, { dateStr }) => getWorkoutsForDate(characterId, dateStr),
   fetchMessages: () => fetchMessages(),
@@ -99,6 +108,42 @@ function broadcastToCharacter(characterId: string, key: string, data: unknown) {
   }
 }
 
+/** Sends to every connected client regardless of which character they are — used for data every character's own client needs to see about every OTHER character too (currently just allStatuses). */
+function broadcastToAll(key: string, data: unknown) {
+  const message = JSON.stringify({ type: "state", key, data });
+  for (const client of clients) {
+    if (client.readyState === WebSocket.OPEN) client.send(message);
+  }
+}
+
+export interface AllStatusesEntry {
+  characterName: string;
+  activityLabel: string;
+  startedAt: string;
+}
+
+/**
+ * Every character CURRENTLY running something, keyed by characterId —
+ * absent means idle, same "no entry rather than a null placeholder" shape
+ * as the rest of this codebase. This is what lets Jacqueline's own client
+ * show that Kevin is doing something (scene overlay, click attribution —
+ * see House.ts) without her ever being scoped to his own `status`
+ * broadcast, which stays per-character/private to its own connections.
+ */
+function computeAllStatuses(): Record<string, AllStatusesEntry> {
+  const result: Record<string, AllStatusesEntry> = {};
+  for (const character of listCharacters()) {
+    const current = getCurrentActivity(character.awBucketId);
+    if (!current) continue;
+    result[character.id] = { characterName: character.name, activityLabel: current.label, startedAt: current.startedAt.toISOString() };
+  }
+  return result;
+}
+
+function broadcastAllStatuses(): void {
+  broadcastToAll("allStatuses", computeAllStatuses());
+}
+
 /**
  * Auto-stops `character`'s currently-running activity if the room/object
  * that was tracking it has since been deleted or reconfigured out from
@@ -121,6 +166,7 @@ async function stopIfOrphaned(character: Character): Promise<void> {
   console.warn(`[rpc] "${current.label}" (tracked by ${character.name}) no longer has a live object — stopping and defaulting to idle`);
   await stopActivity(character.awBucketId);
   broadcastToCharacter(character.id, "status", currentStatus(character.awBucketId));
+  broadcastAllStatuses();
   // val.town/the public viewer only ever show Jacqueline for now — see
   // server/broadcast.ts's own comment on why this check is here too.
   if (character.name === "Jacqueline") {
@@ -192,6 +238,9 @@ export function setupRpc(wss: WebSocketServer): void {
     ws.send(JSON.stringify({ type: "state", key: "goals", data: getGoals(character.id) }));
     ws.send(JSON.stringify({ type: "state", key: "todos", data: getTodos(character.id) }));
     ws.send(JSON.stringify({ type: "state", key: "status", data: currentStatus(character.awBucketId) }));
+    // Every character's current activity, not just this connection's own
+    // — see computeAllStatuses's own comment.
+    ws.send(JSON.stringify({ type: "state", key: "allStatuses", data: computeAllStatuses() }));
     // Global registry, same for every character (see this module's own
     // comment on character scoping) — sent once on connect; an admin-tool
     // edit takes effect on the next reconnect, not live mid-session.
@@ -236,6 +285,7 @@ export function setupRpc(wss: WebSocketServer): void {
           await handler(character.id, msg.args ?? {});
           if (msg.name === "startActivity" || msg.name === "stopActivity") {
             broadcastToCharacter(character.id, "status", currentStatus(character.awBucketId));
+            broadcastAllStatuses();
             // val.town/the public viewer only ever show one character
             // (Jacqueline) for now — see server/broadcast.ts's own comment.
             if (character.name === "Jacqueline") {

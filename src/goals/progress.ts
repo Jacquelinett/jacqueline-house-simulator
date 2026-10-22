@@ -10,6 +10,7 @@ export interface GoalProgress {
   goals: Goal[];
 }
 
-export function getGoalProgressForDate(dateStr: string): Promise<GoalProgress[]> {
-  return sendQuery<GoalProgress[]>("getGoalProgressForDate", { dateStr });
+/** `viewingCharacterId` (optional) fetches another character's goal progress for this date instead of your own — see dashboard/panel.ts's "peek at another character" feature. */
+export function getGoalProgressForDate(dateStr: string, viewingCharacterId?: string): Promise<GoalProgress[]> {
+  return sendQuery<GoalProgress[]>("getGoalProgressForDate", { dateStr, viewingCharacterId });
 }

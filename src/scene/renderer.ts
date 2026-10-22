@@ -309,9 +309,10 @@ export class SceneRenderer {
   /** Override to wire up object click-to-act — the base renderer has none (used by the read-only public viewer). */
   protected attachObjectInteraction(_container: Container, _roomId: number, _obj: ObjectDef): void {}
 
-  protected updateActiveOverlays(current: { label: string } | null) {
+  /** `runningLabels` is every label CURRENTLY running, across every character, not just one — an object's overlay shows as long as ANY of them matches (there's no separate "Jacqueline-shaped" vs "Kevin-shaped" sprite, just one overlay per object either way; see House.ts's applyAllStatuses). */
+  protected updateActiveOverlays(runningLabels: Set<string>) {
     for (const { labels, sprite } of this.activeOverlays) {
-      sprite.visible = current !== null && labels.includes(current.label);
+      sprite.visible = labels.some((l) => runningLabels.has(l));
     }
   }
 

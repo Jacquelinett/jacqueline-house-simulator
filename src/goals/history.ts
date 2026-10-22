@@ -15,9 +15,15 @@ export function historyForGoal(goalId: string): Promise<GoalHistoryEntry[]> {
   return sendQuery<GoalHistoryEntry[]>("historyForGoal", { goalId });
 }
 
-/** The full log — only for the Statistic modal's All-Time tab, which genuinely needs every goal's history. Everything else should prefer historyForGoal(). */
-export function getGoalHistory(): Promise<GoalHistoryEntry[]> {
-  return sendQuery<GoalHistoryEntry[]>("getGoalHistory");
+/**
+ * The full log — mainly for the Statistic modal's All-Time tab, which
+ * genuinely needs every goal's history; everything else should prefer
+ * historyForGoal(). Also used by dashboard/panel.ts for streak text when
+ * peeking at another character's dashboard, hence the optional
+ * `viewingCharacterId` override (see that file's own comment).
+ */
+export function getGoalHistory(viewingCharacterId?: string): Promise<GoalHistoryEntry[]> {
+  return sendQuery<GoalHistoryEntry[]>("getGoalHistory", { viewingCharacterId });
 }
 
 export interface GoalHistorySummary {

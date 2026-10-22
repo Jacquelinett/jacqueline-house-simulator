@@ -26,6 +26,7 @@ export interface DateActivityStat {
   minutes: number;
 }
 
-export function getActivityStatsForDate(dateStr: string): Promise<DateActivityStat[]> {
-  return sendQuery<DateActivityStat[]>("getActivityStatsForDate", { dateStr });
+/** `viewingCharacterId` (optional) fetches another character's activity for this date instead of your own — see dashboard/panel.ts's "peek at another character" feature. */
+export function getActivityStatsForDate(dateStr: string, viewingCharacterId?: string): Promise<DateActivityStat[]> {
+  return sendQuery<DateActivityStat[]>("getActivityStatsForDate", { dateStr, viewingCharacterId });
 }

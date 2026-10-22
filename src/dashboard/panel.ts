@@ -7,6 +7,7 @@ import { describeStreak, getGoalHistory } from "../goals/history";
 import { localDateString, parseDateString } from "../goals/recurrence";
 import { formatMinutes } from "../goals/format";
 import { buildDashboardSections, renderActivityList, renderGoalList } from "./render";
+import { getViewingCharacter, onViewingCharacterChange } from "./viewingCharacter";
 
 const REFRESH_INTERVAL_MS = 30_000;
 
@@ -44,7 +45,19 @@ export function setupDashboardContent(container: HTMLElement, providedDateInput?
     return dateInput.value === localDateString(new Date());
   }
 
+  /**
+   * While peeking at another character's dashboard (see
+   * dashboard/viewingCharacter.ts — set by House.ts when you single-click
+   * an object they're using), the headings name them instead of "Today"/
+   * the picked date, so it's never ambiguous whose data is showing.
+   */
   function updateHeadings() {
+    const viewing = getViewingCharacter();
+    if (viewing) {
+      goalHeading.textContent = `${viewing.name}'s Goals`;
+      activityHeading.textContent = `${viewing.name}'s Activity`;
+      return;
+    }
     if (isViewingToday()) {
       goalHeading.textContent = "Today's Goals";
       activityHeading.textContent = "Today's Activity";
@@ -56,8 +69,9 @@ export function setupDashboardContent(container: HTMLElement, providedDateInput?
   }
 
   async function renderGoals() {
-    const progress = await getGoalProgressForDate(dateInput.value);
-    const history = await getGoalHistory();
+    const viewingId = getViewingCharacter()?.id;
+    const progress = await getGoalProgressForDate(dateInput.value, viewingId);
+    const history = await getGoalHistory(viewingId);
     renderGoalList(
       goalList,
       progress.map((p) => ({
@@ -75,7 +89,8 @@ export function setupDashboardContent(container: HTMLElement, providedDateInput?
   }
 
   async function renderActivity() {
-    const stats = await getActivityStatsForDate(dateInput.value).catch((err) => {
+    const viewingId = getViewingCharacter()?.id;
+    const stats = await getActivityStatsForDate(dateInput.value, viewingId).catch((err) => {
       console.error("[dashboard] failed to load activity for date", err);
       return null;
     });
@@ -94,6 +109,7 @@ export function setupDashboardContent(container: HTMLElement, providedDateInput?
 
   dateInput.onchange = renderAll;
   onGoalsChange(renderGoals);
+  onViewingCharacterChange(renderAll);
   renderAll();
 
   // A past/future day's data never changes once rendered — only keep

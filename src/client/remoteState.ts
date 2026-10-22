@@ -179,9 +179,21 @@ export interface RemoteCharacter {
   name: string;
 }
 
+export interface AllStatusesEntry {
+  characterName: string;
+  activityLabel: string;
+  startedAt: string;
+}
+
 const goalsStore = createRemoteStore<Goal[]>([]);
 const todosStore = createRemoteStore<Todo[]>([]);
 const statusStore = createRemoteStore<RemoteStatus>({ activityLabel: null, startedAt: null });
+// Every character CURRENTLY running something, keyed by characterId, not
+// just this connection's own — see server/rpc.ts's computeAllStatuses for
+// why this is separate from statusStore above (which stays private to the
+// connecting character's own clients). Lets House.ts show that another
+// character is doing something without being scoped to their broadcast.
+const allStatusesStore = createRemoteStore<Record<string, AllStatusesEntry>>({});
 const settingsStore = createRemoteStore<DeviceSettings>(DEFAULT_DEVICE_SETTINGS);
 // Which character this connection's secret authenticated as — replaces the
 // old hardcoded CURRENT_USER_NAME for any surface that needs to work for
@@ -202,6 +214,8 @@ export const getTodos = todosStore.get;
 export const onTodosChange = todosStore.onChange;
 export const getRemoteStatus = statusStore.get;
 export const onRemoteStatusChange = statusStore.onChange;
+export const getAllStatuses = allStatusesStore.get;
+export const onAllStatusesChange = allStatusesStore.onChange;
 export const getDeviceSettings = settingsStore.get;
 export const onDeviceSettingsChange = settingsStore.onChange;
 export const getCharacter = characterStore.get;
@@ -215,6 +229,7 @@ const storesByKey: Record<string, { _set(data: unknown): void }> = {
   goals: goalsStore,
   todos: todosStore,
   status: statusStore,
+  allStatuses: allStatusesStore,
   settings: settingsStore,
   character: characterStore,
   activities: activitiesStore,

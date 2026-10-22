@@ -22,11 +22,13 @@ import { roomSpecsFromWire, setObjectTypes, setRooms } from "./scene/rooms";
 import { setFloors } from "./scene/floors";
 import {
   connectRemoteState,
+  getAllStatuses,
   getRemoteActivities,
   getRemoteFloors,
   getRemoteObjectTypes,
   getRemoteRoomSpecs,
   getRemoteStatus,
+  onAllStatusesChange,
   onRemoteStatusChange,
 } from "./client/remoteState";
 
@@ -199,6 +201,10 @@ async function main() {
   // from a different device, see House.applyRemoteStatus's own comment.
   house.applyRemoteStatus(getRemoteStatus());
   onRemoteStatusChange(() => house.applyRemoteStatus(getRemoteStatus()));
+  // Every character's overlay visibility, mine included — separate from
+  // the camera-following broadcast above, see House.applyAllStatuses.
+  house.applyAllStatuses(getAllStatuses());
+  onAllStatusesChange(() => house.applyAllStatuses(getAllStatuses()));
 
   setupModals();
   setupMobileUI(house);

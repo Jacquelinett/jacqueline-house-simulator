@@ -21,7 +21,7 @@ export class HouseViewer extends SceneRenderer {
 
   /** Highlights whichever activity is currently running and follows its object. */
   public showActivity(current: { label: string } | null) {
-    this.updateActiveOverlays(current);
+    this.updateActiveOverlays(current ? new Set([current.label]) : new Set());
     if (current) {
       const found = findObjectForActivityLabel(current.label);
       if (found) this.setViewedRoom(found.roomId, found.objectId);
