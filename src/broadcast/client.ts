@@ -53,19 +53,29 @@ async function putJson(url: string, body: unknown): Promise<void> {
   }
 }
 
-/** No-ops quietly if broadcasting isn't configured yet; a configured-but-failing push updates `getBroadcastHealth()` instead of disrupting the app. */
-async function pushWithHealth(path: string, body: unknown, errorContext: string): Promise<void> {
+/**
+ * No-ops quietly if broadcasting isn't configured yet; a configured-but-
+ * failing push updates `getBroadcastHealth()` instead of disrupting the
+ * app. Returns whether the push actually succeeded — most callers ignore
+ * it (same fire-and-forget usage as before), but a caller that only wants
+ * to redo expensive local work once a push has actually landed (e.g.
+ * pushYesterdayStats below) needs to know, rather than assuming success.
+ */
+async function pushWithHealth(path: string, body: unknown, errorContext: string): Promise<boolean> {
   const { broadcastUrl } = getSettings();
-  if (!broadcastUrl) return;
+  if (!broadcastUrl) return false;
 
   try {
     await putJson(`${broadcastUrl}${path}`, body);
     health = { lastSuccessAt: new Date(), lastError: null };
+    notifyHealth();
+    return true;
   } catch (err) {
     console.error(`[broadcast] failed to push ${errorContext}`, err);
     health = { ...health, lastError: (err as Error).message };
+    notifyHealth();
+    return false;
   }
-  notifyHealth();
 }
 
 export async function pushStatus(): Promise<void> {
@@ -107,10 +117,14 @@ export async function pushStats(): Promise<void> {
  * Pushes the 4 fixed This Week/Last Week/This Month/Last Month buckets —
  * the viewer has no AW access to run its own arbitrary-range queries, so
  * instead of a date picker it gets whatever was last computed here, picked
- * from this fixed list. Same slow cadence as pushStats (called alongside
- * it in main.ts) rather than a separate once-a-day scheduler — reusing the
- * existing hourly timer is simpler than tracking day boundaries, and it
- * keeps the "this week"/"this month" buckets fresher through the day too.
+ * from this fixed list. Rides the same hourly timer as pushStats (called
+ * alongside it in main.ts) rather than a separate once-a-day scheduler —
+ * simpler than tracking day boundaries here too, and This Week/This Month
+ * genuinely want that cadence since they change through the day.
+ * computeFixedPeriodStats() itself skips redoing the AW query for Last
+ * Week/Last Month once nothing could have changed, so the "every hour"
+ * here is about keeping the push (and This Week/This Month) fresh, not
+ * about redundantly recomputing the other two.
  */
 export async function pushPeriodStats(): Promise<void> {
   await pushWithHealth("/api/period-stats", await computeFixedPeriodStats(), "period stats");
@@ -125,12 +139,26 @@ export async function pushPeriodStats(): Promise<void> {
  * (already used by the desktop Dashboard's own date picker) rather than
  * writing a new aggregation — just reshaped into a plain label->minutes
  * map, the same shape /api/status already pushes for today.
+ *
+ * Yesterday never changes once the day is over, so re-querying AW for it
+ * every hour (this rides the same timer as pushStats/pushPeriodStats) is
+ * pure waste — this only actually does the query+push once per calendar
+ * day, tracked by which "today" it last ran for. Only advances that
+ * tracker on a successful push, so a transient val.town outage still
+ * retries next hour instead of being silently skipped for the rest of the
+ * day.
  */
+let yesterdayPushedForToday: string | null = null;
+
 export async function pushYesterdayStats(): Promise<void> {
-  const yesterday = addDaysToDateString(localDateString(new Date()), -1);
+  const todayStr = localDateString(new Date());
+  if (yesterdayPushedForToday === todayStr) return;
+
+  const yesterday = addDaysToDateString(todayStr, -1);
   const stats = await getActivityStatsForDate(yesterday);
   const minutesByLabel = Object.fromEntries(stats.map((s) => [s.label, s.minutes]));
-  await pushWithHealth("/api/yesterday", minutesByLabel, "yesterday stats");
+  const ok = await pushWithHealth("/api/yesterday", minutesByLabel, "yesterday stats");
+  if (ok) yesterdayPushedForToday = todayStr;
 }
 
 export async function fetchMessages(): Promise<InboxMessage[]> {
