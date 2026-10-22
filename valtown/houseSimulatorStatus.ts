@@ -16,6 +16,15 @@
  * carries `characterId`/`characterName` in the body (House Simulator
  * resolves both server-side before pushing).
  *
+ *   GET  /api/all -> public JSON: { characters, status, goals, stats, periodStats, yesterday, streaks }
+ *                    — everything above, for every published character at once, each of the latter six
+ *                    keyed by character id. This is the ONLY endpoint the viewer itself calls on a
+ *                    refresh (startup, the poll interval, or its manual refresh button) — one request
+ *                    gets it everything, so switching which character it's showing is a pure
+ *                    client-side re-render against already-fetched data, never a new fetch. The
+ *                    individual per-character GET endpoints below still exist (harmless to leave, and
+ *                    still handy for debugging one character's blob directly), but nothing in this
+ *                    repo calls them anymore.
  *   GET  /api/characters -> public JSON: [{id, name}, ...] for every character ever published — lets
  *                            the viewer show a picker instead of hardcoding whose data to show
  *   GET  /api/status?character=<id>    -> public JSON: what that character is currently running + today's
@@ -175,6 +184,55 @@ function characterIdFrom(url: URL): string | null {
 async function handleGetCharacters(): Promise<Response> {
   const result = await sqlite.execute("select character_id, character_name from status order by character_name");
   return Response.json(result.rows.map((r: any) => ({ id: r.character_id, name: r.character_name })));
+}
+
+/**
+ * Everything the viewer needs, for every published character, in one
+ * request — see this file's own top-of-file doc comment on /api/all for
+ * why. `status` doubles as the character directory (same query
+ * handleGetCharacters runs): any character with a status row has been
+ * published, and every other table is keyed the same way, so a character
+ * with no row yet in e.g. goals_blob just gets an empty/default value
+ * rather than being left out of that map entirely.
+ */
+async function handleGetAll(): Promise<Response> {
+  const [statusRows, goalsRows, statsRows, periodStatsRows, yesterdayRows, streaksRows] = await Promise.all([
+    sqlite.execute("select * from status"),
+    sqlite.execute("select character_id, goals_json from goals_blob"),
+    sqlite.execute("select character_id, stats_json from stats_blob"),
+    sqlite.execute("select character_id, period_stats_json from period_stats_blob"),
+    sqlite.execute("select character_id, minutes_json from yesterday_blob"),
+    sqlite.execute("select character_id, streaks_json from streaks_blob"),
+  ]);
+
+  const characters: { id: string; name: string }[] = [];
+  const status: Record<string, { activityLabel: string | null; startedAt: string | null; todayMinutesByLabel: Record<string, number> }> = {};
+  for (const r of statusRows.rows as any[]) {
+    characters.push({ id: r.character_id, name: r.character_name });
+    status[r.character_id] = {
+      activityLabel: r.activity_label,
+      startedAt: r.started_at,
+      todayMinutesByLabel: r.today_minutes_json ? JSON.parse(r.today_minutes_json) : {},
+    };
+  }
+  characters.sort((a, b) => a.name.localeCompare(b.name));
+
+  const goals: Record<string, unknown> = {};
+  for (const r of goalsRows.rows as any[]) goals[r.character_id] = JSON.parse(r.goals_json);
+
+  const stats: Record<string, unknown> = {};
+  for (const r of statsRows.rows as any[]) stats[r.character_id] = JSON.parse(r.stats_json);
+
+  const periodStats: Record<string, unknown> = {};
+  for (const r of periodStatsRows.rows as any[]) periodStats[r.character_id] = JSON.parse(r.period_stats_json);
+
+  const yesterday: Record<string, unknown> = {};
+  for (const r of yesterdayRows.rows as any[]) yesterday[r.character_id] = JSON.parse(r.minutes_json);
+
+  const streaks: Record<string, unknown> = {};
+  for (const r of streaksRows.rows as any[]) streaks[r.character_id] = JSON.parse(r.streaks_json);
+
+  return Response.json({ characters, status, goals, stats, periodStats, yesterday, streaks });
 }
 
 async function handleGetStatus(characterId: string | null): Promise<Response> {
@@ -454,6 +512,10 @@ export default async function (req: Request): Promise<Response> {
 
   if (method === "GET" && pathname === "/") {
     return Response.json({ ok: true, service: "House Simulator status API" });
+  }
+
+  if (method === "GET" && pathname === "/api/all") {
+    return handleGetAll();
   }
 
   if (method === "GET" && pathname === "/api/characters") {

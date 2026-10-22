@@ -60,7 +60,7 @@ function saveViewerSettings(settings: ViewerSettings) {
   localStorage.setItem(VIEWER_SETTINGS_KEY, JSON.stringify(settings));
 }
 
-interface StatusResponse {
+interface CharacterStatus {
   activityLabel: string | null;
   startedAt: string | null;
   todayMinutesByLabel: Record<string, number>;
@@ -69,6 +69,29 @@ interface StatusResponse {
 interface CharacterEntry {
   id: string;
   name: string;
+}
+
+/**
+ * The /api/all response — every published character's directory entry AND
+ * all six of their data blobs, in one shot, each of the latter keyed by
+ * character id. This replaced one GET per endpoint per character (status,
+ * goals, stats, period-stats, yesterday, streaks, times however many
+ * characters are published): a fast double-click used to fire two
+ * overlapping batches of ~7 concurrent requests at val.town, which is what
+ * produced the intermittent 500s fixed earlier. With one request for
+ * everything, switching which character is being viewed (selectCharacter
+ * below) is a pure client-side re-render against whatever's already in
+ * `latestAll` — no network call at all — so there's no longer a
+ * per-character/per-click request to race in the first place.
+ */
+interface AllDataResponse {
+  characters: CharacterEntry[];
+  status: Record<string, CharacterStatus>;
+  goals: Record<string, Goal[]>;
+  stats: Record<string, ActivityStat[]>;
+  periodStats: Record<string, FixedPeriodStats[]>;
+  yesterday: Record<string, Record<string, number>>;
+  streaks: Record<string, Record<string, number>>;
 }
 
 const SELECTED_CHARACTER_KEY = "houseSimulatorViewerCharacterId";
@@ -89,14 +112,14 @@ function saveSelectedCharacterId(id: string) {
   }
 }
 
-/** Empty list (rather than throwing) when the endpoint 404s — the live val.town deployment may not have been re-pasted with per-character support yet, same "fall back, don't break the page" reasoning as loadHouseLayout's catch below. */
-async function fetchCharacters(): Promise<CharacterEntry[]> {
+/** null (rather than throwing) on a network failure or non-200 — the live val.town deployment may not have been re-pasted with /api/all support yet, same "fall back, don't break the page" reasoning as loadHouseLayout's catch below. */
+async function fetchAll(): Promise<AllDataResponse | null> {
   try {
-    const res = await fetch(`${STATUS_API_BASE}/api/characters`);
-    if (!res.ok) return [];
-    return (await res.json()) as CharacterEntry[];
+    const res = await fetch(`${STATUS_API_BASE}/api/all`);
+    if (!res.ok) return null;
+    return (await res.json()) as AllDataResponse;
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -106,36 +129,6 @@ function pickInitialCharacter(characters: CharacterEntry[]): CharacterEntry | nu
   const savedId = loadSelectedCharacterId();
   const saved = savedId ? characters.find((c) => c.id === savedId) : undefined;
   return saved ?? characters.find((c) => c.name === CURRENT_USER_NAME) ?? characters[0];
-}
-
-/** Appended to every status/goals/stats/... fetch below. Empty string (not a "?character=" with a blank value) when there's no known character id, so a not-yet-re-pasted val.town deployment keeps working exactly as it did before multi-character support existed. */
-function characterQueryParam(id: string): string {
-  return id ? `?character=${encodeURIComponent(id)}` : "";
-}
-
-/**
- * Every known character's CURRENT activity, keyed by character id — feeds
- * HouseViewer.applyAllStatuses (the "see everyone in the scene" overlay,
- * same idea as the Tauri app's own allStatuses broadcast, just polled from
- * val.town instead of pushed over a WebSocket). Best-effort per character:
- * one character's status fetch failing just leaves them out of the map
- * rather than blanking out everyone else's overlay too.
- */
-async function fetchAllStatuses(chars: CharacterEntry[]): Promise<Map<string, ViewerCharacterStatus>> {
-  const result = new Map<string, ViewerCharacterStatus>();
-  await Promise.all(
-    chars.map(async (c) => {
-      try {
-        const res = await fetch(`${STATUS_API_BASE}/api/status${characterQueryParam(c.id)}`);
-        if (!res.ok) return;
-        const data = (await res.json()) as StatusResponse;
-        if (data.activityLabel) result.set(c.id, { characterId: c.id, characterName: c.name, activityLabel: data.activityLabel });
-      } catch {
-        // ignore — best-effort, see doc comment above
-      }
-    }),
-  );
-  return result;
 }
 
 /** Builds the "current activity" line (+ optional title above it, for the mobile Home tab, which has no panel header to show one) — shared by the Jacqueline panel and its mobile equivalent, which otherwise hand-built this same markup twice. On mobile the title is a clickable link-styled button (opens the character picker); the desktop panel doesn't pass showTitle at all, since its title lives in buildFloatingPanel's own header instead (kept in sync separately via setTitle). */
@@ -606,12 +599,12 @@ async function main() {
   // synchronously at call time, not reactively.
   await loadHouseLayout();
 
-  // Who the viewer can show, and which one was last picked (if any) — the
-  // sentinel empty-id entry is what every status/goals/stats/... fetch
-  // below falls back to when there's no character directory yet (an
-  // un-re-pasted val.town deployment), so those fetches hit the exact same
-  // URLs they always did rather than breaking.
-  const characters = await fetchCharacters();
+  // One combined fetch, used both to seed the character directory here
+  // AND (via latestAll below) as this session's first render — no separate
+  // "get the character list" request followed later by a "get everything"
+  // request for the one actually selected.
+  const initialAll = await fetchAll();
+  const characters = initialAll?.characters ?? [];
   let selectedCharacter: CharacterEntry = pickInitialCharacter(characters) ?? { id: "", name: CURRENT_USER_NAME };
   // Both reassigned once selectCharacter exists, below — forward-declared
   // here since the picker modal/scene that call them are built first.
@@ -798,6 +791,11 @@ async function main() {
     }
   });
 
+  // The one payload a refresh actually fetches now; everything below is
+  // just the selected character's own slice of it, recomputed by
+  // renderForSelectedCharacter (on a real refresh OR a pure character
+  // switch, see selectCharacter) rather than fetched separately per field.
+  let latestAll: AllDataResponse | null = initialAll;
   let latestStats: ActivityStat[] = [];
   let latestPeriodStats: FixedPeriodStats[] = [];
   let startedAtMs: number | null = null;
@@ -809,12 +807,13 @@ async function main() {
   let lastSyncAt: Date | null = null;
   let lastSyncError: string | null = null;
 
-  // Coalesces overlapping refreshStatus() calls (e.g. a fast double-click
-  // on a scene object, each tap calling selectCharacter -> refreshStatus)
-  // into one in-flight request plus at most one queued follow-up, instead
-  // of letting every call fire its own full batch of fetches at val.town
-  // concurrently — which is exactly what was producing the intermittent
-  // 500s (and the resulting crash, see below) in the first place.
+  // Coalesces overlapping refreshStatus() calls (e.g. mashing the manual
+  // refresh button) into one in-flight request plus at most one queued
+  // follow-up, instead of letting every call fire its own fetch at
+  // val.town concurrently — which is what used to produce intermittent
+  // 500s back when a character switch also triggered its own full fetch
+  // (it no longer does, see selectCharacter, but this guard is cheap
+  // insurance regardless of how refreshStatus ends up getting called).
   let refreshInFlight = false;
   let refreshPending = false;
 
@@ -848,10 +847,50 @@ async function main() {
     renderSyncMobile(vt);
   }
 
+  /**
+   * Re-renders everything from whatever's already in `latestAll` — the
+   * selected character's own slice of each field, plus the scene overlay
+   * built from EVERY character's status (same as before, just read
+   * straight out of the one combined payload instead of a separate
+   * fetchAllStatuses call). Called after a real fetch lands (refreshStatus)
+   * AND on a pure character switch (selectCharacter) — switching no longer
+   * needs its own network round-trip at all, since the switch is just
+   * picking a different key out of data that's already here.
+   */
+  function renderForSelectedCharacter() {
+    const data = latestAll;
+    const status = data?.status[selectedCharacter.id];
+    latestGoals = data?.goals[selectedCharacter.id] ?? [];
+    latestStats = data?.stats[selectedCharacter.id] ?? [];
+    latestPeriodStats = data?.periodStats[selectedCharacter.id] ?? [];
+    latestYesterdayMinutesByLabel = data?.yesterday[selectedCharacter.id] ?? {};
+    latestStreaksByGoalId = data?.streaks[selectedCharacter.id] ?? {};
+    latestActivityLabel = status?.activityLabel ?? null;
+    latestTodayMinutesByLabel = status?.todayMinutesByLabel ?? {};
+    startedAtMs = status?.startedAt ? new Date(status.startedAt).getTime() : null;
+
+    renderCurrent();
+    // focusActivity pans to the SELECTED character's own activity (if
+    // any); applyAllStatuses lights up every known character's object
+    // regardless of selection — the "see everyone, like the Tauri app"
+    // overlay, desktop-width click-to-switch included (see viewer.ts).
+    viewer.focusActivity(latestActivityLabel);
+    const allStatuses = new Map<string, ViewerCharacterStatus>();
+    if (data) {
+      for (const c of characters) {
+        const cs = data.status[c.id];
+        if (cs?.activityLabel) allStatuses.set(c.id, { characterId: c.id, characterName: c.name, activityLabel: cs.activityLabel });
+      }
+    }
+    viewer.applyAllStatuses(allStatuses);
+
+    renderDashboards();
+  }
+
   async function refreshStatus() {
     // See refreshPending's own comment above — a call that arrives while
     // one's already in flight just marks itself pending instead of firing
-    // a second full batch of fetches at val.town right on top of the first.
+    // a second fetch at val.town right on top of the first.
     if (refreshInFlight) {
       refreshPending = true;
       return;
@@ -859,57 +898,18 @@ async function main() {
     refreshInFlight = true;
     refreshButton.setBusy(true);
     try {
-      const q = characterQueryParam(selectedCharacter.id);
-      const [statusRes, goalsRes, statsRes, periodStatsRes, yesterdayRes, streaksRes, allStatuses] = await Promise.all([
-        fetch(`${STATUS_API_BASE}/api/status${q}`),
-        fetch(`${STATUS_API_BASE}/api/goals${q}`),
-        fetch(`${STATUS_API_BASE}/api/stats${q}`),
-        fetch(`${STATUS_API_BASE}/api/period-stats${q}`),
-        fetch(`${STATUS_API_BASE}/api/yesterday${q}`),
-        fetch(`${STATUS_API_BASE}/api/streaks${q}`),
-        fetchAllStatuses(characters),
-      ]);
-
-      // Checked up front, before parsing/assigning ANY of them — val.town
-      // occasionally 500s one endpoint under concurrent load (which is what
-      // refreshPending above is for), and a 500's JSON body isn't the array/
-      // object shape its 200 response is. Previously a single bad response
-      // still got assigned into e.g. latestStats before the exception from
-      // a later .map() call surfaced, leaving that corrupted value in place
-      // for every subsequent tickElapsed() render (every second, forever,
-      // with no try/catch there) instead of just failing this one refresh.
-      for (const res of [statusRes, goalsRes, statsRes, periodStatsRes, yesterdayRes, streaksRes]) {
-        if (!res.ok) throw new Error(`${new URL(res.url).pathname} returned ${res.status}`);
-      }
-
-      const data: StatusResponse = await statusRes.json();
-      const goals = await goalsRes.json();
-      const stats = await statsRes.json();
-      const periodStats = await periodStatsRes.json();
-      const yesterdayMinutesByLabel = await yesterdayRes.json();
-      const streaksByGoalId = await streaksRes.json();
-
-      latestGoals = goals;
-      latestStats = stats;
-      latestPeriodStats = periodStats;
-      latestYesterdayMinutesByLabel = yesterdayMinutesByLabel;
-      latestStreaksByGoalId = streaksByGoalId;
-      latestActivityLabel = data.activityLabel;
-      latestTodayMinutesByLabel = data.todayMinutesByLabel;
-      startedAtMs = data.startedAt ? new Date(data.startedAt).getTime() : null;
-
-      renderCurrent();
-      // focusActivity pans to the SELECTED character's own activity (if
-      // any); applyAllStatuses lights up every known character's object
-      // regardless of selection — the "see everyone, like the Tauri app"
-      // overlay, desktop-width click-to-switch included (see viewer.ts).
-      viewer.focusActivity(data.activityLabel);
-      viewer.applyAllStatuses(allStatuses);
+      const data = await fetchAll();
+      // null on a network failure or non-200 (see fetchAll's own comment)
+      // — thrown here, before touching latestAll, so a bad fetch just
+      // fails this one refresh and leaves the last-known-good data (and
+      // whatever's currently rendered) exactly as it was.
+      if (!data) throw new Error("failed to fetch /api/all");
+      latestAll = data;
+      renderForSelectedCharacter();
 
       lastSyncAt = new Date();
       lastSyncError = null;
       renderSync();
-      renderDashboards();
     } catch (err) {
       console.error("[viewer] failed to fetch status", err);
       renderCurrentDesktop.showError("Couldn't load status");
@@ -928,14 +928,14 @@ async function main() {
 
   // Switching characters: persist the choice, update both titles that show
   // a character's name (the desktop-layout panel's header, the mobile
-  // title button itself), then re-fetch everything under the new
-  // character's ?character= query param.
+  // title button itself), then just re-render from the data this already
+  // has — no fetch, no ?character= query param, nothing to race.
   function selectCharacter(character: CharacterEntry) {
     selectedCharacter = character;
     saveSelectedCharacterId(character.id);
     jacquelinePanel.setTitle(character.name);
     renderCurrentMobile.setTitleText(character.name);
-    refreshStatus();
+    renderForSelectedCharacter();
   }
 
   const characterPicker = setupCharacterPickerModal(characters, selectCharacter);
@@ -949,7 +949,18 @@ async function main() {
   }
 
   let hiddenAt: number | null = null;
-  await refreshStatus();
+  // initialAll was already fetched once (up at the top of main(), to seed
+  // the character directory before anything else was built) — render from
+  // it directly instead of making refreshStatus() fetch the exact same
+  // thing again. A failed initial fetch just falls through to a real
+  // refreshStatus() call, which has its own error-state handling.
+  if (initialAll) {
+    renderForSelectedCharacter();
+    lastSyncAt = new Date();
+    renderSync();
+  } else {
+    await refreshStatus();
+  }
   setInterval(refreshStatus, POLL_INTERVAL_MS);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
