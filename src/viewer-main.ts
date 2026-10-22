@@ -508,6 +508,34 @@ function setupMobileMessageModal(): { open: () => void } {
   };
 }
 
+/**
+ * Small fixed-position button, visible in both the desktop-width and
+ * mobile layouts (top-left — every other corner is already spoken for by
+ * floor buttons/top buttons/the Jacqueline panel on desktop, or the mobile
+ * tab bar/status/FAB on mobile; see shared-chrome.css). The viewer has no
+ * live connection the way the desktop app's WebSocket does, so this is its
+ * only way to force an immediate re-poll instead of waiting out the next
+ * 5-minute interval. setBusy disables it (so it can't itself pile up extra
+ * concurrent refreshes — the real request-deduplication still lives in
+ * refreshStatus's own refreshInFlight/refreshPending guard, this is just
+ * the matching UI state) and spins it while a refresh is in flight.
+ */
+function buildRefreshButton(onClick: () => void): { setBusy(busy: boolean): void } {
+  const button = document.createElement("button");
+  button.id = "viewer-refresh";
+  button.textContent = "⟳";
+  button.setAttribute("aria-label", "Refresh");
+  document.body.appendChild(button);
+  button.onclick = onClick;
+
+  return {
+    setBusy(busy) {
+      button.disabled = busy;
+      button.classList.toggle("spinning", busy);
+    },
+  };
+}
+
 /** Mobile Home's clickable character name (see buildCurrentActivityBlock's onTitleClick) opens this — one row per /api/characters entry, selecting one hands the chosen character back to the caller. */
 function setupCharacterPickerModal(characters: CharacterEntry[], onSelect: (character: CharacterEntry) => void): { open: () => void } {
   const modal = buildModal("Switch character");
@@ -720,6 +748,12 @@ async function main() {
     { label: "Settings", onclick: settingsModal.open },
   ]);
 
+  // Appended directly to document.body (not inside #top-buttons/the mobile
+  // tab pages), so CSS's blanket "hide all desktop chrome on mobile" rule
+  // (shared-chrome.css's mobile media query) doesn't touch it — this one
+  // button needs to work in both layouts.
+  const refreshButton = buildRefreshButton(() => refreshStatus());
+
   // --- Mobile tabs: a separate UI tree, not a reflow of the above (see
   // shared-chrome.css's media query — both trees are always built, CSS
   // decides which is visible). Home has no panel chrome at all, just bare
@@ -823,6 +857,7 @@ async function main() {
       return;
     }
     refreshInFlight = true;
+    refreshButton.setBusy(true);
     try {
       const q = characterQueryParam(selectedCharacter.id);
       const [statusRes, goalsRes, statsRes, periodStatsRes, yesterdayRes, streaksRes, allStatuses] = await Promise.all([
@@ -883,6 +918,7 @@ async function main() {
       renderSync();
     } finally {
       refreshInFlight = false;
+      refreshButton.setBusy(false);
       if (refreshPending) {
         refreshPending = false;
         refreshStatus();

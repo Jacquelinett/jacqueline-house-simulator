@@ -144,3 +144,45 @@ body {
   cursor: pointer;
   text-decoration: underline;
 }
+
+/* Manual refresh button (buildRefreshButton in viewer-main.ts) — top-left,
+   deliberately NOT inside #top-buttons/.mobile-page (see its own doc
+   comment for why), so it stays visible in both layouts instead of
+   getting caught by shared-chrome.css's blanket "hide on mobile" rule. */
+#viewer-refresh {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 16;
+  width: 32px;
+  height: 32px;
+  background: var(--chrome-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#viewer-refresh:hover {
+  background: var(--line);
+}
+
+#viewer-refresh:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+#viewer-refresh.spinning {
+  animation: viewer-refresh-spin 0.6s linear infinite;
+}
+
+@keyframes viewer-refresh-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
