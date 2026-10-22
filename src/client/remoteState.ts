@@ -8,11 +8,29 @@ const DEVICE_ID_KEY = "houseSimulatorDeviceId";
 const SERVER_URL_KEY = "houseSimulatorServerUrl";
 const LAN_SECRET_KEY = "houseSimulatorLanSecret";
 
+/**
+ * crypto.randomUUID() only exists in secure contexts (HTTPS or localhost)
+ * — a plain http://<lan-ip>:4000 connection, the normal way another device
+ * on the home WiFi reaches the server, isn't one, so calling it there
+ * throws "crypto.randomUUID is not a function". This id is never
+ * security-sensitive (it only ever identifies "which device," not an
+ * auth credential), so a plain Math.random()-based UUID v4 is a fine
+ * fallback when the real one isn't available.
+ */
+function generateDeviceId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 /** One id per browser/device, generated once and kept in localStorage — same trick viewer-main.ts already uses for its own settings key, just storing an id instead of values now (settings themselves live server-side, keyed by this). */
 function getOrCreateDeviceId(): string {
   let id = localStorage.getItem(DEVICE_ID_KEY);
   if (!id) {
-    id = crypto.randomUUID();
+    id = generateDeviceId();
     localStorage.setItem(DEVICE_ID_KEY, id);
   }
   return id;
