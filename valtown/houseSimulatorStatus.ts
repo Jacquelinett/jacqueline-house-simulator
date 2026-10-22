@@ -22,15 +22,17 @@
  *   GET  /api/yesterday -> public JSON: yesterday's tracked minutes per activity label (a settled, complete
  *                          day, unlike /api/status's today) — backs the viewer Dashboard's Today/Yesterday toggle
  *   PUT  /api/yesterday -> (secret required) House Simulator pushes this on the same cadence as /api/stats
+ *   GET  /api/streaks -> public JSON: current streak length per goal id, for today's scheduled goals only —
+ *                        House Simulator has the full completion history to compute this; the viewer doesn't
+ *   PUT  /api/streaks -> (secret required) House Simulator pushes this on the same cadence as /api/stats
  *   GET  /api/messages  -> (secret required) your in-app inbox reads these
  *   POST /api/messages  -> public: a viewer leaves you a note
  *   DELETE /api/messages/:id -> (secret required) dismiss a message from your inbox
  *
- * It never computes goal completion itself — it just stores and forwards
- * two independently-updated blobs (goal definitions, and today's tracked
- * minutes per activity label). Whatever's displaying this joins the two
- * client-side, the same way it computes a live "Running for X" clock from
- * just a start time instead of polling.
+ * It never computes anything itself — goal completion, streaks, stats —
+ * it just stores and forwards independently-pushed blobs. Whatever's
+ * displaying this joins them client-side, the same way it computes a live
+ * "Running for X" clock from just a start time instead of polling.
  *
  * Before using: open this val's settings sidebar in val.town and add an
  * Environment Variable named HOUSE_SIM_SECRET with a long random value.
@@ -75,6 +77,11 @@ async function ensureSchema() {
   await sqlite.execute(`create table if not exists yesterday_blob (
     id integer primary key check (id = 1),
     minutes_json text not null,
+    updated_at text not null
+  )`);
+  await sqlite.execute(`create table if not exists streaks_blob (
+    id integer primary key check (id = 1),
+    streaks_json text not null,
     updated_at text not null
   )`);
   await sqlite.execute(`create table if not exists messages (
@@ -227,6 +234,30 @@ async function handlePutYesterday(req: Request): Promise<Response> {
   return Response.json({ ok: true });
 }
 
+async function handleGetStreaks(): Promise<Response> {
+  const result = await sqlite.execute("select * from streaks_blob where id = 1");
+  const row = result.rows[0] as { streaks_json: string } | undefined;
+  return Response.json(row ? JSON.parse(row.streaks_json) : {});
+}
+
+async function handlePutStreaks(req: Request): Promise<Response> {
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return Response.json({ error: "expected a JSON object of goal id -> streak length" }, { status: 400 });
+  }
+
+  await sqlite.execute({
+    sql: `insert into streaks_blob (id, streaks_json, updated_at)
+          values (1, :streaksJson, :updatedAt)
+          on conflict(id) do update set
+            streaks_json = excluded.streaks_json,
+            updated_at = excluded.updated_at`,
+    args: { streaksJson: JSON.stringify(body), updatedAt: new Date().toISOString() },
+  });
+
+  return Response.json({ ok: true });
+}
+
 async function handleGetMessages(): Promise<Response> {
   const result = await sqlite.execute("select * from messages order by id desc limit 200");
   return Response.json(result.rows);
@@ -312,6 +343,15 @@ export default async function (req: Request): Promise<Response> {
   if (method === "PUT" && pathname === "/api/yesterday") {
     if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     return handlePutYesterday(req);
+  }
+
+  if (method === "GET" && pathname === "/api/streaks") {
+    return handleGetStreaks();
+  }
+
+  if (method === "PUT" && pathname === "/api/streaks") {
+    if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handlePutStreaks(req);
   }
 
   if (method === "GET" && pathname === "/api/messages") {

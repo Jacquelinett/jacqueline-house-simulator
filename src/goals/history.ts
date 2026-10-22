@@ -3,6 +3,7 @@ import { createJsonFileStore } from "../lib/jsonFileStore";
 import { createPersistedState } from "../lib/persistedState";
 import { addDaysToDateString, isScheduledOn, parseDateString } from "./recurrence";
 import { getGoals, persistGoals, todayDateString } from "./state";
+import { formatStreak } from "./ui";
 import { Goal } from "./types";
 
 export interface GoalHistoryEntry {
@@ -84,10 +85,27 @@ export function getCurrentStreakLength(goal: Goal, history: GoalHistoryEntry[]):
 
 /** "Streak: 3 (best 7)" for a recurring goal with any streak history, else null (nothing worth showing yet, or not a recurring goal). */
 export function describeStreak(goal: Goal, history: GoalHistoryEntry[]): string | null {
-  const current = getCurrentStreakLength(goal, history);
-  const best = goal.highestStreak ?? 0;
-  if (current === 0 && best === 0) return null;
-  return `Streak: ${current} (best ${best})`;
+  return formatStreak(getCurrentStreakLength(goal, history), goal.highestStreak ?? 0);
+}
+
+/**
+ * Current streak length for every goal scheduled *today*, keyed by goal
+ * id — what gets pushed to val.town (see broadcast/client.ts's
+ * pushTodayStreaks) so the viewer's Dashboard can show a current streak
+ * next to each of today's goals without needing the full history log
+ * (which never leaves the desktop app). Only covers today's scheduled
+ * goals, same scope as what the viewer's Dashboard actually shows goal
+ * schedules for.
+ */
+export function getTodayStreaksByGoalId(): Record<string, number> {
+  const today = new Date();
+  const history = getGoalHistory();
+  const result: Record<string, number> = {};
+  for (const goal of getGoals()) {
+    if (goal.recurrence.type === "once" || !isScheduledOn(goal.recurrence, today)) continue;
+    result[goal.id] = getCurrentStreakLength(goal, history);
+  }
+  return result;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { getCurrentActivity } from "../aw/client";
 import { getGoals } from "../goals/state";
 import { getTodayMinutesByLabel } from "../goals/progress";
+import { getTodayStreaksByGoalId } from "../goals/history";
 import { getActivityStats, getActivityStatsForDate } from "../dashboard/stats";
 import { computeFixedPeriodStats } from "../dashboard/periodStats";
 import { addDaysToDateString, localDateString } from "../goals/recurrence";
@@ -159,6 +160,27 @@ export async function pushYesterdayStats(): Promise<void> {
   const minutesByLabel = Object.fromEntries(stats.map((s) => [s.label, s.minutes]));
   const ok = await pushWithHealth("/api/yesterday", minutesByLabel, "yesterday stats");
   if (ok) yesterdayPushedForToday = todayStr;
+}
+
+/**
+ * Pushes each of today's scheduled recurring goals' current streak length,
+ * keyed by goal id. Same "once per calendar day" gating as
+ * pushYesterdayStats, for the same reason — a goal's current streak
+ * doesn't change outside of settlement (which itself only runs once a
+ * day), so there's nothing new to compute or push until "today" changes.
+ * getTodayStreaksByGoalId() is the only source for this; the viewer has
+ * no history log of its own to derive it from (goal.highestStreak rides
+ * along with the already-pushed /api/goals for free, but the *current*
+ * length can't).
+ */
+let streaksPushedForToday: string | null = null;
+
+export async function pushTodayStreaks(): Promise<void> {
+  const todayStr = localDateString(new Date());
+  if (streaksPushedForToday === todayStr) return;
+
+  const ok = await pushWithHealth("/api/streaks", getTodayStreaksByGoalId(), "today's streaks");
+  if (ok) streaksPushedForToday = todayStr;
 }
 
 export async function fetchMessages(): Promise<InboxMessage[]> {

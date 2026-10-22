@@ -2,7 +2,7 @@ import { HouseViewer, preloadRoomAssets } from "./scene/viewer";
 import { Goal } from "./goals/types";
 import { describeScheduleForDate, groupGoalsForDate } from "./goals/goalGroups";
 import { addDaysToDateString, localDateString, parseDateString } from "./goals/recurrence";
-import { formatMinutes } from "./goals/ui";
+import { formatMinutes, formatStreak } from "./goals/ui";
 import { buildModal } from "./ui/modal";
 import { buildFloatingPanel } from "./ui/draggablePanel";
 import { buildToggleGroup } from "./ui/toggleGroup";
@@ -107,6 +107,7 @@ interface DashboardRenderInput {
   goals: Goal[];
   todayMinutesByLabel: Record<string, number>;
   yesterdayMinutesByLabel: Record<string, number>;
+  streaksByGoalId: Record<string, number>;
   activityLabel: string | null;
   startedAtMs: number | null;
   colorByLabel: Map<string, number>;
@@ -149,8 +150,15 @@ function buildDashboardBlock(container: HTMLElement): { render(input: DashboardR
 
   function renderCurrent() {
     if (!latestInput) return;
-    const { goals, todayMinutesByLabel, yesterdayMinutesByLabel, activityLabel: runningLabel, startedAtMs, colorByLabel } =
-      latestInput;
+    const {
+      goals,
+      todayMinutesByLabel,
+      yesterdayMinutesByLabel,
+      streaksByGoalId,
+      activityLabel: runningLabel,
+      startedAtMs,
+      colorByLabel,
+    } = latestInput;
     const isToday = day === "today";
 
     goalHeading.textContent = isToday ? "Today's Goals" : "Yesterday's Goals";
@@ -168,7 +176,10 @@ function buildDashboardBlock(container: HTMLElement): { render(input: DashboardR
         minutes,
         targetMinutes,
         done: minutes >= targetMinutes,
-        subRows: groupGoals.map((g) => `${describeScheduleForDate(g.recurrence, dateStr)} — ${formatMinutes(g.targetMinutes)}`),
+        subRows: groupGoals.map((g) => {
+          const streakText = formatStreak(streaksByGoalId[g.id] ?? 0, g.highestStreak ?? 0);
+          return `${describeScheduleForDate(g.recurrence, dateStr)} — ${formatMinutes(g.targetMinutes)}${streakText ? ` — ${streakText}` : ""}`;
+        }),
       };
     });
     renderGoalList(goalList, goalEntries, isToday ? "No goals today" : "No goals yesterday");
@@ -598,6 +609,7 @@ async function main() {
   let latestActivityLabel: string | null = null;
   let latestTodayMinutesByLabel: Record<string, number> = {};
   let latestYesterdayMinutesByLabel: Record<string, number> = {};
+  let latestStreaksByGoalId: Record<string, number> = {};
   let latestGoals: Goal[] = [];
   let lastSyncAt: Date | null = null;
   let lastSyncError: string | null = null;
@@ -607,6 +619,7 @@ async function main() {
       goals: latestGoals,
       todayMinutesByLabel: latestTodayMinutesByLabel,
       yesterdayMinutesByLabel: latestYesterdayMinutesByLabel,
+      streaksByGoalId: latestStreaksByGoalId,
       activityLabel: latestActivityLabel,
       startedAtMs,
       colorByLabel: new Map(latestStats.map((s) => [s.label, s.color] as const)),
@@ -633,18 +646,20 @@ async function main() {
 
   async function refreshStatus() {
     try {
-      const [statusRes, goalsRes, statsRes, periodStatsRes, yesterdayRes] = await Promise.all([
+      const [statusRes, goalsRes, statsRes, periodStatsRes, yesterdayRes, streaksRes] = await Promise.all([
         fetch(`${STATUS_API_BASE}/api/status`),
         fetch(`${STATUS_API_BASE}/api/goals`),
         fetch(`${STATUS_API_BASE}/api/stats`),
         fetch(`${STATUS_API_BASE}/api/period-stats`),
         fetch(`${STATUS_API_BASE}/api/yesterday`),
+        fetch(`${STATUS_API_BASE}/api/streaks`),
       ]);
       const data: StatusResponse = await statusRes.json();
       latestGoals = await goalsRes.json();
       latestStats = await statsRes.json();
       latestPeriodStats = await periodStatsRes.json();
       latestYesterdayMinutesByLabel = await yesterdayRes.json();
+      latestStreaksByGoalId = await streaksRes.json();
 
       latestActivityLabel = data.activityLabel;
       latestTodayMinutesByLabel = data.todayMinutesByLabel;

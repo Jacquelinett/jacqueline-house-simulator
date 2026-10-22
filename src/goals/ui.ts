@@ -9,6 +9,20 @@ export function formatMinutes(min: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
+/**
+ * "Streak: 3 (best 7)", or null if there's nothing worth showing yet (no
+ * current streak and never had one). Pure formatting, no history/AW
+ * dependency — lives here rather than in goals/history.ts (which does
+ * depend on AW, via getDurationMinutes) so the viewer can also use it: the
+ * desktop app computes `current` itself from the history log
+ * (history.ts's describeStreak), while the viewer gets it pre-computed
+ * from a val.town push instead (it has no history log to derive it from).
+ */
+export function formatStreak(current: number, best: number): string | null {
+  if (current === 0 && best === 0) return null;
+  return `Streak: ${current} (best ${best})`;
+}
+
 function formatOccurrence(occ: 1 | 2 | 3 | 4 | "last"): string {
   return occ === "last" ? "last" : `${occ}${["th", "st", "nd", "rd"][occ] ?? "th"}`;
 }
