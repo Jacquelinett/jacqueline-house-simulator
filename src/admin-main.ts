@@ -678,6 +678,24 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
     return { x: type?.anchorX ?? 0, y: type?.anchorY ?? 0 };
   }
 
+  // Purely a relabeling of which integer tile mode shows/accepts as the
+  // room's corner — gridToScreen/screenToGrid themselves (and everything
+  // outside this modal) are untouched. The engine's own (0,0) already sits
+  // exactly where the back walls meet (confirmed: floor's first tile and
+  // the wall corner piece both key off it) — but by eye, with the wall
+  // art's own height, what reads as "the corner" one tile further in. This
+  // shift just moves which label the admin tool prints/accepts for a given
+  // point, by a constant (-1,-1), so that spot displays as tile (0,0)
+  // instead of (1,1).
+  const TILE_LABEL_SHIFT = 1;
+  function tileLabelToScreen(u: number, v: number) {
+    return gridToScreen(u + TILE_LABEL_SHIFT, v + TILE_LABEL_SHIFT);
+  }
+  function screenToTileLabel(x: number, y: number): { u: number; v: number } {
+    const raw = screenToGrid(x, y);
+    return { u: raw.u - TILE_LABEL_SHIFT, v: raw.v - TILE_LABEL_SHIFT };
+  }
+
   const modal = buildModal(`Edit Room: ${room.name}`, { size: "large", resizable: true });
 
   const previewContainer = document.createElement("div");
@@ -799,7 +817,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
       // rather than screenToGrid(x, y) — so it round-trips correctly
       // through applyPosition()/the Place button below.
       const anchor = anchorFor(obj.type);
-      const displayed = tileMode ? screenToGrid(obj.x + anchor.x, obj.y + anchor.y) : { u: obj.x, v: obj.y };
+      const displayed = tileMode ? screenToTileLabel(obj.x + anchor.x, obj.y + anchor.y) : { u: obj.x, v: obj.y };
       const xInput = document.createElement("input");
       xInput.type = "number";
       xInput.value = String(round2(displayed.u));
@@ -831,7 +849,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
         const enteredU = Number(xInput.value);
         const enteredV = Number(yInput.value);
         if (tileModeCheckbox.checked) {
-          const screen = gridToScreen(enteredU, enteredV);
+          const screen = tileLabelToScreen(enteredU, enteredV);
           const a = anchorFor(obj.type);
           obj.x = screen.x - a.x;
           obj.y = screen.y - a.y;
@@ -881,8 +899,8 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
           obj.x = screen.x - a.x;
           obj.y = screen.y - a.y;
           if (tileModeCheckbox.checked) {
-            xInput.value = String(round2(u));
-            yInput.value = String(round2(v));
+            xInput.value = String(round2(u - TILE_LABEL_SHIFT));
+            yInput.value = String(round2(v - TILE_LABEL_SHIFT));
           } else {
             xInput.value = String(obj.x);
             yInput.value = String(obj.y);
