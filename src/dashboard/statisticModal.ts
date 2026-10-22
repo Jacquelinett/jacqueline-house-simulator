@@ -3,31 +3,36 @@ import { getActivityStats } from "./stats";
 import { renderAllTimeActivity } from "./render";
 import { getGoalHistory, GoalHistoryEntry } from "../goals/history";
 
-/** All-time standouts — opened on demand from the "Statistic" button, as opposed to the always-visible Dashboard panel's today-only data. */
-export function setupStatisticModal(): { open: () => void } {
-  const modal = buildModal("Statistic", { size: "large" });
-
+/**
+ * All-time standouts (goals + activity) — shared by the desktop Statistic
+ * modal (opened on demand) and the mobile Statistic tab. Unlike the
+ * Dashboard content, this doesn't auto-refresh on an interval — the caller
+ * calls `refresh()` whenever this becomes visible (modal open, or tab
+ * switch), since all-time data is expensive enough to scan that there's
+ * no reason to keep re-fetching it while nobody's looking.
+ */
+export function setupStatisticContent(container: HTMLElement): { refresh(): void } {
   const goalsHeading = document.createElement("h3");
   goalsHeading.className = "panel-section-heading";
   goalsHeading.textContent = "All-Time Goals";
-  modal.body.appendChild(goalsHeading);
+  container.appendChild(goalsHeading);
 
   const goalsList = document.createElement("div");
   goalsList.id = "dashboard-alltime-goals-list";
-  modal.body.appendChild(goalsList);
+  container.appendChild(goalsList);
 
   const activityHeading = document.createElement("h3");
   activityHeading.className = "panel-section-heading";
   activityHeading.textContent = "All-Time Activity (top 5)";
-  modal.body.appendChild(activityHeading);
+  container.appendChild(activityHeading);
 
   const pie = document.createElement("div");
   pie.id = "dashboard-pie";
-  modal.body.appendChild(pie);
+  container.appendChild(pie);
 
   const activityList = document.createElement("div");
   activityList.className = "dashboard-list";
-  modal.body.appendChild(activityList);
+  container.appendChild(activityList);
 
   // Aggregated by activity label, not per-goal — "most completed/skipped
   // activity" is about the activity overall, not whichever specific
@@ -36,7 +41,7 @@ export function setupStatisticModal(): { open: () => void } {
   // per-goal list would otherwise do regardless of today's date).
   //
   // Goal history never leaves this app (nothing pushes it to val.town), so
-  // this section is desktop-only — the viewer's own Statistic modal only
+  // this section is desktop-only — the viewer's own Statistic surface only
   // has the Activity half below.
   function renderGoals() {
     goalsList.textContent = "";
@@ -108,10 +113,22 @@ export function setupStatisticModal(): { open: () => void } {
   }
 
   return {
-    open() {
-      modal.open();
+    refresh() {
       renderGoals();
       renderActivity();
+    },
+  };
+}
+
+/** Opened on demand from the "Statistic" button, as opposed to the always-visible Dashboard panel's today-only data. */
+export function setupStatisticModal(): { open: () => void } {
+  const modal = buildModal("Statistic", { size: "large" });
+  const content = setupStatisticContent(modal.body);
+
+  return {
+    open() {
+      modal.open();
+      content.refresh();
     },
   };
 }

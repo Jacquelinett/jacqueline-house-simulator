@@ -2,13 +2,12 @@ import { buildModal } from "../ui/modal";
 import { buildDisplaySettingsSection } from "../ui/displaySettings";
 import { getSettings, updateSettings } from "./state";
 
-export function setupSettingsModal(): { open: () => void } {
-  const modal = buildModal("Settings");
-
-  // Applying devMode/scale back onto the house isn't this modal's job —
+/** Display settings + status broadcast config — shared by the desktop Settings modal and the mobile Settings tab. */
+export function setupSettingsContent(container: HTMLElement): void {
+  // Applying devMode/scale back onto the house isn't this function's job —
   // setupHouse()'s own onSettingsChange subscription reacts to the saved
-  // value instead, same as before this was extracted.
-  buildDisplaySettingsSection(modal.body, getSettings(), {
+  // value instead.
+  buildDisplaySettingsSection(container, getSettings(), {
     onDevModeChange: async (value) => {
       try {
         await updateSettings({ devMode: value });
@@ -34,7 +33,7 @@ export function setupSettingsModal(): { open: () => void } {
 
   const section = document.createElement("div");
   section.id = "settings-broadcast-section";
-  modal.body.appendChild(section);
+  container.appendChild(section);
 
   const heading = document.createElement("h3");
   heading.textContent = "Status broadcast";
@@ -95,6 +94,10 @@ export function setupSettingsModal(): { open: () => void } {
   };
 
   loadIntoForm();
+}
 
+export function setupSettingsModal(): { open: () => void } {
+  const modal = buildModal("Settings");
+  setupSettingsContent(modal.body);
   return { open: modal.open };
 }

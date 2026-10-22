@@ -406,3 +406,119 @@
   font-variant-numeric: tabular-nums;
   width: 32px;
 }
+
+/* --- Mobile: a genuinely different UI, not a reflow of the desktop one ---
+   Below this breakpoint, floating panels/top-buttons/floor-buttons give way
+   to a bottom tab bar + one full-screen page at a time (src/ui/mobileTabs.ts
+   builds the tab bar + pages; each entry point fills the pages with content
+   via the same setup*Content() functions their desktop panels/modals use).
+   Both UI trees are always built — this query just decides which is visible
+   — so resizing/rotating across the breakpoint works with no JS involved.
+   Room navigation (floor buttons) is deliberately dropped here, not just
+   hidden-and-forgotten: on a small screen, the house scene just follows
+   whatever's currently running (same auto-focus the desktop already does),
+   and manually looking around isn't worth the screen space it would cost. */
+@media (max-width: 700px) and (orientation: portrait) {
+  .floating-panel,
+  #top-buttons,
+  #floor-buttons {
+    display: none !important;
+  }
+
+  :root {
+    --mobile-tabbar-height: 56px;
+  }
+
+  #mobile-tab-bar {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: var(--mobile-tabbar-height);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    z-index: 16;
+    background: var(--chrome-bg);
+    border-top: 1px solid var(--border);
+  }
+
+  #mobile-tab-bar button {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  #mobile-tab-bar button.active {
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: inset 0 2px 0 0 var(--accent-border);
+  }
+
+  .mobile-page {
+    display: none;
+    position: fixed;
+    inset: 0;
+    bottom: var(--mobile-tabbar-height);
+    z-index: 15;
+    overflow-y: auto;
+  }
+
+  .mobile-page.active {
+    display: block;
+  }
+
+  /* Home is the only page that doesn't cover the scene — it's transparent
+     and ignores pointer events everywhere except its own direct content
+     (status text, FAB), so taps still reach the Pixi canvas underneath. */
+  #mobile-page-home {
+    pointer-events: none;
+  }
+
+  #mobile-page-home > * {
+    pointer-events: auto;
+  }
+
+  #mobile-page-dashboard,
+  #mobile-page-statistic,
+  #mobile-page-settings {
+    background: var(--panel-bg);
+    color: var(--text);
+    padding: 16px;
+  }
+
+  .mobile-status {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 15;
+    font-size: 12px;
+    background: var(--chrome-bg);
+    padding: 6px 10px;
+    border-radius: 4px;
+    max-width: 60vw;
+  }
+
+  .mobile-status-title {
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+
+  .mobile-fab {
+    position: fixed;
+    right: 16px;
+    bottom: calc(var(--mobile-tabbar-height) + 16px);
+    z-index: 15;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--accent-bg);
+    border: 1px solid var(--accent-border);
+    color: var(--text);
+    font-size: 20px;
+    cursor: pointer;
+    box-shadow: 0 2px 8px var(--backdrop);
+  }
+}

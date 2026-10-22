@@ -461,3 +461,15 @@ body {
   gap: 6px;
   font-size: 13px;
 }
+
+/* Mobile Pick Action list rows — app-only (the viewer never starts/stops
+   activities), so this lives here rather than in shared-chrome.css. */
+.mobile-action-row {
+  width: 100%;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  padding: 6px 0;
+  color: var(--text);
+}

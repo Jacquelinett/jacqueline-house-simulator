@@ -10,6 +10,7 @@ import type { ActivityStat } from "./dashboard/stats";
 import { setupFloorButtons } from "./ui/floorButtons";
 import { setupTopButtons } from "./ui/topButtons";
 import { setupPixiApp } from "./ui/pixiApp";
+import { setupMobileTabs } from "./ui/mobileTabs";
 import { buildDisplaySettingsSection } from "./ui/displaySettings";
 import { Theme } from "./settings/types";
 import { applyTheme, THEME_BACKGROUND } from "./settings/themes";
@@ -53,6 +54,16 @@ interface StatusResponse {
   todayMinutesByLabel: Record<string, number>;
 }
 
+/** Shared by the inline Leave-a-note form (desktop/wide-viewport) and the mobile Message popup — just the network call, each caller handles its own form fields/status text. */
+async function sendMessage(author: string, text: string): Promise<void> {
+  const res = await fetch(`${STATUS_API_BASE}/api/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, author }),
+  });
+  if (!res.ok) throw new Error((await res.json()).error || "failed to send");
+}
+
 /** Zoom + dev-mode outlines, independent of the desktop app's own Settings — lets anyone viewing on a bigger/smaller screen adjust to taste (and is handy for testing the viewer itself). */
 function setupSettings(
   viewer: HouseViewer,
@@ -80,6 +91,67 @@ function setupSettings(
   });
 
   return { open: modal.open };
+}
+
+/** A "native popup"-style dialog for leaving a note — the mobile Home tab's FAB, standing in for the inline form that doesn't fit there. */
+function setupMobileMessageModal(): { open: () => void } {
+  const modal = buildModal("Leave a note");
+
+  const authorInput = document.createElement("input");
+  authorInput.id = "viewer-author";
+  authorInput.placeholder = "Your name (optional)";
+  authorInput.maxLength = 50;
+  modal.body.appendChild(authorInput);
+
+  const textInput = document.createElement("textarea");
+  textInput.id = "viewer-text";
+  textInput.rows = 3;
+  textInput.placeholder = "wow you actually lifted today, nice";
+  textInput.maxLength = 500;
+  modal.body.appendChild(textInput);
+
+  const statusEl = document.createElement("div");
+  statusEl.id = "viewer-send-status";
+  modal.body.appendChild(statusEl);
+
+  const actions = document.createElement("div");
+  actions.className = "mobile-modal-actions";
+  modal.body.appendChild(actions);
+
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "mobile-modal-cancel";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.onclick = () => modal.close();
+  actions.appendChild(cancelBtn);
+
+  const sendBtn = document.createElement("button");
+  sendBtn.id = "viewer-send";
+  sendBtn.textContent = "Send";
+  actions.appendChild(sendBtn);
+
+  sendBtn.onclick = async () => {
+    const text = textInput.value.trim();
+    if (!text) return;
+
+    sendBtn.disabled = true;
+    try {
+      await sendMessage(authorInput.value.trim(), text);
+      textInput.value = "";
+      statusEl.textContent = "Sent!";
+      setTimeout(() => modal.close(), 600);
+    } catch (err) {
+      statusEl.textContent = `Error: ${(err as Error).message}`;
+    } finally {
+      sendBtn.disabled = false;
+    }
+  };
+
+  return {
+    open() {
+      statusEl.textContent = "";
+      modal.open();
+    },
+  };
 }
 
 async function main() {
@@ -184,7 +256,6 @@ async function main() {
   statisticList.className = "dashboard-list";
   statisticModal.body.appendChild(statisticList);
 
-  let latestStats: ActivityStat[] = [];
   setupTopButtons([
     {
       label: "Statistic",
@@ -196,6 +267,80 @@ async function main() {
     { label: "Settings", onclick: settingsModal.open },
   ]);
 
+  // --- Mobile tabs: a separate UI tree, not a reflow of the above (see
+  // shared-chrome.css's media query — both trees are always built, CSS
+  // decides which is visible). Home has no panel chrome at all, just bare
+  // status text + a FAB; Dashboard/Statistic/Settings mirror the floating
+  // panel/modal content above into full-screen pages instead. ---
+  const mobileTabs = setupMobileTabs();
+
+  const mobileStatus = document.createElement("div");
+  mobileStatus.className = "mobile-status";
+  mobileTabs.pages.home.appendChild(mobileStatus);
+
+  const mobileTitle = document.createElement("div");
+  mobileTitle.className = "mobile-status-title";
+  mobileTitle.textContent = CURRENT_USER_NAME;
+  mobileStatus.appendChild(mobileTitle);
+
+  const mobileCurrentEl = document.createElement("div");
+  mobileCurrentEl.className = "overview-current";
+  mobileStatus.appendChild(mobileCurrentEl);
+
+  const mobileDivider = document.createElement("div");
+  mobileDivider.className = "panel-divider";
+  mobileStatus.appendChild(mobileDivider);
+
+  const mobileSyncEl = document.createElement("div");
+  mobileSyncEl.className = "overview-status-line";
+  mobileStatus.appendChild(mobileSyncEl);
+
+  const mobileMessageModal = setupMobileMessageModal();
+  const mobileFab = document.createElement("button");
+  mobileFab.className = "mobile-fab";
+  mobileFab.textContent = "✉";
+  mobileFab.setAttribute("aria-label", "Leave a note");
+  mobileFab.onclick = () => mobileMessageModal.open();
+  mobileTabs.pages.home.appendChild(mobileFab);
+
+  const { goalList: mobileGoalList, activityList: mobileActivityList } = buildDashboardSections(
+    mobileTabs.pages.dashboard,
+  );
+
+  const mobileStatisticHeading = document.createElement("h3");
+  mobileStatisticHeading.className = "panel-section-heading";
+  mobileStatisticHeading.textContent = "All-Time Activity (top 5)";
+  mobileTabs.pages.statistic.appendChild(mobileStatisticHeading);
+  const mobileStatisticPie = document.createElement("div");
+  mobileStatisticPie.id = "dashboard-pie";
+  mobileTabs.pages.statistic.appendChild(mobileStatisticPie);
+  const mobileStatisticList = document.createElement("div");
+  mobileStatisticList.className = "dashboard-list";
+  mobileTabs.pages.statistic.appendChild(mobileStatisticList);
+
+  buildDisplaySettingsSection(mobileTabs.pages.settings, viewerSettings, {
+    onDevModeChange: (value) => {
+      viewerSettings.devMode = value;
+      viewer.setDevMode(value);
+      saveViewerSettings(viewerSettings);
+    },
+    onThemeChange: (value) => {
+      viewerSettings.theme = value;
+      applyTheme(app, value);
+      saveViewerSettings(viewerSettings);
+    },
+    onScaleChange: (value) => {
+      viewerSettings.scale = value;
+      viewer.setScale(value);
+      saveViewerSettings(viewerSettings);
+    },
+  });
+
+  mobileTabs.onTabChange((tab) => {
+    if (tab === "statistic") renderAllTimeActivity(mobileStatisticPie, mobileStatisticList, latestStats);
+  });
+
+  let latestStats: ActivityStat[] = [];
   let startedAtMs: number | null = null;
   let latestActivityLabel: string | null = null;
   let latestTodayMinutesByLabel: Record<string, number> = {};
@@ -204,10 +349,9 @@ async function main() {
   let lastSyncError: string | null = null;
 
   function renderCurrent() {
-    renderCurrentActivity(currentEl, {
-      label: latestActivityLabel,
-      startedAt: startedAtMs ? new Date(startedAtMs) : null,
-    });
+    const status = { label: latestActivityLabel, startedAt: startedAtMs ? new Date(startedAtMs) : null };
+    renderCurrentActivity(currentEl, status);
+    renderCurrentActivity(mobileCurrentEl, status);
   }
 
   // "Synced" here means "last successfully fetched data from val.town" —
@@ -215,10 +359,9 @@ async function main() {
   // image of the desktop app's own VT sync indicator. No AW line at all,
   // since the viewer has no AW access regardless of connection state.
   function renderSync() {
-    renderSyncStatus(syncEl, {
-      showAw: false,
-      vt: { configured: true, lastSuccessAt: lastSyncAt, lastError: lastSyncError },
-    });
+    const vt = { configured: true, lastSuccessAt: lastSyncAt, lastError: lastSyncError };
+    renderSyncStatus(syncEl, { showAw: false, vt });
+    renderSyncStatus(mobileSyncEl, { showAw: false, vt });
   }
 
   async function refreshStatus() {
@@ -260,21 +403,20 @@ async function main() {
   // Dashboard's rendering, just sourced from polled data instead of AW.
   function renderGoals() {
     const groups = groupTodaysGoals(latestGoals, new Date());
-    renderGoalList(
-      goalList,
-      groups.map(({ activityLabel, targetMinutes, goals }) => {
-        const baselineMinutes = latestTodayMinutesByLabel[activityLabel] ?? 0;
-        const liveMinutes =
-          baselineMinutes + (activityLabel === latestActivityLabel && startedAtMs ? (Date.now() - startedAtMs) / 60000 : 0);
-        return {
-          activityLabel,
-          minutes: liveMinutes,
-          targetMinutes,
-          done: liveMinutes >= targetMinutes,
-          subRows: goals.map((g) => `${describeScheduleForToday(g.recurrence)} — ${formatMinutes(g.targetMinutes)}`),
-        };
-      }),
-    );
+    const entries = groups.map(({ activityLabel, targetMinutes, goals }) => {
+      const baselineMinutes = latestTodayMinutesByLabel[activityLabel] ?? 0;
+      const liveMinutes =
+        baselineMinutes + (activityLabel === latestActivityLabel && startedAtMs ? (Date.now() - startedAtMs) / 60000 : 0);
+      return {
+        activityLabel,
+        minutes: liveMinutes,
+        targetMinutes,
+        done: liveMinutes >= targetMinutes,
+        subRows: goals.map((g) => `${describeScheduleForToday(g.recurrence)} — ${formatMinutes(g.targetMinutes)}`),
+      };
+    });
+    renderGoalList(goalList, entries);
+    renderGoalList(mobileGoalList, entries);
   }
 
   // Mirrors the desktop Dashboard's "Today's Activity" list — same
@@ -292,6 +434,7 @@ async function main() {
       .sort((a, b) => b.minutes - a.minutes);
 
     renderActivityList(activityList, entries, "Nothing tracked today");
+    renderActivityList(mobileActivityList, entries, "Nothing tracked today");
   }
 
   function tickElapsed() {
@@ -319,12 +462,7 @@ async function main() {
 
     sendBtn.disabled = true;
     try {
-      const res = await fetch(`${STATUS_API_BASE}/api/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, author: authorInput.value.trim() }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error || "failed to send");
+      await sendMessage(authorInput.value.trim(), text);
       textInput.value = "";
       sendStatusEl.textContent = "Sent!";
     } catch (err) {

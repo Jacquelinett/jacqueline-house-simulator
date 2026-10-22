@@ -8,10 +8,9 @@ import { buildDashboardSections, renderActivityList, renderGoalList } from "./re
 
 const REFRESH_INTERVAL_MS = 30_000;
 
-/** Always-visible today-only panel (goals progress + activity breakdown) — all-time standouts live in the separate Statistic modal instead, to avoid overlapping with the same info. */
-export function setupDashboardPanel(): void {
-  const panel = buildFloatingPanel("Dashboard", { closable: false, className: "dashboard-panel" });
-  const { goalList, activityList } = buildDashboardSections(panel.body);
+/** Today-only goals progress + activity breakdown — shared by the desktop/viewer Dashboard panel and the mobile Dashboard tab. All-time standouts live in the separate Statistic surface instead, to avoid overlapping with the same info. */
+export function setupDashboardContent(container: HTMLElement): void {
+  const { goalList, activityList } = buildDashboardSections(container);
 
   async function renderGoals() {
     const progress = await getTodayGoalProgress();
@@ -45,6 +44,11 @@ export function setupDashboardPanel(): void {
 
   renderActivity();
   setInterval(renderActivity, REFRESH_INTERVAL_MS);
+}
 
+/** Always-visible corner panel version of the above. */
+export function setupDashboardPanel(): void {
+  const panel = buildFloatingPanel("Dashboard", { closable: false, className: "dashboard-panel" });
+  setupDashboardContent(panel.body);
   panel.open();
 }

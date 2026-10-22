@@ -1,24 +1,27 @@
 import { Application } from "pixi.js";
-import { ensureStopwatchBucket, getServerInfo, resumeActivity } from "./aw/client";
+import { ensureStopwatchBucket, getCurrentActivity, getServerInfo, resumeActivity } from "./aw/client";
 import { House, preloadRoomAssets } from "./scene/House";
-import { setupGoalsPanel } from "./goals/panel";
+import { setupGoalsPanel, setupJacquelineStatus } from "./goals/panel";
 import { setupGoalsManageModal } from "./goals/manageModal";
 import { initGoalsState, onGoalsChange } from "./goals/state";
 import { initGoalHistoryState, settleGoalHistory } from "./goals/history";
 import { setupTodosModal } from "./todos/modal";
 import { initTodosState } from "./todos/state";
 import { setupTimerModal } from "./timer/modal";
-import { setupSettingsModal } from "./settings/modal";
+import { setupSettingsModal, setupSettingsContent } from "./settings/modal";
 import { getSettings, initSettingsState, onSettingsChange } from "./settings/state";
 import { setupMessagesModal } from "./broadcast/messagesModal";
 import { pushGoals, pushStats, pushStatus } from "./broadcast/client";
-import { setupDashboardPanel } from "./dashboard/panel";
-import { setupStatisticModal } from "./dashboard/statisticModal";
+import { setupDashboardPanel, setupDashboardContent } from "./dashboard/panel";
+import { setupStatisticModal, setupStatisticContent } from "./dashboard/statisticModal";
 import { setupFloorButtons } from "./ui/floorButtons";
 import { setupTopButtons } from "./ui/topButtons";
 import { setupPixiApp } from "./ui/pixiApp";
+import { setupMobileTabs } from "./ui/mobileTabs";
+import { buildModal } from "./ui/modal";
 import { DEFAULT_SETTINGS } from "./settings/types";
 import { applyTheme, THEME_BACKGROUND } from "./settings/themes";
+import { ACTIVITIES, toCssColor } from "./scene/activities";
 
 const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -84,6 +87,83 @@ async function setupModals(): Promise<void> {
   ]);
 }
 
+/** Flat list of every activity in the registry, tapping one starts/stops it on whichever object has that action — a shortcut for mobile, where navigating to the right room/object just to track something costs more screen space than it's worth. */
+function setupMobilePickAction(house: House): { open: () => void } {
+  const modal = buildModal("Pick Action");
+  const list = document.createElement("div");
+  list.className = "dashboard-list";
+  modal.body.appendChild(list);
+
+  function render() {
+    list.textContent = "";
+    const current = getCurrentActivity();
+    for (const activity of Object.values(ACTIVITIES)) {
+      const btn = document.createElement("button");
+      btn.className = "dashboard-row mobile-action-row";
+
+      const swatch = document.createElement("span");
+      swatch.className = "dashboard-swatch";
+      swatch.style.background = toCssColor(activity.color);
+      btn.appendChild(swatch);
+
+      const text = document.createElement("span");
+      text.className = "dashboard-text";
+      text.textContent = `${current?.label === activity.label ? "☑" : "☐"} ${activity.label}`;
+      btn.appendChild(text);
+
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          await house.toggleActivity(activity.label);
+          modal.close();
+        } catch (err) {
+          console.error("[mobile] failed to toggle activity", err);
+          btn.disabled = false;
+        }
+      };
+
+      list.appendChild(btn);
+    }
+  }
+
+  return {
+    open() {
+      render();
+      modal.open();
+    },
+  };
+}
+
+/**
+ * The mobile tab bar + its 4 pages. Built unconditionally alongside the
+ * desktop UI — shared-chrome.css's media query decides which is visible,
+ * so this never needs to know whether it's actually on a small screen.
+ */
+function setupMobileUI(house: House): void {
+  const tabs = setupMobileTabs();
+
+  const mobileStatusEl = document.createElement("div");
+  mobileStatusEl.className = "mobile-status";
+  tabs.pages.home.appendChild(mobileStatusEl);
+  setupJacquelineStatus(mobileStatusEl, { showTitle: true });
+
+  const pickAction = setupMobilePickAction(house);
+  const fab = document.createElement("button");
+  fab.className = "mobile-fab";
+  fab.textContent = "+";
+  fab.setAttribute("aria-label", "Pick action");
+  fab.onclick = () => pickAction.open();
+  tabs.pages.home.appendChild(fab);
+
+  setupDashboardContent(tabs.pages.dashboard);
+  const statistic = setupStatisticContent(tabs.pages.statistic);
+  setupSettingsContent(tabs.pages.settings);
+
+  tabs.onTabChange((tab) => {
+    if (tab === "statistic") statistic.refresh();
+  });
+}
+
 async function main() {
   // applyTheme() overrides this once settings load, but this is what's
   // visible for the brief window before that, so it should already match
@@ -115,6 +195,7 @@ async function main() {
 
   const house = await setupHouse(app);
   await setupModals();
+  setupMobileUI(house);
 
   const resumed = await resumeActivity().catch((err) => {
     console.error("[aw] failed to resume previous activity", err);

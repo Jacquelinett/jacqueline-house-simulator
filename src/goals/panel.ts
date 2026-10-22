@@ -8,26 +8,26 @@ const REFRESH_INTERVAL_MS = 30_000;
 const CURRENT_TICK_MS = 1000;
 
 /**
- * Always-visible corner panel: who's using the house, what they're doing
- * right now, and connection health. Goal progress used to live here too but
- * moved to the Dashboard panel — showing it in both places was redundant.
+ * Who's using the house, what they're doing right now, and connection
+ * health — shared by the desktop/viewer corner panel (`setupGoalsPanel`
+ * below) and the mobile Home tab's bare-text equivalent, which has no
+ * panel chrome at all so it renders its own title line instead of relying
+ * on a panel header for it.
  */
-export function setupGoalsPanel(): void {
-  // Same title-bar component the Dashboard uses, just not closable (always
-  // visible, no button that opens it) and not draggable (always lives in
-  // the same corner — nothing to gain from being able to move it).
-  const panel = buildFloatingPanel(CURRENT_USER_NAME, {
-    closable: false,
-    draggable: false,
-    className: "goals-panel",
-  });
+export function setupJacquelineStatus(container: HTMLElement, options?: { showTitle?: boolean }): void {
+  if (options?.showTitle) {
+    const title = document.createElement("div");
+    title.className = "mobile-status-title";
+    title.textContent = CURRENT_USER_NAME;
+    container.appendChild(title);
+  }
 
   // What's running right now and since when — previously the separate
   // top-left #status box, moved here so it's one place for "what's going
   // on" instead of two. Shared with the viewer's equivalent section.
   const currentEl = document.createElement("div");
   currentEl.className = "overview-current";
-  panel.body.appendChild(currentEl);
+  container.appendChild(currentEl);
 
   function renderCurrent() {
     const current = getCurrentActivity();
@@ -39,7 +39,7 @@ export function setupGoalsPanel(): void {
 
   const divider = document.createElement("div");
   divider.className = "panel-divider";
-  panel.body.appendChild(divider);
+  container.appendChild(divider);
 
   // AW connection only gets checked once at startup (if it fails, the app
   // bails before this panel ever exists), so this is always "Connected"
@@ -48,7 +48,7 @@ export function setupGoalsPanel(): void {
   // app shows both; the viewer (no AW access at all) only ever gets VT.
   const statusLine = document.createElement("div");
   statusLine.className = "overview-status-line";
-  panel.body.appendChild(statusLine);
+  container.appendChild(statusLine);
 
   function renderStatus() {
     const { lastSuccessAt, lastError } = getBroadcastHealth();
@@ -64,6 +64,24 @@ export function setupGoalsPanel(): void {
 
   renderCurrent();
   setInterval(renderCurrent, CURRENT_TICK_MS);
+}
+
+/**
+ * Always-visible corner panel version of the above. Goal progress used to
+ * live here too but moved to the Dashboard panel — showing it in both
+ * places was redundant.
+ */
+export function setupGoalsPanel(): void {
+  // Same title-bar component the Dashboard uses, just not closable (always
+  // visible, no button that opens it) and not draggable (always lives in
+  // the same corner — nothing to gain from being able to move it).
+  const panel = buildFloatingPanel(CURRENT_USER_NAME, {
+    closable: false,
+    draggable: false,
+    className: "goals-panel",
+  });
+
+  setupJacquelineStatus(panel.body);
 
   panel.open();
 }

@@ -138,4 +138,27 @@ export class House extends SceneRenderer {
     if (roomId) this.setViewedRoom(roomId);
     this.onActivityChange(current);
   }
+
+  /**
+   * Start/stop an activity by label with no associated clicked object —
+   * used by the mobile Pick Action list, which picks from the flat
+   * ACTIVITIES registry rather than tapping a specific object in a
+   * specific room. Same start/stop-toggle + overlay/camera-focus effects
+   * as runAction(), just always treated as an unattributed source (same
+   * "assume it's this one" rule used when resuming from AW on startup).
+   */
+  public async toggleActivity(label: string): Promise<void> {
+    const current = getCurrentActivity();
+    const isSameLabel = current?.label === label;
+
+    await (isSameLabel ? stopActivity() : startActivity(label));
+    this.currentActivitySource = null;
+
+    const updated = getCurrentActivity();
+    this.updateActiveOverlays(updated);
+    this.onActivityChange(updated);
+
+    const roomId = findRoomForActivityLabel(label);
+    if (roomId) this.setViewedRoom(roomId);
+  }
 }

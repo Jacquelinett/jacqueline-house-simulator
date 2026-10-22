@@ -83,3 +83,23 @@ body {
   font-size: 13px;
   margin-bottom: 12px;
 }
+
+/* Mobile "Leave a note" popup's button row — viewer-only (the desktop app
+   has no equivalent popup, just the inline form), so this lives here
+   rather than in shared-chrome.css. */
+.mobile-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.mobile-modal-cancel {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
