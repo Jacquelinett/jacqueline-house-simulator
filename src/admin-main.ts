@@ -1558,11 +1558,10 @@ async function renderRooms(body: HTMLElement) {
   function buildRoomsTable(roomsForTab: RoomSpecWire[]): HTMLElement {
     const table = document.createElement("table");
     table.className = "admin-table";
-    table.innerHTML = "<tr><th>Room</th><th>Size</th><th>Level</th><th>Objects</th><th></th></tr>";
+    table.innerHTML = "<tr><th>Room</th><th>Size</th><th>Objects</th><th></th></tr>";
     for (const room of roomsForTab) {
       const row = document.createElement("tr");
-      const level = membership.get(room.id) ?? 0;
-      row.innerHTML = `<td>${room.name}</td><td>${room.cols}×${room.rows}</td><td>${level}</td><td>${room.objects.length}</td>`;
+      row.innerHTML = `<td>${room.name}</td><td>${room.cols}×${room.rows}</td><td>${room.objects.length}</td>`;
 
       const actionCell = document.createElement("td");
       const editBtn = document.createElement("button");
