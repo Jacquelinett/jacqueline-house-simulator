@@ -4,6 +4,7 @@ import { setupGoalsPanel, setupJacquelineStatus } from "./goals/panel";
 import { setupGoalsManageModal } from "./goals/manageModal";
 import { setupTodosModal } from "./todos/modal";
 import { setupTimerModal } from "./timer/modal";
+import { setupWorkoutModal } from "./workout/modal";
 import { setupSettingsModal, setupSettingsContent } from "./settings/modal";
 import { getSettings, onSettingsChange } from "./settings/state";
 import { setupMessagesModal } from "./broadcast/messagesModal";
@@ -63,6 +64,7 @@ function setupModals(): void {
   const todosModal = setupTodosModal();
 
   const timerModal = setupTimerModal();
+  const workoutModal = setupWorkoutModal();
   const settingsModal = setupSettingsModal();
   const messagesModal = setupMessagesModal();
   setupDashboardPanel();
@@ -72,6 +74,7 @@ function setupModals(): void {
     { label: "Goals", onclick: goalsModal.open },
     { label: "Todos", onclick: todosModal.open },
     { label: "Timer", onclick: timerModal.open },
+    { label: "Workout", onclick: workoutModal.open },
     { label: "Statistic", onclick: statisticModal.open },
     { label: "Messages", onclick: messagesModal.open },
     { label: "Settings", onclick: settingsModal.open },

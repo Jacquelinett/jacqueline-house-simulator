@@ -462,3 +462,20 @@ body {
   padding: 6px 0;
   color: var(--text);
 }
+
+/* Workout modal — app-only (wger-sourced data has no viewer equivalent). */
+.workout-row {
+  justify-content: space-between;
+}
+
+.workout-sets-detail {
+  opacity: 0.75;
+  font-size: 12px;
+}
+
+.workout-session-notes {
+  font-size: 12px;
+  opacity: 0.6;
+  font-style: italic;
+  margin-bottom: 4px;
+}

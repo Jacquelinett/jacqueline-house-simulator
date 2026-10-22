@@ -18,6 +18,7 @@ import { addTodo, deleteTodo, getTodos, onTodosChange, toggleTodo } from "./todo
 import { deleteMessage, fetchMessages, getBroadcastHealthInfo, pushStatus } from "./broadcast";
 import { getDeviceSettings, updateDeviceSettings } from "./deviceSettings";
 import { Character, getCharacterBySecret } from "./characters";
+import { getWorkoutsForDate } from "./workouts";
 
 /**
  * One WebSocket connection per client carries everything — commands
@@ -56,6 +57,7 @@ const queries: Record<string, (characterId: string, args: any) => Promise<unknow
   getCurrentActivity: async (characterId) => getCurrentActivity(bucketIdFor(characterId)),
   getGoalHistory: async (characterId) => getAllHistory(characterId),
   historyForGoal: async (characterId, { goalId }) => historyForGoal(characterId, goalId),
+  getWorkoutsForDate: async (characterId, { dateStr }) => getWorkoutsForDate(characterId, dateStr),
   fetchMessages: () => fetchMessages(),
   getBroadcastHealth: async () => getBroadcastHealthInfo(),
 };

@@ -13,6 +13,8 @@ import { getServerConfig } from "./serverConfig";
 import { pushGoals, pushPeriodStats, pushStats, pushStatus, pushTodayStreaks, pushYesterdayStats } from "./broadcast";
 import { serveStatic } from "./staticServer";
 import { listCharacters } from "./characters";
+import { seedMockWorkoutsIfEmpty } from "./workouts";
+import { localDateString } from "../src/goals/recurrence";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // The Tauri app's own `npm run build` output — same bundle its webview
@@ -58,6 +60,11 @@ async function main() {
   }
 
   const jacqueline = characters.find((c) => c.name === "Jacqueline");
+
+  // Mock wger data (see server/workouts.ts's own comment) — only for
+  // Jacqueline, and only if today has nothing yet, so this doesn't
+  // overwrite anything on every restart.
+  if (jacqueline) seedMockWorkoutsIfEmpty(jacqueline.id, localDateString(new Date()));
 
   onGoalsChange(() => {
     // val.town/the public viewer only ever show Jacqueline's goals for now.
