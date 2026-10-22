@@ -35,10 +35,10 @@ function characterOrThrow(characterId: string): Character {
 function bucketIdFor(characterId: string): string {
   return characterOrThrow(characterId).awBucketId;
 }
-/** Every per-character PUT body includes this, so val.town can store/key each blob by character — see valtown/houseSimulatorStatus.ts's schema. */
-function characterFields(characterId: string): { characterId: string; characterName: string } {
+/** Every per-character PUT body includes this, so val.town can store/key each blob by character — see valtown/houseSimulatorStatus.ts's schema. characterSpriteName only actually gets stored by the status table (which doubles as the character directory — see handleGetAll's own comment), but rides along harmlessly on every other blob too rather than needing its own special-cased field list. */
+function characterFields(characterId: string): { characterId: string; characterName: string; characterSpriteName: string | null } {
   const character = characterOrThrow(characterId);
-  return { characterId: character.id, characterName: character.name };
+  return { characterId: character.id, characterName: character.name, characterSpriteName: character.spriteName };
 }
 function authHeaders(): Record<string, string> {
   return { Authorization: `Bearer ${getServerConfig().broadcastSecret ?? ""}` };

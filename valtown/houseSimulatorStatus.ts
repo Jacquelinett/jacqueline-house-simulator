@@ -25,8 +25,11 @@
  *                    individual per-character GET endpoints below still exist (harmless to leave, and
  *                    still handy for debugging one character's blob directly), but nothing in this
  *                    repo calls them anymore.
- *   GET  /api/characters -> public JSON: [{id, name}, ...] for every character ever published — lets
- *                            the viewer show a picker instead of hardcoding whose data to show
+ *   GET  /api/characters -> public JSON: [{id, name, spriteName}, ...] for every character ever
+ *                            published — lets the viewer show a picker instead of hardcoding whose
+ *                            data to show; spriteName is House Simulator's own sprite-key resolution
+ *                            input (null means "use the shared default art"), carried through so the
+ *                            viewer can resolve the same per-character overlay art the desktop app does
  *   GET  /api/status?character=<id>    -> public JSON: what that character is currently running + today's
  *                                          tracked minutes per label
  *   PUT  /api/status    -> (secret required) House Simulator pushes this on activity change
@@ -107,12 +110,19 @@ async function ensureSchema() {
     `create table if not exists status (
       character_id text primary key,
       character_name text not null,
+      character_sprite_name text,
       activity_label text,
       started_at text,
       today_minutes_json text,
       updated_at text not null
     )`,
   );
+  // character_sprite_name added after the table already existed on some
+  // deployments — CREATE TABLE IF NOT EXISTS above is a no-op for those
+  // (the same val.town schema-migration gotcha CLAUDE.md documents), so
+  // an explicit ADD COLUMN is needed too. Only fails if the column's
+  // already there.
+  await sqlite.execute("alter table status add column character_sprite_name text").catch(() => {});
   await migrateToPerCharacter(
     "goals_blob",
     `create table if not exists goals_blob (
@@ -182,8 +192,8 @@ function characterIdFrom(url: URL): string | null {
 }
 
 async function handleGetCharacters(): Promise<Response> {
-  const result = await sqlite.execute("select character_id, character_name from status order by character_name");
-  return Response.json(result.rows.map((r: any) => ({ id: r.character_id, name: r.character_name })));
+  const result = await sqlite.execute("select character_id, character_name, character_sprite_name from status order by character_name");
+  return Response.json(result.rows.map((r: any) => ({ id: r.character_id, name: r.character_name, spriteName: r.character_sprite_name })));
 }
 
 /**
@@ -205,10 +215,10 @@ async function handleGetAll(): Promise<Response> {
     sqlite.execute("select character_id, streaks_json from streaks_blob"),
   ]);
 
-  const characters: { id: string; name: string }[] = [];
+  const characters: { id: string; name: string; spriteName: string | null }[] = [];
   const status: Record<string, { activityLabel: string | null; startedAt: string | null; todayMinutesByLabel: Record<string, number> }> = {};
   for (const r of statusRows.rows as any[]) {
-    characters.push({ id: r.character_id, name: r.character_name });
+    characters.push({ id: r.character_id, name: r.character_name, spriteName: r.character_sprite_name });
     status[r.character_id] = {
       activityLabel: r.activity_label,
       startedAt: r.started_at,
@@ -261,14 +271,16 @@ async function handlePutStatus(req: Request): Promise<Response> {
 
   const activityLabel: string | null = body.activityLabel ?? null;
   const startedAt: string | null = body.startedAt ?? null;
+  const characterSpriteName: string | null = body.characterSpriteName ?? null;
   const todayMinutesByLabel: Record<string, number> =
     body.todayMinutesByLabel && typeof body.todayMinutesByLabel === "object" ? body.todayMinutesByLabel : {};
 
   await sqlite.execute({
-    sql: `insert into status (character_id, character_name, activity_label, started_at, today_minutes_json, updated_at)
-          values (:characterId, :characterName, :activityLabel, :startedAt, :todayMinutesJson, :updatedAt)
+    sql: `insert into status (character_id, character_name, character_sprite_name, activity_label, started_at, today_minutes_json, updated_at)
+          values (:characterId, :characterName, :characterSpriteName, :activityLabel, :startedAt, :todayMinutesJson, :updatedAt)
           on conflict(character_id) do update set
             character_name = excluded.character_name,
+            character_sprite_name = excluded.character_sprite_name,
             activity_label = excluded.activity_label,
             started_at = excluded.started_at,
             today_minutes_json = excluded.today_minutes_json,
@@ -276,6 +288,7 @@ async function handlePutStatus(req: Request): Promise<Response> {
     args: {
       characterId: body.characterId,
       characterName: body.characterName,
+      characterSpriteName,
       activityLabel,
       startedAt,
       todayMinutesJson: JSON.stringify(todayMinutesByLabel),

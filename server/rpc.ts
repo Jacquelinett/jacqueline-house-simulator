@@ -118,6 +118,7 @@ function broadcastToAll(key: string, data: unknown) {
 
 export interface AllStatusesEntry {
   characterName: string;
+  characterSpriteName: string | null;
   activityLabel: string;
   startedAt: string;
 }
@@ -135,7 +136,12 @@ function computeAllStatuses(): Record<string, AllStatusesEntry> {
   for (const character of listCharacters()) {
     const current = getCurrentActivity(character.awBucketId);
     if (!current) continue;
-    result[character.id] = { characterName: character.name, activityLabel: current.label, startedAt: current.startedAt.toISOString() };
+    result[character.id] = {
+      characterName: character.name,
+      characterSpriteName: character.spriteName,
+      activityLabel: current.label,
+      startedAt: current.startedAt.toISOString(),
+    };
   }
   return result;
 }
@@ -234,7 +240,7 @@ export function setupRpc(wss: WebSocketServer): void {
     characterByClient.set(ws, character);
 
     clients.add(ws);
-    ws.send(JSON.stringify({ type: "state", key: "character", data: { id: character.id, name: character.name } }));
+    ws.send(JSON.stringify({ type: "state", key: "character", data: { id: character.id, name: character.name, spriteName: character.spriteName } }));
     ws.send(JSON.stringify({ type: "state", key: "goals", data: getGoals(character.id) }));
     ws.send(JSON.stringify({ type: "state", key: "todos", data: getTodos(character.id) }));
     ws.send(JSON.stringify({ type: "state", key: "status", data: currentStatus(character.awBucketId) }));

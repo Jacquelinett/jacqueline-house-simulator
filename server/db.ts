@@ -318,7 +318,8 @@ export function migrate(): void {
       secret TEXT UNIQUE NOT NULL,
       aw_bucket_id TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      publish_to_viewer INTEGER NOT NULL DEFAULT 0
+      publish_to_viewer INTEGER NOT NULL DEFAULT 0,
+      sprite_name TEXT
     );
 
     CREATE TABLE IF NOT EXISTS goals (
@@ -480,6 +481,11 @@ export function migrate(): void {
     "ALTER TABLE rooms ADD COLUMN show_left_wall INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE rooms ADD COLUMN show_right_wall INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE characters ADD COLUMN publish_to_viewer INTEGER NOT NULL DEFAULT 0",
+    // Nullable, no backfill needed (unlike publish_to_viewer's meaningful
+    // default) — null just means "no custom sprite, use the shared
+    // default texture for any sprite-keyed overlay" (see
+    // src/scene/characterSprites.ts).
+    "ALTER TABLE characters ADD COLUMN sprite_name TEXT",
   ]) {
     try {
       db.exec(stmt);

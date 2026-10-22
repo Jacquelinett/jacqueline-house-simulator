@@ -14,6 +14,7 @@ const LABEL_GAP = 4; // above the object's own top edge
 export interface ViewerCharacterStatus {
   characterId: string;
   characterName: string;
+  characterSpriteName: string | null;
   activityLabel: string;
 }
 

@@ -58,6 +58,7 @@ interface Character {
   secret: string;
   awBucketId: string;
   publishToViewer: boolean;
+  spriteName: string | null;
 }
 
 interface ActivityDef {
@@ -308,6 +309,7 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
   let secretInput: HTMLInputElement | null = null;
   let bucketInput: HTMLInputElement | null = null;
   let publishCheckbox: HTMLInputElement | null = null;
+  let spriteNameInput: HTMLInputElement | null = null;
   if (existing) {
     secretInput = document.createElement("input");
     secretInput.value = existing.secret;
@@ -323,6 +325,15 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
     publishCheckbox.checked = existing.publishToViewer;
     publishLabel.append(publishCheckbox, document.createTextNode(" Publish to viewer"));
     form.appendChild(publishLabel);
+
+    spriteNameInput = document.createElement("input");
+    spriteNameInput.placeholder = "e.g. jacqueline";
+    spriteNameInput.value = existing.spriteName ?? "";
+    form.append(document.createTextNode("Sprite name:"), spriteNameInput);
+    const spriteHint = document.createElement("div");
+    spriteHint.className = "admin-hint";
+    spriteHint.textContent = 'Combined with an object\'s sprite key to look up this character\'s own overlay art (e.g. "jacqueline" + "playPiano" -> jacqueline_playPiano.png). Leave blank to always use the shared default art.';
+    form.appendChild(spriteHint);
   }
 
   const footer = document.createElement("div");
@@ -350,6 +361,7 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
             secret: secretInput!.value.trim(),
             awBucketId: bucketInput!.value.trim(),
             publishToViewer: publishCheckbox!.checked,
+            spriteName: spriteNameInput!.value.trim() || null,
           }),
         });
       } else {

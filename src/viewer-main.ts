@@ -69,6 +69,7 @@ interface CharacterStatus {
 interface CharacterEntry {
   id: string;
   name: string;
+  spriteName: string | null;
 }
 
 /**
@@ -605,7 +606,7 @@ async function main() {
   // request for the one actually selected.
   const initialAll = await fetchAll();
   const characters = initialAll?.characters ?? [];
-  let selectedCharacter: CharacterEntry = pickInitialCharacter(characters) ?? { id: "", name: CURRENT_USER_NAME };
+  let selectedCharacter: CharacterEntry = pickInitialCharacter(characters) ?? { id: "", name: CURRENT_USER_NAME, spriteName: null };
   // Both reassigned once selectCharacter exists, below — forward-declared
   // here since the picker modal/scene that call them are built first.
   let openCharacterPicker: () => void = () => {};
@@ -627,7 +628,14 @@ async function main() {
       floorButtons.onRoomChange(name);
     },
     viewerSettings,
-    (character) => onViewerCharacterClick(character),
+    // HouseViewer's own attribution lookup only ever knows {id, name} (see
+    // scene/viewer.ts's attributionFor) — resolved against the already-
+    // fetched character directory here so selectCharacter always gets a
+    // full CharacterEntry (spriteName included), not a partial stand-in.
+    (character) => {
+      const full = characters.find((c) => c.id === character.id);
+      if (full) onViewerCharacterClick(full);
+    },
   );
   floorButtons.bindGoToRoom((roomId) => viewer.goToRoom(roomId));
 
@@ -879,7 +887,8 @@ async function main() {
     if (data) {
       for (const c of characters) {
         const cs = data.status[c.id];
-        if (cs?.activityLabel) allStatuses.set(c.id, { characterId: c.id, characterName: c.name, activityLabel: cs.activityLabel });
+        if (cs?.activityLabel)
+          allStatuses.set(c.id, { characterId: c.id, characterName: c.name, characterSpriteName: c.spriteName, activityLabel: cs.activityLabel });
       }
     }
     viewer.applyAllStatuses(allStatuses);

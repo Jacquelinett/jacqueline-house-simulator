@@ -177,10 +177,12 @@ export interface RemoteStatus {
 export interface RemoteCharacter {
   id: string;
   name: string;
+  spriteName: string | null;
 }
 
 export interface AllStatusesEntry {
   characterName: string;
+  characterSpriteName: string | null;
   activityLabel: string;
   startedAt: string;
 }
@@ -198,7 +200,7 @@ const settingsStore = createRemoteStore<DeviceSettings>(DEFAULT_DEVICE_SETTINGS)
 // Which character this connection's secret authenticated as — replaces the
 // old hardcoded CURRENT_USER_NAME for any surface that needs to work for
 // whichever character is actually connected (see goals/panel.ts).
-const characterStore = createRemoteStore<RemoteCharacter>({ id: "", name: "" });
+const characterStore = createRemoteStore<RemoteCharacter>({ id: "", name: "", spriteName: null });
 // Global scene registry (same for every character) — main.ts/viewer-main.ts
 // feed these straight into scene/activities.ts's setActivities()/
 // scene/rooms.ts's setObjectTypes()/setRooms() right after connecting, see

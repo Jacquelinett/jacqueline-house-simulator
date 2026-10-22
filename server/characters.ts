@@ -6,6 +6,7 @@ export interface Character {
   secret: string;
   awBucketId: string;
   publishToViewer: boolean;
+  spriteName: string | null;
 }
 
 interface CharacterRow {
@@ -14,28 +15,34 @@ interface CharacterRow {
   secret: string;
   aw_bucket_id: string;
   publish_to_viewer: number;
+  sprite_name: string | null;
 }
 
+const SELECT_COLUMNS = "id, name, secret, aw_bucket_id, publish_to_viewer, sprite_name";
+
 function fromRow(row: CharacterRow): Character {
-  return { id: row.id, name: row.name, secret: row.secret, awBucketId: row.aw_bucket_id, publishToViewer: !!row.publish_to_viewer };
+  return {
+    id: row.id,
+    name: row.name,
+    secret: row.secret,
+    awBucketId: row.aw_bucket_id,
+    publishToViewer: !!row.publish_to_viewer,
+    spriteName: row.sprite_name,
+  };
 }
 
 export function getCharacterBySecret(secret: string): Character | undefined {
-  const row = db.prepare("SELECT id, name, secret, aw_bucket_id, publish_to_viewer FROM characters WHERE secret = ?").get(secret) as
-    | CharacterRow
-    | undefined;
+  const row = db.prepare(`SELECT ${SELECT_COLUMNS} FROM characters WHERE secret = ?`).get(secret) as CharacterRow | undefined;
   return row ? fromRow(row) : undefined;
 }
 
 export function getCharacterById(id: string): Character | undefined {
-  const row = db.prepare("SELECT id, name, secret, aw_bucket_id, publish_to_viewer FROM characters WHERE id = ?").get(id) as
-    | CharacterRow
-    | undefined;
+  const row = db.prepare(`SELECT ${SELECT_COLUMNS} FROM characters WHERE id = ?`).get(id) as CharacterRow | undefined;
   return row ? fromRow(row) : undefined;
 }
 
 export function listCharacters(): Character[] {
-  const rows = db.prepare("SELECT id, name, secret, aw_bucket_id, publish_to_viewer FROM characters ORDER BY created_at").all() as CharacterRow[];
+  const rows = db.prepare(`SELECT ${SELECT_COLUMNS} FROM characters ORDER BY created_at`).all() as CharacterRow[];
   return rows.map(fromRow);
 }
 
@@ -45,7 +52,7 @@ function slugify(name: string): string {
   return base || crypto.randomUUID().slice(0, 8);
 }
 
-/** publish_to_viewer omitted — defaults to 0 (the column's own default), so a brand-new character is never published to val.town/the viewer until an admin opts them in. */
+/** publish_to_viewer/sprite_name omitted — default to 0/null (the columns' own defaults), so a brand-new character is never published to val.town/the viewer and has no custom sprite until an admin opts them in. */
 export function createCharacter(name: string): Character {
   const id = crypto.randomUUID();
   const secret = crypto.randomUUID();
@@ -56,7 +63,7 @@ export function createCharacter(name: string): Character {
   db.prepare(
     "INSERT INTO characters (id, name, secret, aw_bucket_id, created_at) VALUES (?, ?, ?, ?, ?)",
   ).run(id, name, secret, bucketId, new Date().toISOString());
-  return { id, name, secret, awBucketId: bucketId, publishToViewer: false };
+  return { id, name, secret, awBucketId: bucketId, publishToViewer: false, spriteName: null };
 }
 
 export function renameCharacter(id: string, name: string): void {
@@ -76,6 +83,11 @@ export function updateCharacterBucket(id: string, awBucketId: string): void {
 /** Whether this character's status/goals/stats/period-stats/yesterday/streaks get pushed to val.town at all (server/index.ts's startup pushes, server/rpc.ts's post-activity-change push) — see CLAUDE.md's "Characters" section. Turning this off doesn't retroactively delete anything already pushed; val.town just stops hearing about this character going forward. */
 export function updateCharacterPublishToViewer(id: string, publishToViewer: boolean): void {
   db.prepare("UPDATE characters SET publish_to_viewer = ? WHERE id = ?").run(publishToViewer ? 1 : 0, id);
+}
+
+/** The "key" every sprite-keyed object overlay resolves against (src/scene/characterSprites.ts: `${spriteName}_${key}.png`) — null means "no custom sprite," falling back to that overlay's own shared default texture. An empty string from the admin form is normalized to null rather than persisted as a literal empty-string sprite name. */
+export function updateCharacterSpriteName(id: string, spriteName: string | null): void {
+  db.prepare("UPDATE characters SET sprite_name = ? WHERE id = ?").run(spriteName || null, id);
 }
 
 export function deleteCharacter(id: string): void {
