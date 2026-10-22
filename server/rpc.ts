@@ -14,6 +14,7 @@ import { getTodayStreaksByGoalId } from "./goalHistory";
 import { getGoalProgressForDate, getTodayMinutesByLabel } from "./progress";
 import { computeFixedPeriodStats, computePeriodStats } from "./periodStats";
 import { addTodo, deleteTodo, getTodos, onTodosChange, toggleTodo } from "./todos";
+import { pushStatus } from "./broadcast";
 
 /**
  * One WebSocket connection per client carries everything — commands
@@ -101,6 +102,10 @@ export function setupRpc(wss: WebSocketServer, lanSecret: string | null): void {
           await handler(msg.args ?? {});
           if (msg.name === "startActivity" || msg.name === "stopActivity") {
             broadcast("status", currentStatus());
+            // Pushed on every activity change (not just the hourly timer)
+            // so a viewer isn't stuck showing stale data between pushes —
+            // same reasoning main.ts's onActivityChange callback had.
+            pushStatus().catch((err) => console.error("[rpc] pushStatus after activity change failed", err));
           }
         } catch (err) {
           console.error(`[rpc] command ${msg.name} failed`, err);
