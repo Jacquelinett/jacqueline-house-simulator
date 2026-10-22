@@ -135,3 +135,12 @@ body {
 .character-picker-row:hover {
   background: var(--surface-soft);
 }
+
+/* Desktop-layout Jacqueline panel's title, when it opens the same character
+   picker as the mobile title button — viewer-only (buildFloatingPanel's
+   plain .floating-panel-title is a non-interactive <span> everywhere else
+   in the app, so this modifier only ever gets applied here). */
+.floating-panel-title-link {
+  cursor: pointer;
+  text-decoration: underline;
+}

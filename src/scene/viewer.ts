@@ -1,4 +1,5 @@
-import { Container, Graphics, Polygon, Text } from "pixi.js";
+import { Application, Container, Graphics, Polygon, Text } from "pixi.js";
+import { findActivityById } from "./activities";
 import { findObjectForActivityLabel, gridToScreen, ObjectDef, RoomDef } from "./rooms";
 import { SceneRenderer } from "./renderer";
 
@@ -8,24 +9,66 @@ const LABEL_PADDING_X = 6;
 const LABEL_PADDING_Y = 3;
 const LABEL_GAP = 4; // above the object's own top edge
 
+export interface ViewerCharacterStatus {
+  characterId: string;
+  characterName: string;
+  activityLabel: string;
+}
+
 /**
  * Read-only house view for the public status page. Room navigation (click a
  * room, or an object's "navigate" action like a staircase) works the same as
  * the desktop app — it's just looking around, not doing anything. Clicking
- * an "activity" object instead only shows a floating label with its name
- * (e.g. "Piano") — never starts/stops tracking, since a viewer has no AW
- * access and shouldn't be able to change what's running regardless.
+ * an "activity" object shows a floating label with its name (e.g. "Piano"),
+ * same as always; on desktop width, if that activity is currently
+ * attributed to one of the known characters (see applyAllStatuses), the
+ * click also switches the viewer straight to them via onCharacterClick —
+ * the viewer's own equivalent of House.ts's peek-at-another-character
+ * click, except there's no "mine" to protect (the viewer never starts/
+ * stops tracking), so a single click is enough, no double-click gate
+ * needed. Mobile keeps today's label-only behavior — it already has its
+ * own switcher via the mobile title button (see viewer-main.ts).
  */
 export class HouseViewer extends SceneRenderer {
   private activeLabel: Container | null = null;
+  private allStatuses = new Map<string, ViewerCharacterStatus>();
 
-  /** Highlights whichever activity is currently running and follows its object. */
-  public showActivity(current: { label: string } | null) {
-    this.updateActiveOverlays(current ? new Set([current.label]) : new Set());
-    if (current) {
-      const found = findObjectForActivityLabel(current.label);
+  constructor(
+    app: Application,
+    onRoomChange: (roomName: string) => void,
+    initial: { devMode: boolean; scale: number },
+    private onCharacterClick: (character: { id: string; name: string }) => void,
+  ) {
+    super(app, onRoomChange, initial);
+  }
+
+  /** Pans the camera to whichever object the SELECTED character is currently doing — never touches overlay visibility, which now reflects every known character (see applyAllStatuses below). */
+  public focusActivity(label: string | null) {
+    if (label) {
+      const found = findObjectForActivityLabel(label);
       if (found) this.setViewedRoom(found.roomId, found.objectId);
     }
+  }
+
+  /**
+   * Recomputes which objects' overlays should be visible from EVERY known
+   * character's current activity, not just the one currently selected —
+   * the viewer's own equivalent of House.ts's applyAllStatuses, fed by
+   * polling val.town's per-character status blobs instead of a WebSocket
+   * broadcast. Never moves the camera; only a deliberate click does that.
+   */
+  public applyAllStatuses(allStatuses: Map<string, ViewerCharacterStatus>) {
+    this.allStatuses = allStatuses;
+    const labels = new Set(Array.from(allStatuses.values()).map((entry) => entry.activityLabel));
+    this.updateActiveOverlays(labels);
+  }
+
+  /** Who (if anyone) is currently running `label`, per the last applyAllStatuses — no "mine wins" tie-break needed here, unlike House.ts's own version, since the viewer has no "mine" at all. */
+  private attributionFor(label: string): { id: string; name: string } | null {
+    for (const entry of this.allStatuses.values()) {
+      if (entry.activityLabel === label) return { id: entry.characterId, name: entry.characterName };
+    }
+    return null;
   }
 
   protected attachRoomInteraction(container: Container, room: RoomDef) {
@@ -47,6 +90,7 @@ export class HouseViewer extends SceneRenderer {
     if (!obj.actions?.length) return;
 
     const navigateAction = obj.actions.find((a) => a.kind === "navigate");
+    const activityAction = obj.actions.find((a) => a.kind === "activity");
 
     container.eventMode = "static";
     container.cursor = "pointer";
@@ -55,11 +99,22 @@ export class HouseViewer extends SceneRenderer {
       e.stopPropagation(); // otherwise this bubbles to the room's own click handler too
       if (navigateAction) {
         if (!this.isMobileLayout()) this.setViewedRoom(navigateAction.roomId);
-      } else {
-        // The name label is informational, not navigation — keep it
-        // working on mobile even though the camera itself won't move.
-        if (!this.isMobileLayout()) this.setViewedRoom(roomId, obj.id);
-        this.toggleLabel(container, obj);
+        return;
+      }
+
+      // The name label is informational, not navigation — keep it
+      // working on mobile even though the camera itself won't move.
+      if (!this.isMobileLayout()) this.setViewedRoom(roomId, obj.id);
+      this.toggleLabel(container, obj);
+
+      // Desktop-width only (same reasoning House.ts's own click-to-peek
+      // uses isMobileLayout for): if someone's actually doing this right
+      // now, jump the whole viewer to them instead of making the click
+      // just look.
+      if (!this.isMobileLayout() && activityAction) {
+        const label = findActivityById(activityAction.activityId)?.label;
+        const attribution = label ? this.attributionFor(label) : null;
+        if (attribution) this.onCharacterClick(attribution);
       }
     });
   }

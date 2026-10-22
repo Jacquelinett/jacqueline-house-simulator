@@ -57,7 +57,14 @@ export function makeDraggable(panel: HTMLElement, handle: HTMLElement) {
  */
 export function buildFloatingPanel(
   title: string,
-  options?: { closable?: boolean; draggable?: boolean; resizable?: boolean; className?: string; headerExtra?: HTMLElement },
+  options?: {
+    closable?: boolean;
+    draggable?: boolean;
+    resizable?: boolean;
+    className?: string;
+    headerExtra?: HTMLElement;
+    onTitleClick?: () => void;
+  },
 ): {
   body: HTMLElement;
   open: () => void;
@@ -74,9 +81,17 @@ export function buildFloatingPanel(
   header.className = "floating-panel-header";
   panel.appendChild(header);
 
+  // A plain <span> normally — options.onTitleClick (the viewer's
+  // character-switcher panel, see viewer-main.ts) upgrades it to a
+  // clickable title instead of adding a second element alongside it.
   const titleEl = document.createElement("span");
-  titleEl.className = "floating-panel-title";
+  titleEl.className = "floating-panel-title" + (options?.onTitleClick ? " floating-panel-title-link" : "");
   titleEl.textContent = title;
+  if (options?.onTitleClick) {
+    titleEl.setAttribute("role", "button");
+    titleEl.setAttribute("tabindex", "0");
+    titleEl.onclick = options.onTitleClick;
+  }
   header.appendChild(titleEl);
 
   // Title and close both live here too, but grouped on the right so a drag

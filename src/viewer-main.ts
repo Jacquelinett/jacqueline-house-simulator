@@ -1,4 +1,4 @@
-import { HouseViewer, preloadRoomAssets } from "./scene/viewer";
+import { HouseViewer, preloadRoomAssets, ViewerCharacterStatus } from "./scene/viewer";
 import { setActivities, ActivityDef } from "./scene/activities";
 import { ObjectTypeDef, RoomSpecWire, roomSpecsFromWire, setObjectTypes, setRooms } from "./scene/rooms";
 import { Floor, setFloors } from "./scene/floors";
@@ -111,6 +111,31 @@ function pickInitialCharacter(characters: CharacterEntry[]): CharacterEntry | nu
 /** Appended to every status/goals/stats/... fetch below. Empty string (not a "?character=" with a blank value) when there's no known character id, so a not-yet-re-pasted val.town deployment keeps working exactly as it did before multi-character support existed. */
 function characterQueryParam(id: string): string {
   return id ? `?character=${encodeURIComponent(id)}` : "";
+}
+
+/**
+ * Every known character's CURRENT activity, keyed by character id — feeds
+ * HouseViewer.applyAllStatuses (the "see everyone in the scene" overlay,
+ * same idea as the Tauri app's own allStatuses broadcast, just polled from
+ * val.town instead of pushed over a WebSocket). Best-effort per character:
+ * one character's status fetch failing just leaves them out of the map
+ * rather than blanking out everyone else's overlay too.
+ */
+async function fetchAllStatuses(chars: CharacterEntry[]): Promise<Map<string, ViewerCharacterStatus>> {
+  const result = new Map<string, ViewerCharacterStatus>();
+  await Promise.all(
+    chars.map(async (c) => {
+      try {
+        const res = await fetch(`${STATUS_API_BASE}/api/status${characterQueryParam(c.id)}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as StatusResponse;
+        if (data.activityLabel) result.set(c.id, { characterId: c.id, characterName: c.name, activityLabel: data.activityLabel });
+      } catch {
+        // ignore — best-effort, see doc comment above
+      }
+    }),
+  );
+  return result;
 }
 
 /** Builds the "current activity" line (+ optional title above it, for the mobile Home tab, which has no panel header to show one) — shared by the Jacqueline panel and its mobile equivalent, which otherwise hand-built this same markup twice. On mobile the title is a clickable link-styled button (opens the character picker); the desktop panel doesn't pass showTitle at all, since its title lives in buildFloatingPanel's own header instead (kept in sync separately via setTitle). */
@@ -560,7 +585,10 @@ async function main() {
   // URLs they always did rather than breaking.
   const characters = await fetchCharacters();
   let selectedCharacter: CharacterEntry = pickInitialCharacter(characters) ?? { id: "", name: CURRENT_USER_NAME };
+  // Both reassigned once selectCharacter exists, below — forward-declared
+  // here since the picker modal/scene that call them are built first.
   let openCharacterPicker: () => void = () => {};
+  let onViewerCharacterClick: (character: CharacterEntry) => void = () => {};
 
   // Building the floor buttons before the HouseViewer needs no viewer at
   // all (bindGoToRoom happens after) — so the HouseViewer's own
@@ -578,6 +606,7 @@ async function main() {
       floorButtons.onRoomChange(name);
     },
     viewerSettings,
+    (character) => onViewerCharacterClick(character),
   );
   floorButtons.bindGoToRoom((roomId) => viewer.goToRoom(roomId));
 
@@ -620,12 +649,13 @@ async function main() {
   // AW line (no AW access here) and plus "Leave a note" (viewer-only). Its
   // title isn't fixed at "Jacqueline" like the desktop app's — it reflects
   // whichever character is currently selected (see selectCharacter below),
-  // kept in sync via setTitle rather than a clickable switcher of its own
-  // (the switcher itself is mobile-only, per the user's explicit scoping). ---
+  // and is itself clickable to open the same character picker the mobile
+  // title button does (desktop width has no separate switcher control). ---
   const jacquelinePanel = buildFloatingPanel(selectedCharacter.name, {
     closable: false,
     draggable: false,
     className: "goals-panel",
+    onTitleClick: () => openCharacterPicker(),
   });
 
   const renderCurrentDesktop = buildCurrentActivityBlock(jacquelinePanel.body);
@@ -778,13 +808,14 @@ async function main() {
   async function refreshStatus() {
     try {
       const q = characterQueryParam(selectedCharacter.id);
-      const [statusRes, goalsRes, statsRes, periodStatsRes, yesterdayRes, streaksRes] = await Promise.all([
+      const [statusRes, goalsRes, statsRes, periodStatsRes, yesterdayRes, streaksRes, allStatuses] = await Promise.all([
         fetch(`${STATUS_API_BASE}/api/status${q}`),
         fetch(`${STATUS_API_BASE}/api/goals${q}`),
         fetch(`${STATUS_API_BASE}/api/stats${q}`),
         fetch(`${STATUS_API_BASE}/api/period-stats${q}`),
         fetch(`${STATUS_API_BASE}/api/yesterday${q}`),
         fetch(`${STATUS_API_BASE}/api/streaks${q}`),
+        fetchAllStatuses(characters),
       ]);
       const data: StatusResponse = await statusRes.json();
       latestGoals = await goalsRes.json();
@@ -798,7 +829,12 @@ async function main() {
       startedAtMs = data.startedAt ? new Date(data.startedAt).getTime() : null;
 
       renderCurrent();
-      viewer.showActivity(data.activityLabel ? { label: data.activityLabel } : null);
+      // focusActivity pans to the SELECTED character's own activity (if
+      // any); applyAllStatuses lights up every known character's object
+      // regardless of selection — the "see everyone, like the Tauri app"
+      // overlay, desktop-width click-to-switch included (see viewer.ts).
+      viewer.focusActivity(data.activityLabel);
+      viewer.applyAllStatuses(allStatuses);
 
       lastSyncAt = new Date();
       lastSyncError = null;
@@ -827,6 +863,7 @@ async function main() {
 
   const characterPicker = setupCharacterPickerModal(characters, selectCharacter);
   openCharacterPicker = characterPicker.open;
+  onViewerCharacterClick = selectCharacter;
 
   function tickElapsed() {
     renderCurrent();
