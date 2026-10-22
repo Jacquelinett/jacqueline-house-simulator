@@ -1,13 +1,13 @@
 import { buildModal } from "../ui/modal";
 import { buildDisplaySettingsSection } from "../ui/displaySettings";
-import { getSettings, updateSettings } from "./state";
+import { getSettings, onSettingsChange, updateSettings } from "./state";
 
 /** Display settings + status broadcast config — shared by the desktop Settings modal and the mobile Settings tab. */
 export function setupSettingsContent(container: HTMLElement): void {
   // Applying devMode/scale back onto the house isn't this function's job —
   // setupHouse()'s own onSettingsChange subscription reacts to the saved
   // value instead.
-  buildDisplaySettingsSection(container, getSettings(), {
+  const display = buildDisplaySettingsSection(container, getSettings(), {
     onDevModeChange: async (value) => {
       try {
         await updateSettings({ devMode: value });
@@ -30,6 +30,13 @@ export function setupSettingsContent(container: HTMLElement): void {
       }
     },
   });
+
+  // The desktop modal and the mobile tab each build their own independent
+  // instance of this section — settings/state.ts's existing reactive
+  // subscription (already relied on elsewhere, e.g. setupHouse() applying
+  // devMode/scale) is what keeps both in sync, instead of one silently
+  // going stale until reload whenever the other one changes something.
+  onSettingsChange(() => display.update(getSettings()));
 
   const section = document.createElement("div");
   section.id = "settings-broadcast-section";

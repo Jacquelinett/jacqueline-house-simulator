@@ -19,12 +19,18 @@ export interface DisplaySettingsCallbacks {
  * differs between them is only how a change gets persisted (Tauri fs +
  * reactive subscription on the desktop, direct localStorage write in the
  * viewer) — left entirely to the callbacks, not this function.
+ *
+ * Both the desktop app and the viewer now also build a *second*,
+ * independent instance of this section for the mobile tab — the returned
+ * `update()` lets a caller re-sync one instance's displayed values after
+ * a change made through the other one, instead of the two silently
+ * drifting apart until the next reload.
  */
 export function buildDisplaySettingsSection(
   parent: HTMLElement,
   initial: DisplaySettingsValues,
   callbacks: DisplaySettingsCallbacks,
-): void {
+): { update(values: DisplaySettingsValues): void } {
   const section = document.createElement("div");
   section.id = "settings-display-section";
   parent.appendChild(section);
@@ -80,4 +86,13 @@ export function buildDisplaySettingsSection(
     scaleValue.textContent = `${scaleInput.value}×`;
   };
   scaleInput.onchange = () => callbacks.onScaleChange(Number(scaleInput.value));
+
+  return {
+    update(values) {
+      devModeCheckbox.checked = values.devMode;
+      themeSelect.value = values.theme;
+      scaleInput.value = String(values.scale);
+      scaleValue.textContent = `${values.scale}×`;
+    },
+  };
 }

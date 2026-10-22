@@ -11,7 +11,7 @@ import { setupFloorButtons } from "./ui/floorButtons";
 import { setupTopButtons } from "./ui/topButtons";
 import { setupPixiApp } from "./ui/pixiApp";
 import { setupMobileTabs } from "./ui/mobileTabs";
-import { buildDisplaySettingsSection } from "./ui/displaySettings";
+import { buildDisplaySettingsSection, DisplaySettingsCallbacks } from "./ui/displaySettings";
 import { Theme } from "./settings/types";
 import { applyTheme, THEME_BACKGROUND } from "./settings/themes";
 
@@ -64,33 +64,21 @@ async function sendMessage(author: string, text: string): Promise<void> {
   if (!res.ok) throw new Error((await res.json()).error || "failed to send");
 }
 
-/** Zoom + dev-mode outlines, independent of the desktop app's own Settings — lets anyone viewing on a bigger/smaller screen adjust to taste (and is handy for testing the viewer itself). */
-function setupSettings(
-  viewer: HouseViewer,
+/**
+ * Zoom + dev-mode outlines, independent of the desktop app's own Settings
+ * — lets anyone viewing on a bigger/smaller screen adjust to taste (and is
+ * handy for testing the viewer itself). Callbacks are supplied by the
+ * caller (rather than built in here) so main() can pass the exact same
+ * ones to both this modal and the mobile Settings tab's own instance —
+ * that's what keeps the two in sync with each other.
+ */
+function setupSettingsModalUI(
   settings: ViewerSettings,
-  applyTheme: (theme: Theme) => void,
-): { open: () => void } {
+  callbacks: DisplaySettingsCallbacks,
+): { open: () => void; update(values: ViewerSettings): void } {
   const modal = buildModal("Settings");
-
-  buildDisplaySettingsSection(modal.body, settings, {
-    onDevModeChange: (value) => {
-      settings.devMode = value;
-      viewer.setDevMode(value);
-      saveViewerSettings(settings);
-    },
-    onThemeChange: (value) => {
-      settings.theme = value;
-      applyTheme(value);
-      saveViewerSettings(settings);
-    },
-    onScaleChange: (value) => {
-      settings.scale = value;
-      viewer.setScale(value);
-      saveViewerSettings(settings);
-    },
-  });
-
-  return { open: modal.open };
+  const display = buildDisplaySettingsSection(modal.body, settings, callbacks);
+  return { open: modal.open, update: display.update };
 }
 
 /** A "native popup"-style dialog for leaving a note — the mobile Home tab's FAB, standing in for the inline form that doesn't fit there. */
@@ -185,7 +173,40 @@ async function main() {
   );
   floorButtons.bindGoToRoom((roomId) => viewer.goToRoom(roomId));
 
-  const settingsModal = setupSettings(viewer, viewerSettings, (theme) => applyTheme(app, theme));
+  // Shared by the Settings modal and the mobile Settings tab's own
+  // instance of the same Display section — persists + applies the change,
+  // then re-syncs *both* instances' displayed controls, instead of
+  // whichever one you didn't just touch silently going stale.
+  let settingsModalUI: { update(values: ViewerSettings): void } | null = null;
+  let mobileSettingsUI: { update(values: ViewerSettings): void } | null = null;
+  function syncSettingsUI() {
+    settingsModalUI?.update(viewerSettings);
+    mobileSettingsUI?.update(viewerSettings);
+  }
+
+  const displaySettingsCallbacks: DisplaySettingsCallbacks = {
+    onDevModeChange: (value) => {
+      viewerSettings.devMode = value;
+      viewer.setDevMode(value);
+      saveViewerSettings(viewerSettings);
+      syncSettingsUI();
+    },
+    onThemeChange: (value) => {
+      viewerSettings.theme = value;
+      applyTheme(app, value);
+      saveViewerSettings(viewerSettings);
+      syncSettingsUI();
+    },
+    onScaleChange: (value) => {
+      viewerSettings.scale = value;
+      viewer.setScale(value);
+      saveViewerSettings(viewerSettings);
+      syncSettingsUI();
+    },
+  };
+
+  const settingsModal = setupSettingsModalUI(viewerSettings, displaySettingsCallbacks);
+  settingsModalUI = settingsModal;
 
   // --- Jacqueline panel: same corner panel the desktop app has, minus the
   // AW line (no AW access here) and plus "Leave a note" (viewer-only). ---
@@ -318,23 +339,7 @@ async function main() {
   mobileStatisticList.className = "dashboard-list";
   mobileTabs.pages.statistic.appendChild(mobileStatisticList);
 
-  buildDisplaySettingsSection(mobileTabs.pages.settings, viewerSettings, {
-    onDevModeChange: (value) => {
-      viewerSettings.devMode = value;
-      viewer.setDevMode(value);
-      saveViewerSettings(viewerSettings);
-    },
-    onThemeChange: (value) => {
-      viewerSettings.theme = value;
-      applyTheme(app, value);
-      saveViewerSettings(viewerSettings);
-    },
-    onScaleChange: (value) => {
-      viewerSettings.scale = value;
-      viewer.setScale(value);
-      saveViewerSettings(viewerSettings);
-    },
-  });
+  mobileSettingsUI = buildDisplaySettingsSection(mobileTabs.pages.settings, viewerSettings, displaySettingsCallbacks);
 
   mobileTabs.onTabChange((tab) => {
     if (tab === "statistic") renderAllTimeActivity(mobileStatisticPie, mobileStatisticList, latestStats);
