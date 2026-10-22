@@ -55,6 +55,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
 
   protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
     (this.objectContainers ??= new Map()).set(obj.id, container);
+    console.debug(`[adminPreview] registered container for "${obj.id}" at (${container.position.x}, ${container.position.y})`);
     container.eventMode = "static";
     container.cursor = "pointer";
     container.interactiveChildren = false;
@@ -66,7 +67,19 @@ export class AdminPreviewRenderer extends SceneRenderer {
 
   /** Moves one object's own sprite directly — no scene rebuild, so this never blips. Only valid for an already-built object (same type/size as when the scene was last built). */
   public moveObject(objectId: string, x: number, y: number): void {
-    this.objectContainers?.get(objectId)?.position.set(x, y);
+    const container = this.objectContainers?.get(objectId);
+    if (!container) {
+      console.warn(`[adminPreview] moveObject("${objectId}") — no container registered for this id. Known ids:`, [
+        ...(this.objectContainers?.keys() ?? []),
+      ]);
+      return;
+    }
+    console.debug(`[adminPreview] moveObject("${objectId}") (${container.position.x},${container.position.y}) -> (${x},${y})`);
+    container.position.set(x, y);
+    // Forces an immediate repaint rather than waiting for the next
+    // autoStart ticker frame — harmless if the ticker was already going
+    // to pick this up on its own next frame regardless.
+    this.app.render();
   }
 
   /**
@@ -80,7 +93,11 @@ export class AdminPreviewRenderer extends SceneRenderer {
     this.disablePlacement();
 
     const container = this.roomContainers.get(this.viewedRoomId);
-    if (!container) return;
+    if (!container) {
+      console.warn(`[adminPreview] enablePlacement — no room container for viewedRoomId "${this.viewedRoomId}"`);
+      return;
+    }
+    console.debug(`[adminPreview] enablePlacement on room "${this.viewedRoomId}"`);
     this.placingRoomContainer = container;
 
     const diamond = new Graphics();
@@ -97,16 +114,23 @@ export class AdminPreviewRenderer extends SceneRenderer {
         .poly([back.x, back.y, right.x, right.y, frontPt.x, frontPt.y, left.x, left.y])
         .fill({ color: 0xff3366, alpha: 0.35 })
         .stroke({ width: 1, color: 0xff3366 });
+      this.app.render();
     };
 
+    let loggedFirstMove = false;
     const onMove = (e: FederatedPointerEvent) => {
       const local = e.getLocalPosition(container);
       const { u, v } = screenToGrid(local.x, local.y);
+      if (!loggedFirstMove) {
+        loggedFirstMove = true;
+        console.debug(`[adminPreview] placement hover fired — local (${local.x},${local.y}) -> tile (${Math.floor(u)},${Math.floor(v)})`);
+      }
       drawAt(Math.floor(u), Math.floor(v));
     };
     const onClick = (e: FederatedPointerEvent) => {
       const local = e.getLocalPosition(container);
       const { u, v } = screenToGrid(local.x, local.y);
+      console.debug(`[adminPreview] placement click — local (${local.x},${local.y}) -> tile (${Math.floor(u)},${Math.floor(v)})`);
       onTileClick(Math.floor(u), Math.floor(v));
     };
 
