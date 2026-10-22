@@ -303,6 +303,15 @@ export interface RoomSpec {
   // positions — e.g. a gap in a wall run for a doorway between rooms.
   floorOverrides?: TileOverride[];
   wallOverrides?: TileOverride[];
+  // Whether the back-left (u=0 edge) / back-right (v=0 edge) wall run
+  // renders at all — default true (unset means "render it," same as
+  // today's unconditional behavior). A wallOverrides entry for a tile on a
+  // hidden side still renders (gap or replacement tile alike) — these two
+  // flags only change the DEFAULT for a side, not the override mechanism,
+  // which stays the "exception" it's always been (see
+  // placeTileWithOverrides in renderer.ts).
+  showLeftWall?: boolean;
+  showRightWall?: boolean;
   objects: ObjectPlacement[];
   // Placement relative to another room's edge, instead of an absolute pixel
   // offset — stays correct if either room's size changes. Unset/empty means
@@ -342,6 +351,8 @@ export interface RoomSpecWire {
   wallVariant: string;
   floorOverrides?: TileOverride[];
   wallOverrides?: TileOverride[];
+  showLeftWall?: boolean;
+  showRightWall?: boolean;
   connectedTo?: ConnectedToEntry[];
   objects: ObjectPlacement[];
 }
@@ -356,6 +367,8 @@ export function roomSpecsFromWire(wire: RoomSpecWire[]): RoomSpec[] {
     wall: WALL_VARIANTS[w.wallVariant],
     floorOverrides: w.floorOverrides,
     wallOverrides: w.wallOverrides,
+    showLeftWall: w.showLeftWall,
+    showRightWall: w.showRightWall,
     connectedTo: w.connectedTo,
     objects: w.objects,
   }));
@@ -467,11 +480,31 @@ export function buildFloorTree(baseRoomId: number, allRooms: RoomSpecWire[]): Fl
   return buildNode(baseRoomId);
 }
 
-/** `floors` determines each room's vertical `level` — see RoomDef.level's own comment on why this is derived rather than stored. */
+/**
+ * `floors` determines each room's vertical `level` — see RoomDef.level's
+ * own comment on why this is derived rather than stored — and now ALSO
+ * determines which rooms render at all: starting from each floor's base
+ * room, only rooms reachable by following connectedTo edges (either
+ * direction, same traversal as computeFloorMembership/buildFloorTree) ever
+ * get resolved. A room with no path back to any floor's base room is
+ * excluded entirely rather than defaulting to the origin and silently
+ * overlapping whatever else is there — "not connected to anything, and not
+ * a base room" means "not built into the house yet," not "render it at
+ * (0,0) anyway."
+ *
+ * Passing `floors: []` opts out of this filtering (every spec resolves,
+ * same as before this existed) — the admin tool's own isolated single/
+ * subset-room previews rely on this: they intentionally show a room (or a
+ * room plus its direct neighbors) stripped of the rest of the house, which
+ * would otherwise make the whole subset unreachable from any REAL floor's
+ * base room and get wrongly excluded.
+ */
 export function resolveRooms(specs: RoomSpec[], floors: Floor[]): RoomDef[] {
-  const specById = new Map(specs.map((s) => [s.id, s]));
-  const origins = new Map<number, { u: number; v: number }>();
   const membership = computeFloorMembership(specs, floors);
+  const included = floors.length === 0 ? specs : specs.filter((s) => membership.has(s.id));
+
+  const specById = new Map(included.map((s) => [s.id, s]));
+  const origins = new Map<number, { u: number; v: number }>();
 
   // `visiting` detects a connectedTo cycle (A's primary entry chains back to
   // A) — a fresh Set per top-level originOf() call below (default params are
@@ -527,7 +560,7 @@ export function resolveRooms(specs: RoomSpec[], floors: Floor[]): RoomDef[] {
     return origin;
   }
 
-  return specs.map((spec) => {
+  return included.map((spec) => {
     const { u, v } = originOf(spec.id);
     const { x, y } = gridToScreen(u, v);
     const level = membership.get(spec.id) ?? 0;

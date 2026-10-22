@@ -82,6 +82,8 @@ interface RoomSpecWire {
   rows: number;
   floorVariant: string;
   wallVariant: string;
+  showLeftWall?: boolean;
+  showRightWall?: boolean;
   connectedTo?: ConnectedToEntry[];
   objects: ObjectPlacementWire[];
 }
@@ -750,6 +752,67 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
   hint.textContent = "Preview reflects unsaved changes below — nothing is written until you press Save.";
   modal.body.appendChild(hint);
 
+  // Room-level fields (size + wall visibility) — a separate draft from the
+  // objects draft above, since they're independent concerns, but saved
+  // together: Save below both PATCHes the room's own fields (if changed)
+  // and diffs the object draft, in one click. No bounds-checking against
+  // object positions when shrinking — objects simply aren't clamped to the
+  // room's own footprint anywhere else in this engine, so resizing smaller
+  // than where an object sits is allowed (same "not our problem" stance).
+  const roomFields = { name: room.name, cols: room.cols, rows: room.rows, showLeftWall: room.showLeftWall !== false, showRightWall: room.showRightWall !== false };
+
+  const roomPropsForm = document.createElement("div");
+  roomPropsForm.className = "admin-form";
+  modal.body.appendChild(roomPropsForm);
+
+  const nameInput = document.createElement("input");
+  nameInput.value = roomFields.name;
+  roomPropsForm.append(document.createTextNode("Name:"), nameInput);
+
+  const colsInput = document.createElement("input");
+  colsInput.type = "number";
+  colsInput.min = "1";
+  colsInput.value = String(roomFields.cols);
+  colsInput.style.width = "60px";
+  const rowsInput = document.createElement("input");
+  rowsInput.type = "number";
+  rowsInput.min = "1";
+  rowsInput.value = String(roomFields.rows);
+  rowsInput.style.width = "60px";
+  roomPropsForm.append(document.createTextNode("Cols:"), colsInput, document.createTextNode("Rows:"), rowsInput);
+
+  const showLeftWallLabel = document.createElement("label");
+  const showLeftWallCheckbox = document.createElement("input");
+  showLeftWallCheckbox.type = "checkbox";
+  showLeftWallCheckbox.checked = roomFields.showLeftWall;
+  showLeftWallLabel.append(showLeftWallCheckbox, document.createTextNode(" Top-left wall"));
+  const showRightWallLabel = document.createElement("label");
+  const showRightWallCheckbox = document.createElement("input");
+  showRightWallCheckbox.type = "checkbox";
+  showRightWallCheckbox.checked = roomFields.showRightWall;
+  showRightWallLabel.append(showRightWallCheckbox, document.createTextNode(" Top-right wall"));
+  roomPropsForm.append(showLeftWallLabel, showRightWallLabel);
+
+  function applyRoomFields() {
+    roomFields.name = nameInput.value;
+    // Clamped to >=1 rather than rejected — an in-between value (e.g.
+    // clearing the field while typing) shouldn't block editing, it should
+    // just floor at the minimum, same spirit as the input's own min="1".
+    roomFields.cols = Math.max(1, Math.round(Number(colsInput.value) || 1));
+    roomFields.rows = Math.max(1, Math.round(Number(rowsInput.value) || 1));
+    colsInput.value = String(roomFields.cols);
+    rowsInput.value = String(roomFields.rows);
+    roomFields.showLeftWall = showLeftWallCheckbox.checked;
+    roomFields.showRightWall = showRightWallCheckbox.checked;
+    updateSaveState();
+    renderPreview();
+  }
+  nameInput.onchange = applyRoomFields;
+  colsInput.onchange = applyRoomFields;
+  rowsInput.onchange = applyRoomFields;
+  showLeftWallCheckbox.onchange = applyRoomFields;
+  showRightWallCheckbox.onchange = applyRoomFields;
+
   const tileModeLabel = document.createElement("label");
   tileModeLabel.className = "admin-tile-mode-toggle";
   const tileModeCheckbox = document.createElement("input");
@@ -779,8 +842,13 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
   let currentRenderer: AdminPreviewRenderer | null = null;
   let placingObjectId: number | null = null;
 
+  const originalRoomFields = { ...roomFields };
+  function isRoomFieldsDirty(): boolean {
+    return JSON.stringify(originalRoomFields) !== JSON.stringify(roomFields);
+  }
+
   function isDirty(): boolean {
-    return JSON.stringify(original) !== JSON.stringify(draft);
+    return isRoomFieldsDirty() || JSON.stringify(original) !== JSON.stringify(draft);
   }
 
   function updateSaveState() {
@@ -819,7 +887,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
       // at all) sent resolveRooms() chasing a connectedTo.roomId that
       // doesn't exist in this one-room array, throwing inside setRooms()
       // before the Pixi app ever got far enough to render anything.
-      setRooms(roomSpecsFromWire([{ ...room, objects: draft, connectedTo: undefined }]), []);
+      setRooms(roomSpecsFromWire([{ ...room, ...roomFields, objects: draft, connectedTo: undefined }]), []);
 
       currentApp = new Application();
       await currentApp.init({ width: 420, height: 320, background: 0x222228 });
@@ -1018,6 +1086,12 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
   saveBtn.onclick = async () => {
     if (!isDirty()) return;
     try {
+      if (isRoomFieldsDirty()) {
+        await adminFetch(`/api/admin/rooms/${room.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ ...room, ...roomFields }),
+        });
+      }
       const draftIds = new Set(draft.filter((o): o is ObjectPlacementWire & { id: number } => o.id !== undefined).map((o) => o.id));
       for (const obj of draft) {
         if (obj.id === undefined) {
@@ -1165,7 +1239,13 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     currentApp?.destroy();
     previewContainer.textContent = "";
     try {
-      setRooms(roomSpecsFromWire(buildPreviewRoomSet()), floors);
+      // [] for floors, not the real floor list — this preview is `room`
+      // plus a stripped-down synthetic neighbor set, which the real floors'
+      // base rooms almost never reach, and resolveRooms() now excludes
+      // anything unreachable from a floor's base room. Passing [] opts out
+      // of that filtering entirely (see resolveRooms's own comment) so this
+      // intentionally-partial subset still resolves.
+      setRooms(roomSpecsFromWire(buildPreviewRoomSet()), []);
       currentApp = new Application();
       await currentApp.init({ width: 480, height: 380, background: 0x222228 });
       previewContainer.appendChild(currentApp.canvas);
@@ -1190,7 +1270,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
    */
   function repositionNeighbors() {
     try {
-      const resolved = resolveRooms(roomSpecsFromWire(buildPreviewRoomSet()), floors);
+      const resolved = resolveRooms(roomSpecsFromWire(buildPreviewRoomSet()), []); // see renderPreview's own comment on why []
       for (const r of resolved) {
         if (r.id === room.id) continue; // room itself is the fixed local anchor, never moves
         currentRenderer?.moveRoom(r.id, r.x, r.y);

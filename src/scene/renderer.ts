@@ -82,7 +82,10 @@ function placeTile(
  * Like placeTile, but checks `overrides` for this exact (u,v) first — an
  * override REPLACES the default tile (a matching `tile: null` entry means
  * render nothing at all here, e.g. a doorway gap in a wall run) rather than
- * rendering on top of it.
+ * rendering on top of it. `renderDefault` (default true) is checked only
+ * when there's no override — it's how a whole wall side can be turned off
+ * (showLeftWall/showRightWall) while a wallOverrides entry on that same
+ * side still renders regardless, exactly the "exception" it's always been.
  */
 function placeTileWithOverrides(
   container: Container,
@@ -92,12 +95,14 @@ function placeTileWithOverrides(
   u: number,
   v: number,
   groundOffset: number,
+  renderDefault = true,
 ) {
   const override = overrides?.find((o) => o.u === u && o.v === v);
   if (override) {
     if (override.tile) placeTile(container, override.tile.texture, override.tile, u, v, groundOffset);
     return; // override.tile === null -> gap, render nothing
   }
+  if (!renderDefault) return;
   placeTile(container, defaultTexture, defaultRect, u, v, groundOffset);
 }
 
@@ -119,16 +124,22 @@ export function buildFloorAndWalls(room: RoomDef): Container {
 
   // Walls first: corner joint at the back vertex, then a run of repeating
   // panels along each back edge, capped with an edge tile at the far end.
+  // showLeftWall/showRightWall (default true when unset) gate the DEFAULT
+  // tile only — a wallOverrides entry on a hidden side still renders (see
+  // placeTileWithOverrides's own comment). The shared corner tile renders
+  // as long as either side does, since it's the joint between them.
   const wo = room.wallOverrides;
-  placeTileWithOverrides(container, wo, wall.texture, wall.corner, 0, 0, groundOffset);
+  const showLeft = room.showLeftWall !== false;
+  const showRight = room.showRightWall !== false;
+  placeTileWithOverrides(container, wo, wall.texture, wall.corner, 0, 0, groundOffset, showLeft || showRight);
   for (let v = 1; v < room.rows; v++) {
-    placeTileWithOverrides(container, wo, wall.texture, wall.left, 0, v, groundOffset);
+    placeTileWithOverrides(container, wo, wall.texture, wall.left, 0, v, groundOffset, showLeft);
   }
-  placeTileWithOverrides(container, wo, wall.texture, wall.edgeLeft, 0, room.rows + 1, edgeGroundOffset);
+  placeTileWithOverrides(container, wo, wall.texture, wall.edgeLeft, 0, room.rows + 1, edgeGroundOffset, showLeft);
   for (let u = 1; u < room.cols; u++) {
-    placeTileWithOverrides(container, wo, wall.texture, wall.right, u, 0, groundOffset);
+    placeTileWithOverrides(container, wo, wall.texture, wall.right, u, 0, groundOffset, showRight);
   }
-  placeTileWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols + 1, 0, edgeGroundOffset);
+  placeTileWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols + 1, 0, edgeGroundOffset, showRight);
 
   // Floor, drawn back-to-front (painter's algorithm) so each tile's visible
   // "thickness" is correctly covered by the tile in front of it.

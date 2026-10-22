@@ -11,6 +11,8 @@ interface RoomRow {
   wall_variant: string;
   floor_overrides_json: string | null;
   wall_overrides_json: string | null;
+  show_left_wall: number;
+  show_right_wall: number;
 }
 
 interface ConnectionRow {
@@ -72,6 +74,8 @@ export function getRoomSpecs(): RoomSpecWire[] {
     wallVariant: row.wall_variant,
     floorOverrides: row.floor_overrides_json ? (JSON.parse(row.floor_overrides_json) as TileOverride[]) : undefined,
     wallOverrides: row.wall_overrides_json ? (JSON.parse(row.wall_overrides_json) as TileOverride[]) : undefined,
+    showLeftWall: !!row.show_left_wall,
+    showRightWall: !!row.show_right_wall,
     connectedTo: connectionsByRoom.get(row.id),
     objects: objectsByRoom.get(row.id) ?? [],
   }));
@@ -103,8 +107,8 @@ export function seedRoomsIfEmpty(): void {
   if (n > 0) return;
 
   const insertRoom = db.prepare(`
-    INSERT INTO rooms (id, name, cols, rows, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json)
-    VALUES (@id, @name, @cols, @rows, 'floor1', 'wall1', @floorOverridesJson, @wallOverridesJson)
+    INSERT INTO rooms (id, name, cols, rows, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json, show_left_wall, show_right_wall)
+    VALUES (@id, @name, @cols, @rows, 'floor1', 'wall1', @floorOverridesJson, @wallOverridesJson, @showLeftWall, @showRightWall)
   `);
   const insertObject = db.prepare(`
     INSERT INTO objects (id, room_id, type_id, x, y, enabled, action_json)
@@ -120,6 +124,8 @@ export function seedRoomsIfEmpty(): void {
         rows: spec.rows,
         floorOverridesJson: spec.floorOverrides ? JSON.stringify(spec.floorOverrides) : null,
         wallOverridesJson: spec.wallOverrides ? JSON.stringify(spec.wallOverrides) : null,
+        showLeftWall: spec.showLeftWall === false ? 0 : 1,
+        showRightWall: spec.showRightWall === false ? 0 : 1,
       });
       replaceConnections(spec.id, spec.connectedTo);
       for (const placement of spec.objects) {
@@ -145,8 +151,8 @@ export function createRoom(spec: Omit<RoomSpecInput, "id">): number {
   const tx = db.transaction((): number => {
     const { lastInsertRowid } = db
       .prepare(
-        `INSERT INTO rooms (name, cols, rows, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json)
-       VALUES (@name, @cols, @rows, @floorVariant, @wallVariant, @floorOverridesJson, @wallOverridesJson)`,
+        `INSERT INTO rooms (name, cols, rows, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json, show_left_wall, show_right_wall)
+       VALUES (@name, @cols, @rows, @floorVariant, @wallVariant, @floorOverridesJson, @wallOverridesJson, @showLeftWall, @showRightWall)`,
       )
       .run({
         name: spec.name,
@@ -156,6 +162,8 @@ export function createRoom(spec: Omit<RoomSpecInput, "id">): number {
         wallVariant: spec.wallVariant,
         floorOverridesJson: spec.floorOverrides ? JSON.stringify(spec.floorOverrides) : null,
         wallOverridesJson: spec.wallOverrides ? JSON.stringify(spec.wallOverrides) : null,
+        showLeftWall: spec.showLeftWall === false ? 0 : 1,
+        showRightWall: spec.showRightWall === false ? 0 : 1,
       });
     const id = Number(lastInsertRowid);
     replaceConnections(id, spec.connectedTo);
@@ -168,7 +176,8 @@ export function updateRoom(spec: RoomSpecInput): void {
   const tx = db.transaction(() => {
     db.prepare(
       `UPDATE rooms SET name = @name, cols = @cols, rows = @rows, floor_variant = @floorVariant, wall_variant = @wallVariant,
-       floor_overrides_json = @floorOverridesJson, wall_overrides_json = @wallOverridesJson WHERE id = @id`,
+       floor_overrides_json = @floorOverridesJson, wall_overrides_json = @wallOverridesJson,
+       show_left_wall = @showLeftWall, show_right_wall = @showRightWall WHERE id = @id`,
     ).run({
       id: spec.id,
       name: spec.name,
@@ -178,6 +187,8 @@ export function updateRoom(spec: RoomSpecInput): void {
       wallVariant: spec.wallVariant,
       floorOverridesJson: spec.floorOverrides ? JSON.stringify(spec.floorOverrides) : null,
       wallOverridesJson: spec.wallOverrides ? JSON.stringify(spec.wallOverrides) : null,
+      showLeftWall: spec.showLeftWall === false ? 0 : 1,
+      showRightWall: spec.showRightWall === false ? 0 : 1,
     });
     replaceConnections(spec.id, spec.connectedTo);
   });
