@@ -23,7 +23,15 @@ import { SceneRenderer } from "./renderer";
  *   pointer math for well enough to trust).
  */
 export class AdminPreviewRenderer extends SceneRenderer {
-  private objectContainers = new Map<string, Container>();
+  // Not initialized here: SceneRenderer's own constructor (via super()
+  // below) calls buildRoom()/buildObject(), which call the overridden
+  // attachObjectInteraction() below — *before* this subclass's own field
+  // initializers have run (they only run after super() fully returns, a
+  // fundamental JS class-construction ordering, not a bug in SceneRenderer).
+  // A normal `= new Map()` initializer would still be undefined at that
+  // point; lazily creating it on first touch (??=) works regardless of
+  // when that first touch happens.
+  private objectContainers?: Map<string, Container>;
   private hoverDiamond: Graphics | null = null;
   private placingRoomContainer: Container | null = null;
 
@@ -46,7 +54,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
   }
 
   protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
-    this.objectContainers.set(obj.id, container);
+    (this.objectContainers ??= new Map()).set(obj.id, container);
     container.eventMode = "static";
     container.cursor = "pointer";
     container.interactiveChildren = false;
@@ -58,7 +66,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
 
   /** Moves one object's own sprite directly — no scene rebuild, so this never blips. Only valid for an already-built object (same type/size as when the scene was last built). */
   public moveObject(objectId: string, x: number, y: number): void {
-    this.objectContainers.get(objectId)?.position.set(x, y);
+    this.objectContainers?.get(objectId)?.position.set(x, y);
   }
 
   /**
