@@ -9,31 +9,44 @@ export interface ActivityDef {
   color: number; // for color-coded goal/dashboard UI
 }
 
-export const ACTIVITIES = {
-  practicingPiano: {
-    id: "practicing-piano",
-    label: "Practicing Piano",
-    color: 0xff69b4,
-  },
+/**
+ * One-time seed source for the `activities` SQLite table (see
+ * server/activities.ts) — NOT the runtime source of truth anymore.
+ * `ACTIVITIES` below is a mutable `let` that main.ts/viewer-main.ts
+ * overwrite with server-fetched data right after connecting
+ * (setActivities), before any room is built, same live-binding pattern
+ * as rooms.ts's `rooms`/`objectTypes`. rooms.ts's STATIC_OBJECT_TYPES
+ * literal reads from this constant directly (not the mutable export) at
+ * module-eval time, before setActivities() is ever called — so its
+ * baked-in activityId strings are unaffected by ACTIVITIES later being
+ * re-keyed by id instead of by these camelCase names.
+ */
+export const STATIC_ACTIVITIES: Record<string, ActivityDef> = {
+  practicingPiano: { id: "practicing-piano", label: "Practicing Piano", color: 0xff69b4 },
   working: { id: "working", label: "Working", color: 0x5a5a6a },
   programming: { id: "programming", label: "Programming", color: 0x4a6a9a },
-  administrativeWork: {
-    id: "administrative-work",
-    label: "Administrative Work",
-    color: 0x9a7a4a,
-  },
+  administrativeWork: { id: "administrative-work", label: "Administrative Work", color: 0x9a7a4a },
   gaming: { id: "gaming", label: "Gaming", color: 0x4a4a4a },
   streaming: { id: "streaming", label: "Streaming", color: 0x9a4a9a },
   ddr: { id: "ddr", label: "DDR", color: 0x7a2b5a },
-  weightlifting: {
-    id: "weightlifting",
-    label: "Weightlifting",
-    color: 0x5a5a6a,
-  },
-} as const satisfies Record<string, ActivityDef>;
+  weightlifting: { id: "weightlifting", label: "Weightlifting", color: 0x5a5a6a },
+};
+
+export let ACTIVITIES: Record<string, ActivityDef> = STATIC_ACTIVITIES;
+
+/** Swaps in server-fetched activities, re-keyed by id — see this file's top comment. */
+export function setActivities(activities: ActivityDef[]): void {
+  const next: Record<string, ActivityDef> = {};
+  for (const a of activities) next[a.id] = a;
+  ACTIVITIES = next;
+}
 
 export function findActivityByLabel(label: string): ActivityDef | undefined {
   return Object.values(ACTIVITIES).find((a) => a.label === label);
+}
+
+export function findActivityById(id: string): ActivityDef | undefined {
+  return Object.values(ACTIVITIES).find((a) => a.id === id);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { Application, Container, Polygon } from "pixi.js";
 import { findObjectForActivityLabel, gridToScreen, ObjectAction, ObjectDef, RoomDef } from "./rooms";
+import { findActivityById } from "./activities";
 import { SceneRenderer } from "./renderer";
 import { getRemoteStatus, RemoteStatus, sendCommand } from "../client/remoteState";
 
@@ -88,8 +89,9 @@ export class House extends SceneRenderer {
       return;
     }
 
+    const activityLabel = findActivityById(action.activityId)?.label;
     const current = getRemoteStatus();
-    const isSameLabel = current.activityLabel === action.label;
+    const isSameLabel = current.activityLabel === activityLabel;
     // A different object representing the same ongoing activity (e.g. a
     // second piano elsewhere) shouldn't stop it just by being clicked —
     // only the object that's actually running it (or an unattributed
@@ -111,7 +113,7 @@ export class House extends SceneRenderer {
     // ends up on the right object, just reactively instead of optimistically.
     if (!this.isMobileLayout()) this.setViewedRoom(roomId, objectId);
     if (isSameLabel) sendCommand("stopActivity");
-    else sendCommand("startActivity", { label: action.label });
+    else if (activityLabel) sendCommand("startActivity", { label: activityLabel });
   }
 
   private openMenu(roomId: string, objectId: string, actions: ObjectAction[], clientX: number, clientY: number) {
@@ -124,7 +126,7 @@ export class House extends SceneRenderer {
 
     for (const action of actions) {
       const btn = document.createElement("button");
-      btn.textContent = action.kind === "activity" ? action.label : `Go to ${action.roomId}`;
+      btn.textContent = action.kind === "activity" ? findActivityById(action.activityId)?.label ?? "?" : `Go to ${action.roomId}`;
       btn.onclick = () => {
         this.runAction(roomId, objectId, action);
         this.closeMenu();

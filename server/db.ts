@@ -103,21 +103,32 @@ export function migrate(): void {
       overlay_json TEXT,
       above_json TEXT,
       width INTEGER NOT NULL,
-      height INTEGER NOT NULL
+      height INTEGER NOT NULL,
+      actions_json TEXT
     );
 
+    -- Mirrors src/scene/rooms.ts's RoomSpec shape (not flattened absolute
+    -- x/y) specifically so the client's existing resolveRooms() — which
+    -- resolves connectedTo chains into pixel positions — can be reused
+    -- as-is against server-provided rows instead of reimplementing that
+    -- chain-resolution logic a second time.
     CREATE TABLE IF NOT EXISTS rooms (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       cols INTEGER NOT NULL,
       rows INTEGER NOT NULL,
-      x INTEGER NOT NULL,
-      y INTEGER NOT NULL,
-      level INTEGER NOT NULL,
+      level INTEGER NOT NULL DEFAULT 0,
       floor_variant TEXT NOT NULL,
-      wall_variant TEXT NOT NULL
+      wall_variant TEXT NOT NULL,
+      floor_overrides_json TEXT,
+      wall_overrides_json TEXT,
+      connected_to_room_id TEXT,
+      connected_to_direction TEXT,
+      connected_to_gap_tiles INTEGER
     );
 
+    -- Mirrors ObjectPlacement: type_id + position + optional per-placement
+    -- action override (null action_json means "use the type's defaults").
     CREATE TABLE IF NOT EXISTS objects (
       id TEXT PRIMARY KEY,
       room_id TEXT NOT NULL,

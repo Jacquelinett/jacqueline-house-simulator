@@ -8,7 +8,7 @@
 // files: public/objects/<object-id>.png, referenced via `texture` in
 // `below`/`overlay`/`above`.
 import { FloorVariant, TileOverride, WallVariant, floor1, wall1 } from "./tileset";
-import { ACTIVITIES } from "./activities";
+import { ACTIVITIES, findActivityById } from "./activities";
 
 export interface SpriteLayer {
   texture?: string; // path to art asset; omitted -> rendered as a placeholder color box
@@ -17,8 +17,11 @@ export interface SpriteLayer {
   offsetY?: number;
 }
 
+// activityId (not label) so renaming an activity via the admin tool
+// cascades to every object that triggers it, instead of orphaning a
+// hardcoded label string that was only ever resolved at authoring time.
 export type ObjectAction =
-  | { kind: "activity"; label: string }
+  | { kind: "activity"; activityId: string }
   | { kind: "navigate"; roomId: string }; // e.g. a staircase — jumps the view to another room, no AW tracking
 
 export interface ObjectDef {
@@ -68,7 +71,18 @@ export interface ObjectTypeDef {
   actions?: ObjectAction[];
 }
 
-export const objectTypes = {
+/**
+ * The static definitions below (STATIC_OBJECT_TYPES, roomSpecs further
+ * down) are the one-time seed source for the object_types/rooms/objects
+ * SQLite tables (see server/objectTypes.ts etc.) — NOT the runtime source
+ * of truth anymore. `objectTypes`/`rooms` (further down) are mutable `let`
+ * bindings that main.ts/viewer-main.ts overwrite with server-fetched data
+ * right after connecting (setObjectTypes/setRooms), before any room is
+ * built — every other module that `import`s them gets the live ES-module
+ * binding, so House.ts/viewer.ts/renderer.ts/floorButtons.ts need no
+ * changes at all despite reading what's now server-provided data.
+ */
+const STATIC_OBJECT_TYPES = {
   piano: {
     name: "Piano",
     width: 64,
@@ -76,14 +90,14 @@ export const objectTypes = {
     below: [{ texture: "/objects/piano_base.png" }],
     above: [{ texture: "/objects/piano_top.png" }],
     overlay: [{ texture: "/characters/playing_piano.png", offsetX: 32, offsetY: 0 }],
-    actions: [{ kind: "activity", label: ACTIVITIES.practicingPiano.label }],
+    actions: [{ kind: "activity", activityId: ACTIVITIES.practicingPiano.id }],
   },
   workLaptop: {
     name: "Work Laptop",
     width: 32,
     height: 32,
     below: [{ color: 0x5a5a6a }],
-    actions: [{ kind: "activity", label: ACTIVITIES.working.label }],
+    actions: [{ kind: "activity", activityId: ACTIVITIES.working.id }],
   },
   personalLaptop: {
     name: "Personal Laptop",
@@ -91,8 +105,8 @@ export const objectTypes = {
     height: 32,
     below: [{ color: 0x4a6a5a }],
     actions: [
-      { kind: "activity", label: ACTIVITIES.programming.label },
-      { kind: "activity", label: ACTIVITIES.administrativeWork.label },
+      { kind: "activity", activityId: ACTIVITIES.programming.id },
+      { kind: "activity", activityId: ACTIVITIES.administrativeWork.id },
     ],
   },
   pc: {
@@ -101,8 +115,8 @@ export const objectTypes = {
     height: 32,
     below: [{ color: 0x4a4a4a }],
     actions: [
-      { kind: "activity", label: ACTIVITIES.gaming.label },
-      { kind: "activity", label: ACTIVITIES.streaming.label },
+      { kind: "activity", activityId: ACTIVITIES.gaming.id },
+      { kind: "activity", activityId: ACTIVITIES.streaming.id },
     ],
   },
   ddrCabinet: {
@@ -110,7 +124,7 @@ export const objectTypes = {
     width: 48,
     height: 64,
     below: [{ color: 0x7a2b5a }],
-    actions: [{ kind: "activity", label: ACTIVITIES.ddr.label }],
+    actions: [{ kind: "activity", activityId: ACTIVITIES.ddr.id }],
   },
   stairs: {
     name: "Stairs",
@@ -121,8 +135,17 @@ export const objectTypes = {
   },
 } satisfies Record<string, ObjectTypeDef>;
 
+export { STATIC_OBJECT_TYPES };
+
+export let objectTypes: Record<string, ObjectTypeDef> = STATIC_OBJECT_TYPES;
+
+/** Swaps in server-fetched object types — see this file's top-of-objectTypes comment. */
+export function setObjectTypes(types: Record<string, ObjectTypeDef>): void {
+  objectTypes = types;
+}
+
 export interface ObjectPlacement {
-  type: keyof typeof objectTypes;
+  type: string; // object_types.id — was keyof typeof objectTypes before types became dynamic
   id?: string; // disambiguates multiple instances of the same type in one room; defaults to `type`
   enabled?: boolean;
   x: number;
@@ -131,11 +154,11 @@ export interface ObjectPlacement {
 }
 
 function resolveObjectPlacement(placement: ObjectPlacement): ObjectDef {
-  // `satisfies` (used on objectTypes, below) preserves each entry's own
-  // narrow literal type for authoring/autocomplete purposes, so the indexed
-  // result is a union of per-type shapes rather than ObjectTypeDef itself —
-  // widen it explicitly, since every entry is already confirmed assignable.
-  const type: ObjectTypeDef = objectTypes[placement.type];
+  const type = objectTypes[placement.type];
+  if (!type) {
+    console.error(`[rooms] unknown object type: ${placement.type}`);
+    return { id: placement.id ?? placement.type, name: "(unknown)", enabled: false, x: placement.x, y: placement.y, width: 0, height: 0 };
+  }
   return {
     id: placement.id ?? placement.type,
     name: type.name,
@@ -179,7 +202,7 @@ export function gridToScreen(u: number, v: number) {
 //  - frontRight:  extends from anchor's u=cols (open, right-to-front) edge, +u
 export type ConnectionDirection = "behindLeft" | "behindRight" | "frontLeft" | "frontRight";
 
-interface RoomSpec {
+export interface RoomSpec {
   id: string;
   name: string;
   cols: number; // room size in tiles along the iso "u" axis
@@ -211,7 +234,7 @@ export interface RoomDef extends Omit<RoomSpec, "objects"> {
   level: number; // resolved — always a number, never undefined, unlike RoomSpec's
 }
 
-function resolveRooms(specs: RoomSpec[]): RoomDef[] {
+export function resolveRooms(specs: RoomSpec[]): RoomDef[] {
   const specById = new Map(specs.map((s) => [s.id, s]));
   const origins = new Map<string, { u: number; v: number }>();
 
@@ -267,7 +290,7 @@ function resolveRooms(specs: RoomSpec[]): RoomDef[] {
   });
 }
 
-const roomSpecs: RoomSpec[] = [
+export const STATIC_ROOM_SPECS: RoomSpec[] = [
   {
     id: "office",
     name: "Jacqueline's Office",
@@ -387,7 +410,12 @@ const roomSpecs: RoomSpec[] = [
   },
 ];
 
-export const rooms: RoomDef[] = resolveRooms(roomSpecs);
+export let rooms: RoomDef[] = resolveRooms(STATIC_ROOM_SPECS);
+
+/** Swaps in server-fetched rooms — see this file's top-of-objectTypes comment. */
+export function setRooms(specs: RoomSpec[]): void {
+  rooms = resolveRooms(specs);
+}
 
 /**
  * The room + object whose action matches this activity label, if any — for
@@ -403,7 +431,9 @@ export function findObjectForActivityLabel(label: string): { roomId: string; obj
   for (const room of rooms) {
     for (const obj of room.objects) {
       for (const action of obj.actions ?? []) {
-        if (action.kind === "activity" && action.label === label) return { roomId: room.id, objectId: obj.id };
+        if (action.kind === "activity" && findActivityById(action.activityId)?.label === label) {
+          return { roomId: room.id, objectId: obj.id };
+        }
       }
     }
   }

@@ -1,5 +1,6 @@
 import { AlphaFilter, Application, Assets, Container, Graphics, Rectangle, Sprite, Texture } from "pixi.js";
 import { gridToScreen, rooms as roomDefs, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
+import { findActivityById } from "./activities";
 import { TileOverride, TileRect } from "./tileset";
 
 const DIM_ALPHA = 0.15;
@@ -259,7 +260,10 @@ export class SceneRenderer {
       overlay.position.set(layer.offsetX ?? 0, layer.offsetY ?? 0);
       overlay.visible = false;
       container.addChild(overlay);
-      const labels = (obj.actions ?? []).filter((a) => a.kind === "activity").map((a) => a.label);
+      const labels = (obj.actions ?? [])
+        .filter((a) => a.kind === "activity")
+        .map((a) => findActivityById(a.activityId)?.label)
+        .filter((label): label is string => label !== undefined);
       this.activeOverlays.push({ labels, sprite: overlay });
     }
 
