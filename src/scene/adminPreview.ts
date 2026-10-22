@@ -22,6 +22,35 @@ import { SceneRenderer } from "./renderer";
  *   dragging continuously, which there's no browser available to verify
  *   pointer math for well enough to trust).
  */
+/**
+ * Keyed by renderer instance, entirely OUTSIDE the class's own field
+ * system — not a class field, not even an optional one. Confirmed by
+ * direct evidence (not just reasoning): instance logging showed
+ * attachObjectInteraction successfully populating `this.objectContainers`
+ * *during* super()'s execution (two "registered" log lines), immediately
+ * followed by the constructor's own post-super() log reporting size 0 on
+ * the exact same instance. That's TypeScript/JS's own class-fields
+ * semantics: declaring `objectContainers?: Map<...>` with no initializer
+ * still performs an implicit `this.objectContainers = undefined` the
+ * moment super() returns (a real [[DefineField]] step, not a no-op just
+ * because no value was written) — silently overwriting whatever a
+ * polymorphic call made during super() had already set. A `??=` guard
+ * inside attachObjectInteraction looked like a fix and even worked
+ * *during* construction, but couldn't survive the wipe that happens
+ * right after. A module-level WeakMap is never touched by any class's
+ * construction sequence, so this entirely sidesteps the issue rather
+ * than fighting field-initialization timing again.
+ */
+const objectContainersByRenderer = new WeakMap<AdminPreviewRenderer, Map<string, Container>>();
+function objectContainersFor(renderer: AdminPreviewRenderer): Map<string, Container> {
+  let map = objectContainersByRenderer.get(renderer);
+  if (!map) {
+    map = new Map();
+    objectContainersByRenderer.set(renderer, map);
+  }
+  return map;
+}
+
 export class AdminPreviewRenderer extends SceneRenderer {
   // Diagnostic only — STATIC (not instance) fields so they're readable
   // from attachObjectInteraction while it's being called from inside the
@@ -31,15 +60,6 @@ export class AdminPreviewRenderer extends SceneRenderer {
   private static currentlyConstructingId = 0;
   private readonly instanceId: number;
 
-  // Not initialized here: SceneRenderer's own constructor (via super()
-  // below) calls buildRoom()/buildObject(), which call the overridden
-  // attachObjectInteraction() below — *before* this subclass's own field
-  // initializers have run (they only run after super() fully returns, a
-  // fundamental JS class-construction ordering, not a bug in SceneRenderer).
-  // A normal `= new Map()` initializer would still be undefined at that
-  // point; lazily creating it on first touch (??=) works regardless of
-  // when that first touch happens.
-  private objectContainers?: Map<string, Container>;
   private hoverDiamond: Graphics | null = null;
   private placingRoomContainer: Container | null = null;
 
@@ -53,7 +73,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
     console.log(`[adminPreview] constructing instance #${instanceId}`);
     super(app, onRoomChange, { devMode: false, scale: 1.5 });
     this.instanceId = instanceId;
-    console.log(`[adminPreview] instance #${instanceId} constructed, objectContainers size:`, this.objectContainers?.size ?? 0);
+    console.log(`[adminPreview] instance #${instanceId} constructed, objectContainers size:`, objectContainersFor(this).size);
   }
 
   protected attachRoomInteraction(container: Container, room: RoomDef) {
@@ -67,7 +87,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
   }
 
   protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
-    (this.objectContainers ??= new Map()).set(obj.id, container);
+    objectContainersFor(this).set(obj.id, container);
     console.log(
       `[adminPreview] instance #${AdminPreviewRenderer.currentlyConstructingId} registered "${obj.id}" at (${container.position.x}, ${container.position.y})`,
     );
@@ -82,11 +102,11 @@ export class AdminPreviewRenderer extends SceneRenderer {
 
   /** Moves one object's own sprite directly — no scene rebuild, so this never blips. Only valid for an already-built object (same type/size as when the scene was last built). */
   public moveObject(objectId: string, x: number, y: number): void {
-    const container = this.objectContainers?.get(objectId);
+    const container = objectContainersFor(this).get(objectId);
     if (!container) {
       console.warn(
         `[adminPreview] instance #${this.instanceId} moveObject("${objectId}") — no container registered for this id. Known ids:`,
-        [...(this.objectContainers?.keys() ?? [])],
+        [...objectContainersFor(this).keys()],
       );
       return;
     }
