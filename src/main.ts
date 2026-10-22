@@ -11,7 +11,7 @@ import { setupTimerModal } from "./timer/modal";
 import { setupSettingsModal, setupSettingsContent } from "./settings/modal";
 import { getSettings, initSettingsState, onSettingsChange } from "./settings/state";
 import { setupMessagesModal } from "./broadcast/messagesModal";
-import { pushGoals, pushPeriodStats, pushStats, pushStatus } from "./broadcast/client";
+import { pushGoals, pushPeriodStats, pushStats, pushStatus, pushYesterdayStats } from "./broadcast/client";
 import { setupDashboardPanel, setupDashboardContent } from "./dashboard/panel";
 import { setupStatisticModal, setupStatisticContent } from "./dashboard/statisticModal";
 import { setupFloorButtons } from "./ui/floorButtons";
@@ -211,13 +211,15 @@ async function main() {
 
   // Stats scan much more AW history than anything else pushed here, so they
   // get their own slow timer instead of piggybacking on activity changes.
-  // pushPeriodStats rides along on the same timer rather than getting a
-  // separate one — see its own comment for why.
+  // pushPeriodStats/pushYesterdayStats ride along on the same timer rather
+  // than getting their own — see pushPeriodStats's comment for why.
   pushStats();
   pushPeriodStats();
+  pushYesterdayStats();
   setInterval(() => {
     pushStats();
     pushPeriodStats();
+    pushYesterdayStats();
   }, STATS_PUSH_INTERVAL_MS);
 }
 

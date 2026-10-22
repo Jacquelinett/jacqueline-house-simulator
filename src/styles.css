@@ -432,22 +432,17 @@ body {
   font-size: 13px;
 }
 
-/* Dashboard's date picker — app-only, since the viewer has no AW access to
-   run the live range query a picked date would need. (.day-toggle,
-   .stat-tabs/.stat-tab, and .stat-period-controls' layout now live in
-   shared-chrome.css instead — the viewer's own Period section reuses all
-   three for its This Week/Last Week/This Month/Last Month picker, just
-   with no date input inside .stat-period-controls.) */
-.dashboard-date-row {
-  margin-bottom: 8px;
-}
-
-/* Hyperlink-ish look (bold + underline) rather than a boxed input — same
+/* The date *input* itself is app-only, since the viewer has no AW access
+   to run the live query a picked date would need (.dashboard-date-row's
+   layout, .day-toggle, .stat-tabs/.stat-tab, and .stat-period-controls'
+   layout all live in shared-chrome.css instead, now that the viewer's own
+   Dashboard/Period sections reuse those same containers for their own
+   Today/Yesterday and This Week/Last Week/This Month/Last Month pickers).
+   Hyperlink-ish look (bold + underline) rather than a boxed input — same
    text color as everything else, just styled as a text link rather than a
    button. border-bottom instead of text-decoration: underline, since the
    latter doesn't reliably reach a native date input's internal rendering
-   the way it would on plain text. App-only along with the row above: the
-   viewer's .stat-period-controls never contains a date input. */
+   the way it would on plain text. */
 .dashboard-date-input,
 .stat-period-controls input[type="date"] {
   background: transparent;

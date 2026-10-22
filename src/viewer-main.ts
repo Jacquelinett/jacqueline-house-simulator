@@ -1,7 +1,7 @@
 import { HouseViewer, preloadRoomAssets } from "./scene/viewer";
 import { Goal } from "./goals/types";
 import { describeScheduleForDate, groupGoalsForDate } from "./goals/goalGroups";
-import { localDateString } from "./goals/recurrence";
+import { addDaysToDateString, localDateString, parseDateString } from "./goals/recurrence";
 import { formatMinutes } from "./goals/ui";
 import { buildModal } from "./ui/modal";
 import { buildFloatingPanel } from "./ui/draggablePanel";
@@ -99,6 +99,97 @@ function buildSyncStatusBlock(
   container.appendChild(syncEl);
 
   return (vt) => renderSyncStatus(syncEl, { showAw: false, vt });
+}
+
+type DashboardDay = "today" | "yesterday";
+
+interface DashboardRenderInput {
+  goals: Goal[];
+  todayMinutesByLabel: Record<string, number>;
+  yesterdayMinutesByLabel: Record<string, number>;
+  activityLabel: string | null;
+  startedAtMs: number | null;
+  colorByLabel: Map<string, number>;
+}
+
+/**
+ * Goal progress + activity breakdown for Today or Yesterday — a
+ * Today/Yesterday hyperlink toggle stands in for the desktop app's own
+ * Dashboard date picker, since the viewer has no AW access to query an
+ * arbitrary day. "Yesterday" is whatever was last pushed to
+ * /api/yesterday: a settled, complete day, so (unlike "today") it never
+ * gets the live-elapsed-time math added. Shared by the desktop Dashboard
+ * panel and the mobile Dashboard tab, each owning its own day selection —
+ * same as how the app's own Dashboard date input works independently per
+ * instance.
+ */
+function buildDashboardBlock(container: HTMLElement): { render(input: DashboardRenderInput): void } {
+  let day: DashboardDay = "today";
+  let latestInput: DashboardRenderInput | null = null;
+
+  const dateRow = document.createElement("div");
+  dateRow.className = "dashboard-date-row";
+  dateRow.appendChild(
+    buildToggleGroup(
+      [
+        ["today", "Today"],
+        ["yesterday", "Yesterday"],
+      ] as const,
+      "today",
+      (value) => {
+        day = value;
+        renderCurrent();
+      },
+      "day-link",
+    ),
+  );
+  container.appendChild(dateRow);
+
+  const { goalHeading, goalList, activityHeading, activityList } = buildDashboardSections(container);
+
+  function renderCurrent() {
+    if (!latestInput) return;
+    const { goals, todayMinutesByLabel, yesterdayMinutesByLabel, activityLabel: runningLabel, startedAtMs, colorByLabel } =
+      latestInput;
+    const isToday = day === "today";
+
+    goalHeading.textContent = isToday ? "Today's Goals" : "Yesterday's Goals";
+    activityHeading.textContent = isToday ? "Today's Activity" : "Yesterday's Activity";
+
+    const date = isToday ? new Date() : parseDateString(addDaysToDateString(localDateString(new Date()), -1));
+    const dateStr = localDateString(date);
+    const minutesByLabel = isToday ? todayMinutesByLabel : yesterdayMinutesByLabel;
+    const liveElapsedMinutes = isToday && startedAtMs ? (Date.now() - startedAtMs) / 60000 : 0;
+
+    const goalEntries = groupGoalsForDate(goals, date).map(({ activityLabel, targetMinutes, goals: groupGoals }) => {
+      const minutes = (minutesByLabel[activityLabel] ?? 0) + (activityLabel === runningLabel ? liveElapsedMinutes : 0);
+      return {
+        activityLabel,
+        minutes,
+        targetMinutes,
+        done: minutes >= targetMinutes,
+        subRows: groupGoals.map((g) => `${describeScheduleForDate(g.recurrence, dateStr)} — ${formatMinutes(g.targetMinutes)}`),
+      };
+    });
+    renderGoalList(goalList, goalEntries, isToday ? "No goals today" : "No goals yesterday");
+
+    const activityEntries = Object.entries(minutesByLabel)
+      .map(([label, minutes]) => ({
+        label,
+        color: colorByLabel.get(label) ?? 0xffffff,
+        minutes: minutes + (label === runningLabel ? liveElapsedMinutes : 0),
+      }))
+      .filter((e) => e.minutes > 0)
+      .sort((a, b) => b.minutes - a.minutes);
+    renderActivityList(activityList, activityEntries, isToday ? "Nothing tracked today" : "Nothing tracked yesterday");
+  }
+
+  return {
+    render(input) {
+      latestInput = input;
+      renderCurrent();
+    },
+  };
 }
 
 /**
@@ -442,7 +533,7 @@ async function main() {
     resizable: true,
     className: "dashboard-panel",
   });
-  const { goalList, activityList } = buildDashboardSections(dashboardPanel.body);
+  const dashboardDesktop = buildDashboardBlock(dashboardPanel.body);
   dashboardPanel.open();
 
   // --- Statistic modal: All-Time Activity section + Period tab, same shape the desktop app's Statistic modal has. ---
@@ -488,9 +579,7 @@ async function main() {
   mobileFab.onclick = () => mobileMessageModal.open();
   mobileTabs.pages.home.appendChild(mobileFab);
 
-  const { goalList: mobileGoalList, activityList: mobileActivityList } = buildDashboardSections(
-    mobileTabs.pages.dashboard,
-  );
+  const dashboardMobile = buildDashboardBlock(mobileTabs.pages.dashboard);
 
   const statisticMobile = buildStatisticBlock(mobileTabs.pages.statistic);
 
@@ -508,9 +597,23 @@ async function main() {
   let startedAtMs: number | null = null;
   let latestActivityLabel: string | null = null;
   let latestTodayMinutesByLabel: Record<string, number> = {};
+  let latestYesterdayMinutesByLabel: Record<string, number> = {};
   let latestGoals: Goal[] = [];
   let lastSyncAt: Date | null = null;
   let lastSyncError: string | null = null;
+
+  function renderDashboards() {
+    const input: DashboardRenderInput = {
+      goals: latestGoals,
+      todayMinutesByLabel: latestTodayMinutesByLabel,
+      yesterdayMinutesByLabel: latestYesterdayMinutesByLabel,
+      activityLabel: latestActivityLabel,
+      startedAtMs,
+      colorByLabel: new Map(latestStats.map((s) => [s.label, s.color] as const)),
+    };
+    dashboardDesktop.render(input);
+    dashboardMobile.render(input);
+  }
 
   function renderCurrent() {
     const status = { label: latestActivityLabel, startedAt: startedAtMs ? new Date(startedAtMs) : null };
@@ -530,16 +633,18 @@ async function main() {
 
   async function refreshStatus() {
     try {
-      const [statusRes, goalsRes, statsRes, periodStatsRes] = await Promise.all([
+      const [statusRes, goalsRes, statsRes, periodStatsRes, yesterdayRes] = await Promise.all([
         fetch(`${STATUS_API_BASE}/api/status`),
         fetch(`${STATUS_API_BASE}/api/goals`),
         fetch(`${STATUS_API_BASE}/api/stats`),
         fetch(`${STATUS_API_BASE}/api/period-stats`),
+        fetch(`${STATUS_API_BASE}/api/yesterday`),
       ]);
       const data: StatusResponse = await statusRes.json();
       latestGoals = await goalsRes.json();
       latestStats = await statsRes.json();
       latestPeriodStats = await periodStatsRes.json();
+      latestYesterdayMinutesByLabel = await yesterdayRes.json();
 
       latestActivityLabel = data.activityLabel;
       latestTodayMinutesByLabel = data.todayMinutesByLabel;
@@ -551,8 +656,7 @@ async function main() {
       lastSyncAt = new Date();
       lastSyncError = null;
       renderSync();
-      renderGoals();
-      renderTodayActivity();
+      renderDashboards();
     } catch (err) {
       console.error("[viewer] failed to fetch status", err);
       renderCurrentDesktop.showError("Couldn't load status");
@@ -562,53 +666,9 @@ async function main() {
     }
   }
 
-  // Each goal only carries its target + schedule — "today's minutes" comes
-  // from the separately-pushed per-label map, and whichever label matches
-  // the currently running activity gets its live elapsed time added here,
-  // same as the elapsed-time clock below. So neither goal edits nor ticking
-  // progress need a fresh fetch to stay accurate. Shared with the desktop
-  // Dashboard's rendering, just sourced from polled data instead of AW.
-  function renderGoals() {
-    const todayStr = localDateString(new Date());
-    const groups = groupGoalsForDate(latestGoals, new Date());
-    const entries = groups.map(({ activityLabel, targetMinutes, goals }) => {
-      const baselineMinutes = latestTodayMinutesByLabel[activityLabel] ?? 0;
-      const liveMinutes =
-        baselineMinutes + (activityLabel === latestActivityLabel && startedAtMs ? (Date.now() - startedAtMs) / 60000 : 0);
-      return {
-        activityLabel,
-        minutes: liveMinutes,
-        targetMinutes,
-        done: liveMinutes >= targetMinutes,
-        subRows: goals.map((g) => `${describeScheduleForDate(g.recurrence, todayStr)} — ${formatMinutes(g.targetMinutes)}`),
-      };
-    });
-    renderGoalList(goalList, entries);
-    renderGoalList(mobileGoalList, entries);
-  }
-
-  // Mirrors the desktop Dashboard's "Today's Activity" list — same
-  // todayMinutesByLabel the goal progress above uses, just not filtered
-  // down to activities with a goal attached.
-  function renderTodayActivity() {
-    const colorByLabel = new Map(latestStats.map((s) => [s.label, s.color] as const));
-    const entries = Object.entries(latestTodayMinutesByLabel)
-      .map(([label, minutes]) => ({
-        label,
-        color: colorByLabel.get(label) ?? 0xffffff,
-        minutes: minutes + (label === latestActivityLabel && startedAtMs ? (Date.now() - startedAtMs) / 60000 : 0),
-      }))
-      .filter((e) => e.minutes > 0)
-      .sort((a, b) => b.minutes - a.minutes);
-
-    renderActivityList(activityList, entries, "Nothing tracked today");
-    renderActivityList(mobileActivityList, entries, "Nothing tracked today");
-  }
-
   function tickElapsed() {
     renderCurrent();
-    renderGoals();
-    renderTodayActivity();
+    renderDashboards();
     renderSync();
   }
 

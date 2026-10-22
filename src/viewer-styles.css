@@ -88,3 +88,27 @@ body {
   font-size: 13px;
   cursor: pointer;
 }
+
+/* Today/Yesterday toggle for the Dashboard panel's goal/activity sections
+   — viewer-only (the desktop app's own Dashboard has a real date input
+   fed by live AW queries instead; the viewer only ever has these two
+   days pushed). Same hyperlink look as the app's .dashboard-date-input
+   (bold + underline, no box), but as two buttons instead of one
+   <input type="date">, so selection is shown via opacity instead —
+   same convention .stat-tab already uses for its own selected state. */
+.day-link {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid currentColor;
+  padding: 2px 0;
+  margin-right: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.day-link.selected {
+  opacity: 1;
+}

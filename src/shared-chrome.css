@@ -463,6 +463,14 @@
   font-size: 13px;
 }
 
+/* Layout only — the app's Dashboard date input and the viewer's own
+   Today/Yesterday toggle both sit in one of these, above the goal/activity
+   sections built by buildDashboardSections(); what's actually inside it
+   (an <input type="date"> vs a .day-link toggle pair) is build-specific. */
+.dashboard-date-row {
+  margin-bottom: 8px;
+}
+
 .day-toggle {
   background: var(--surface-soft);
   color: var(--text);

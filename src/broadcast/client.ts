@@ -1,8 +1,9 @@
 import { getCurrentActivity } from "../aw/client";
 import { getGoals } from "../goals/state";
 import { getTodayMinutesByLabel } from "../goals/progress";
-import { getActivityStats } from "../dashboard/stats";
+import { getActivityStats, getActivityStatsForDate } from "../dashboard/stats";
 import { computeFixedPeriodStats } from "../dashboard/periodStats";
+import { addDaysToDateString, localDateString } from "../goals/recurrence";
 import { getSettings } from "../settings/state";
 
 export interface InboxMessage {
@@ -113,6 +114,23 @@ export async function pushStats(): Promise<void> {
  */
 export async function pushPeriodStats(): Promise<void> {
   await pushWithHealth("/api/period-stats", await computeFixedPeriodStats(), "period stats");
+}
+
+/**
+ * Pushes yesterday's tracked minutes per label — a settled, complete day,
+ * unlike today's (which is still live). The viewer's Dashboard panel has
+ * no AW access to query an arbitrary day, so instead of a date picker it
+ * gets a Today/Yesterday hyperlink toggle: "today" is what it already has
+ * from /api/status, "yesterday" is this. Reuses getActivityStatsForDate
+ * (already used by the desktop Dashboard's own date picker) rather than
+ * writing a new aggregation — just reshaped into a plain label->minutes
+ * map, the same shape /api/status already pushes for today.
+ */
+export async function pushYesterdayStats(): Promise<void> {
+  const yesterday = addDaysToDateString(localDateString(new Date()), -1);
+  const stats = await getActivityStatsForDate(yesterday);
+  const minutesByLabel = Object.fromEntries(stats.map((s) => [s.label, s.minutes]));
+  await pushWithHealth("/api/yesterday", minutesByLabel, "yesterday stats");
 }
 
 export async function fetchMessages(): Promise<InboxMessage[]> {

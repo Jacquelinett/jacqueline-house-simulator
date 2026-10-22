@@ -19,6 +19,9 @@
  *                             its own arbitrary-date-range queries, so it picks from this fixed list
  *                             instead of a free date picker
  *   PUT  /api/period-stats -> (secret required) House Simulator pushes this on the same cadence as /api/stats
+ *   GET  /api/yesterday -> public JSON: yesterday's tracked minutes per activity label (a settled, complete
+ *                          day, unlike /api/status's today) — backs the viewer Dashboard's Today/Yesterday toggle
+ *   PUT  /api/yesterday -> (secret required) House Simulator pushes this on the same cadence as /api/stats
  *   GET  /api/messages  -> (secret required) your in-app inbox reads these
  *   POST /api/messages  -> public: a viewer leaves you a note
  *   DELETE /api/messages/:id -> (secret required) dismiss a message from your inbox
@@ -67,6 +70,11 @@ async function ensureSchema() {
   await sqlite.execute(`create table if not exists period_stats_blob (
     id integer primary key check (id = 1),
     period_stats_json text not null,
+    updated_at text not null
+  )`);
+  await sqlite.execute(`create table if not exists yesterday_blob (
+    id integer primary key check (id = 1),
+    minutes_json text not null,
     updated_at text not null
   )`);
   await sqlite.execute(`create table if not exists messages (
@@ -195,6 +203,30 @@ async function handlePutPeriodStats(req: Request): Promise<Response> {
   return Response.json({ ok: true });
 }
 
+async function handleGetYesterday(): Promise<Response> {
+  const result = await sqlite.execute("select * from yesterday_blob where id = 1");
+  const row = result.rows[0] as { minutes_json: string } | undefined;
+  return Response.json(row ? JSON.parse(row.minutes_json) : {});
+}
+
+async function handlePutYesterday(req: Request): Promise<Response> {
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return Response.json({ error: "expected a JSON object of label -> minutes" }, { status: 400 });
+  }
+
+  await sqlite.execute({
+    sql: `insert into yesterday_blob (id, minutes_json, updated_at)
+          values (1, :minutesJson, :updatedAt)
+          on conflict(id) do update set
+            minutes_json = excluded.minutes_json,
+            updated_at = excluded.updated_at`,
+    args: { minutesJson: JSON.stringify(body), updatedAt: new Date().toISOString() },
+  });
+
+  return Response.json({ ok: true });
+}
+
 async function handleGetMessages(): Promise<Response> {
   const result = await sqlite.execute("select * from messages order by id desc limit 200");
   return Response.json(result.rows);
@@ -271,6 +303,15 @@ export default async function (req: Request): Promise<Response> {
   if (method === "PUT" && pathname === "/api/period-stats") {
     if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     return handlePutPeriodStats(req);
+  }
+
+  if (method === "GET" && pathname === "/api/yesterday") {
+    return handleGetYesterday();
+  }
+
+  if (method === "PUT" && pathname === "/api/yesterday") {
+    if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handlePutYesterday(req);
   }
 
   if (method === "GET" && pathname === "/api/messages") {
