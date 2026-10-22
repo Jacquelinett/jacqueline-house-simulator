@@ -1,23 +1,17 @@
-import { createPersistedState } from "../lib/persistedState";
-import { todosFileStore } from "./store";
+import { getTodos as remoteGetTodos, onTodosChange as remoteOnTodosChange, sendCommand } from "../client/remoteState";
 
-const todosState = createPersistedState(todosFileStore.load, todosFileStore.save);
+/** Same pattern as goals/state.ts — thin wrapper, same exported names, real logic server-side now (server/todos.ts). */
+export const getTodos = remoteGetTodos;
+export const onTodosChange = remoteOnTodosChange;
 
-export const initTodosState = todosState.init;
-export const getTodos = todosState.get;
-export const onTodosChange = todosState.onChange;
-
-export async function addTodo(text: string) {
-  await todosState.persist([...getTodos(), { id: crypto.randomUUID(), text, done: false }]);
+export async function addTodo(text: string): Promise<void> {
+  sendCommand("addTodo", { text });
 }
 
-export async function toggleTodo(id: string) {
-  const todo = getTodos().find((t) => t.id === id);
-  if (!todo) return;
-  todo.done = !todo.done;
-  await todosState.persist(getTodos());
+export async function toggleTodo(id: string): Promise<void> {
+  sendCommand("toggleTodo", { id });
 }
 
-export async function deleteTodo(id: string) {
-  await todosState.persist(getTodos().filter((t) => t.id !== id));
+export async function deleteTodo(id: string): Promise<void> {
+  sendCommand("deleteTodo", { id });
 }

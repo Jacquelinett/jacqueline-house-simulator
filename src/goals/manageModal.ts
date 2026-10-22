@@ -1,6 +1,6 @@
 import { addGoal, deleteGoal, getGoals, onGoalsChange, skipGoalToday, unskipGoalToday, updateGoal } from "./state";
 import { buildActivitySelect, buildMinutesInput, buildRecurrencePicker, describeRecurrence, formatMinutes } from "./ui";
-import { describeStreak, getGoalHistory } from "./history";
+import { describeStreak, historyForGoal } from "./history";
 import { Goal, Recurrence } from "./types";
 import { localDateString } from "./recurrence";
 import { buildModal } from "../ui/modal";
@@ -177,12 +177,20 @@ export function setupGoalsManageModal(): { open: () => void } {
 
     const skippedToday = goal.recurrence.type !== "once" && (goal.skipDates?.includes(todayDateString()) ?? false);
 
-    const streakText = describeStreak(goal, getGoalHistory());
-
     const text = document.createElement("span");
     text.className = "goal-manage-text";
-    text.textContent = `${goal.activityLabel} — ${formatMinutes(goal.targetMinutes)} — ${describeRecurrence(goal.recurrence)}${skippedToday ? " (skipped today)" : ""}${streakText ? ` — ${streakText}` : ""}`;
+    text.textContent = `${goal.activityLabel} — ${formatMinutes(goal.targetMinutes)} — ${describeRecurrence(goal.recurrence)}${skippedToday ? " (skipped today)" : ""}`;
     row.appendChild(text);
+
+    // Row renders immediately above; the streak needs a round trip to the
+    // server now (historyForGoal), so it's patched in once that resolves
+    // instead of making this whole row-building chain async just for it.
+    if (goal.recurrence.type !== "once") {
+      historyForGoal(goal.id).then((history) => {
+        const streakText = describeStreak(goal, history);
+        if (streakText) text.textContent += ` — ${streakText}`;
+      });
+    }
 
     const editBtn = document.createElement("button");
     editBtn.className = "goal-edit";

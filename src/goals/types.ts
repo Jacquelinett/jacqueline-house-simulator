@@ -34,3 +34,18 @@ export interface Goal {
   streakStartDate?: string;
   highestStreak?: number;
 }
+
+/**
+ * One settled day's outcome for one goal — lives here (not in
+ * goals/history.ts, where it used to be declared) so both the client's
+ * history.ts and server/goalHistory.ts can import the same type instead
+ * of each declaring their own identical copy.
+ */
+export interface GoalHistoryEntry {
+  goalId: string;
+  date: string; // "YYYY-MM-DD" — the day this outcome applies to, always a past (settled) day, never today
+  activityLabel: string;
+  targetMinutes: number;
+  actualMinutes: number;
+  outcome: "completed" | "skipped" | "missed";
+}

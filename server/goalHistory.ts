@@ -1,21 +1,17 @@
 import { getDurationMinutes } from "../src/aw/client";
 import { addDaysToDateString, isScheduledOn, parseDateString } from "../src/goals/recurrence";
 import { formatStreak } from "../src/goals/format";
-import { Goal } from "../src/goals/types";
+import { Goal, GoalHistoryEntry } from "../src/goals/types";
 import { getGoals, persistGoals, todayDateString } from "./goals";
 import { goalHistoryStore } from "./stores/goalHistoryStore";
 
-export interface GoalHistoryEntry {
-  goalId: string;
-  date: string;
-  activityLabel: string;
-  targetMinutes: number;
-  actualMinutes: number;
-  outcome: "completed" | "skipped" | "missed";
-}
-
 export function historyForGoal(goalId: string): GoalHistoryEntry[] {
   return goalHistoryStore.getForGoal(goalId);
+}
+
+/** The full log — only for the Statistic modal's All-Time tab, which genuinely needs every goal's history to find the single most-completed/skipped activity overall. Everything else should prefer historyForGoal() or a date-range query. */
+export function getAllHistory(): GoalHistoryEntry[] {
+  return goalHistoryStore.getAll();
 }
 
 export interface GoalHistorySummary {

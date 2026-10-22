@@ -79,8 +79,8 @@ export function setupStatisticContent(container: HTMLElement): { refresh(): void
   // this section is desktop-only — the viewer's own Statistic surface only
   // gets per-window goal outcomes for the 4 fixed buckets it's pushed (see
   // periodStats.ts), never the full all-time history.
-  function renderGoals() {
-    renderGoalOutcomes(goalsList, summarizeGoalHistory(getGoalHistory()));
+  async function renderGoals() {
+    renderGoalOutcomes(goalsList, summarizeGoalHistory(await getGoalHistory()));
   }
 
   async function renderActivity() {

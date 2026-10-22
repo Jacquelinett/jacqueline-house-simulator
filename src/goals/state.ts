@@ -1,106 +1,40 @@
-import { createPersistedState } from "../lib/persistedState";
-import { localDateString } from "./recurrence";
-import { goalsFileStore } from "./store";
 import { Goal, Recurrence } from "./types";
-
-// jsonFileStore has no schema-version mechanism, so goals saved under the
-// old single-occurrence monthly shape ({ occurrence: 1|2|3|4|"last" })
-// need converting to the new multi-occurrence one ({ occurrences: [...] })
-// on every load. Self-heals on disk the next time goals are saved for any
-// reason — no explicit write-back needed here.
-function migrateGoals(goals: Goal[]): Goal[] {
-  return goals.map((goal) => {
-    const recurrence = goal.recurrence as Recurrence & { occurrence?: 1 | 2 | 3 | 4 | "last" };
-    if (recurrence.type !== "monthly" || !("occurrence" in recurrence)) return goal;
-    const { occurrence, ...rest } = recurrence;
-    return { ...goal, recurrence: { ...rest, occurrences: [occurrence] } as Recurrence };
-  });
-}
-
-const goalsState = createPersistedState(
-  async () => migrateGoals(await goalsFileStore.load()),
-  goalsFileStore.save,
-);
-
-export const initGoalsState = goalsState.init;
-export const getGoals = goalsState.get;
-/** Called after every mutation — subscribe to keep a view in sync with the shared list. */
-export const onGoalsChange = goalsState.onChange;
+import { getGoals as remoteGetGoals, onGoalsChange as remoteOnGoalsChange, sendCommand } from "../client/remoteState";
 
 /**
- * Saves whatever's currently in `getGoals()` as-is — for a caller that
- * mutated goal objects in place (e.g. `settleGoalHistory()` updating
- * streak fields) rather than building a new array, so there's no new
- * value to pass in beyond "persist what's already there."
+ * Thin wrapper over the WebSocket remote-state layer — same exported
+ * names/signatures this file always had, so callers (goals/panel.ts,
+ * goals/manageModal.ts, dashboard/panel.ts, ...) didn't need to change at
+ * all. The real logic (recurrenceEquals, migrateGoals, actually mutating
+ * goals.json) now lives server-side in server/goals.ts; this just sends
+ * commands and lets the server's `goals` state broadcast (which fires
+ * after every change, including settleGoalHistory's own streak updates)
+ * drive re-renders.
  */
-export async function persistGoals(): Promise<void> {
-  await goalsState.persist(getGoals());
+export const getGoals = remoteGetGoals;
+export const onGoalsChange = remoteOnGoalsChange;
+
+export async function addGoal(activityLabel: string, targetMinutes: number, recurrence: Recurrence): Promise<void> {
+  sendCommand("addGoal", { activityLabel, targetMinutes, recurrence });
 }
 
-export function todayDateString(): string {
-  return localDateString(new Date());
+export async function deleteGoal(id: string): Promise<void> {
+  sendCommand("deleteGoal", { id });
 }
 
-function recurrenceEquals(a: Recurrence, b: Recurrence): boolean {
-  if (a.type !== b.type) return false;
-  if (a.type === "once" && b.type === "once") return a.date === b.date;
-  if (a.type === "daily") return true;
-  if (a.type === "weekly" && b.type === "weekly") {
-    return a.daysOfWeek.length === b.daysOfWeek.length && a.daysOfWeek.every((d) => b.daysOfWeek.includes(d));
-  }
-  if (a.type === "monthly" && b.type === "monthly") {
-    return (
-      a.dayOfWeek === b.dayOfWeek &&
-      a.occurrences.length === b.occurrences.length &&
-      a.occurrences.every((occ) => b.occurrences.includes(occ))
-    );
-  }
-  return false;
+export async function skipGoalToday(goal: Goal): Promise<void> {
+  sendCommand("skipGoalToday", { goalId: goal.id });
 }
 
-export async function addGoal(activityLabel: string, targetMinutes: number, recurrence: Recurrence) {
-  const goals = getGoals();
-  // Re-adding the same activity on the same schedule shouldn't create a
-  // second entry — extend the existing goal's target instead, which also
-  // naturally un-checks it if it had already been marked done.
-  const existing = goals.find(
-    (g) => g.activityLabel === activityLabel && recurrenceEquals(g.recurrence, recurrence),
-  );
-  if (existing) {
-    existing.targetMinutes += targetMinutes;
-    await goalsState.persist(goals);
-  } else {
-    await goalsState.persist([
-      ...goals,
-      { id: crypto.randomUUID(), activityLabel, targetMinutes, recurrence, createdAt: todayDateString() },
-    ]);
-  }
+export async function unskipGoalToday(goal: Goal): Promise<void> {
+  sendCommand("unskipGoalToday", { goalId: goal.id });
 }
 
-export async function deleteGoal(id: string) {
-  await goalsState.persist(getGoals().filter((g) => g.id !== id));
-}
-
-export async function skipGoalToday(goal: Goal) {
-  goal.skipDates = [...(goal.skipDates ?? []), todayDateString()];
-  await goalsState.persist(getGoals());
-}
-
-export async function unskipGoalToday(goal: Goal) {
-  goal.skipDates = (goal.skipDates ?? []).filter((d) => d !== todayDateString());
-  await goalsState.persist(getGoals());
-}
-
-// Changing activityLabel on a goal that already has goalHistory.ts entries
-// leaves those old entries attributed to the old label — the history log
-// records whatever label was current at settle-time, not a live reference
-// to this goal. Same thing you'd get from deleting the goal and adding a
-// new one for a different activity instead, so not a reason to disallow it.
-export async function updateGoal(id: string, activityLabel: string, targetMinutes: number, recurrence: Recurrence) {
-  const goal = getGoals().find((g) => g.id === id);
-  if (!goal) return;
-  goal.activityLabel = activityLabel;
-  goal.targetMinutes = targetMinutes;
-  goal.recurrence = recurrence;
-  await goalsState.persist(getGoals());
+export async function updateGoal(
+  id: string,
+  activityLabel: string,
+  targetMinutes: number,
+  recurrence: Recurrence,
+): Promise<void> {
+  sendCommand("updateGoal", { id, activityLabel, targetMinutes, recurrence });
 }

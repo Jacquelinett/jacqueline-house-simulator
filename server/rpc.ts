@@ -1,6 +1,6 @@
 import { WebSocket, WebSocketServer } from "ws";
 import { getCurrentActivity, startActivity, stopActivity } from "../src/aw/client";
-import { getActivityStats, getActivityStatsForDate } from "../src/dashboard/stats";
+import { getActivityStats, getActivityStatsForDate } from "./stats";
 import { DeviceSettings } from "../src/settings/types";
 import {
   addGoal,
@@ -11,11 +11,11 @@ import {
   unskipGoalToday,
   updateGoal,
 } from "./goals";
-import { getTodayStreaksByGoalId } from "./goalHistory";
+import { getAllHistory, getTodayStreaksByGoalId, historyForGoal } from "./goalHistory";
 import { getGoalProgressForDate, getTodayMinutesByLabel } from "./progress";
 import { computeFixedPeriodStats, computePeriodStats } from "./periodStats";
 import { addTodo, deleteTodo, getTodos, onTodosChange, toggleTodo } from "./todos";
-import { pushStatus } from "./broadcast";
+import { deleteMessage, fetchMessages, getBroadcastHealthInfo, pushStatus } from "./broadcast";
 import { getDeviceSettings, updateDeviceSettings } from "./deviceSettings";
 
 /**
@@ -39,6 +39,7 @@ const commands: Record<string, (args: any) => Promise<void>> = {
   addTodo: ({ text }) => addTodo(text),
   toggleTodo: ({ id }) => toggleTodo(id),
   deleteTodo: ({ id }) => deleteTodo(id),
+  deleteMessage: ({ id }) => deleteMessage(id),
 };
 
 const queries: Record<string, (args: any) => Promise<unknown>> = {
@@ -50,6 +51,10 @@ const queries: Record<string, (args: any) => Promise<unknown>> = {
   computePeriodStats: ({ startIso, endIso }) => computePeriodStats(new Date(startIso), new Date(endIso)),
   getTodayStreaksByGoalId: async () => getTodayStreaksByGoalId(),
   getCurrentActivity: async () => getCurrentActivity(),
+  getGoalHistory: async () => getAllHistory(),
+  historyForGoal: async ({ goalId }) => historyForGoal(goalId),
+  fetchMessages: () => fetchMessages(),
+  getBroadcastHealth: async () => getBroadcastHealthInfo(),
 };
 
 function currentStatus() {

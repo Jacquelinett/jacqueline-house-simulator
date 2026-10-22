@@ -1,17 +1,12 @@
 import { Application } from "pixi.js";
-import { ensureStopwatchBucket, getCurrentActivity, getServerInfo, resumeActivity } from "./aw/client";
 import { House, preloadRoomAssets } from "./scene/House";
 import { setupGoalsPanel, setupJacquelineStatus } from "./goals/panel";
 import { setupGoalsManageModal } from "./goals/manageModal";
-import { initGoalsState, onGoalsChange } from "./goals/state";
-import { initGoalHistoryState, settleGoalHistory } from "./goals/history";
 import { setupTodosModal } from "./todos/modal";
-import { initTodosState } from "./todos/state";
 import { setupTimerModal } from "./timer/modal";
 import { setupSettingsModal, setupSettingsContent } from "./settings/modal";
-import { getSettings, initSettingsState, onSettingsChange } from "./settings/state";
+import { getSettings, onSettingsChange } from "./settings/state";
 import { setupMessagesModal } from "./broadcast/messagesModal";
-import { pushGoals, pushPeriodStats, pushStats, pushStatus, pushTodayStreaks, pushYesterdayStats } from "./broadcast/client";
 import { setupDashboardPanel, setupDashboardContent } from "./dashboard/panel";
 import { setupStatisticModal, setupStatisticContent } from "./dashboard/statisticModal";
 import { setupFloorButtons } from "./ui/floorButtons";
@@ -19,16 +14,15 @@ import { setupTopButtons } from "./ui/topButtons";
 import { setupPixiApp } from "./ui/pixiApp";
 import { setupMobileTabs } from "./ui/mobileTabs";
 import { buildModal } from "./ui/modal";
-import { DEFAULT_SETTINGS } from "./settings/types";
+import { DEFAULT_DEVICE_SETTINGS } from "./settings/types";
 import { applyTheme, THEME_BACKGROUND } from "./settings/themes";
 import { ACTIVITIES, toCssColor } from "./scene/activities";
-
-const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
+import { connectRemoteState, getRemoteStatus, onRemoteStatusChange } from "./client/remoteState";
 
 // Only ever holds the boot-time "connecting…"/fatal-error text now —
 // ongoing AW connection, activity, and elapsed time all live in the
 // Jacqueline panel instead (see goals/panel.ts), so this is cleared the
-// moment AW connects and #status:empty hides the box.
+// moment the server connects and #status:empty hides the box.
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
 const roomLabelEl = document.querySelector<HTMLDivElement>("#room-label")!;
 
@@ -45,7 +39,6 @@ async function setupHouse(app: Application): Promise<House> {
 
   const house = new House(
     app,
-    () => pushStatus(),
     (name) => {
       roomLabelEl.textContent = name;
       floorButtons.onRoomChange(name);
@@ -63,12 +56,10 @@ async function setupHouse(app: Application): Promise<House> {
 }
 
 /** Wires up every feature modal (goals/todos/timer/messages/settings) and the top-right button row that opens them. */
-async function setupModals(): Promise<void> {
+function setupModals(): void {
   const goalsModal = setupGoalsManageModal();
   setupGoalsPanel();
-  onGoalsChange(pushGoals);
 
-  await initTodosState();
   const todosModal = setupTodosModal();
 
   const timerModal = setupTimerModal();
@@ -96,7 +87,7 @@ function setupMobilePickAction(house: House): { open: () => void } {
 
   function render() {
     list.textContent = "";
-    const current = getCurrentActivity();
+    const current = getRemoteStatus();
     for (const activity of Object.values(ACTIVITIES)) {
       const btn = document.createElement("button");
       btn.className = "dashboard-row mobile-action-row";
@@ -108,18 +99,12 @@ function setupMobilePickAction(house: House): { open: () => void } {
 
       const text = document.createElement("span");
       text.className = "dashboard-text";
-      text.textContent = `${current?.label === activity.label ? "☑" : "☐"} ${activity.label}`;
+      text.textContent = `${current.activityLabel === activity.label ? "☑" : "☐"} ${activity.label}`;
       btn.appendChild(text);
 
-      btn.onclick = async () => {
-        btn.disabled = true;
-        try {
-          await house.toggleActivity(activity.label);
-          modal.close();
-        } catch (err) {
-          console.error("[mobile] failed to toggle activity", err);
-          btn.disabled = false;
-        }
+      btn.onclick = () => {
+        house.toggleActivity(activity.label);
+        modal.close();
       };
 
       list.appendChild(btn);
@@ -167,63 +152,35 @@ function setupMobileUI(house: House): void {
 async function main() {
   // applyTheme() overrides this once settings load, but this is what's
   // visible for the brief window before that, so it should already match
-  // DEFAULT_SETTINGS.theme rather than flashing some other theme's
+  // DEFAULT_DEVICE_SETTINGS.theme rather than flashing some other theme's
   // background first.
-  const app = await setupPixiApp(THEME_BACKGROUND[DEFAULT_SETTINGS.theme]);
+  const app = await setupPixiApp(THEME_BACKGROUND[DEFAULT_DEVICE_SETTINGS.theme]);
 
   try {
-    await getServerInfo();
-    await ensureStopwatchBucket();
+    // Resolves only once the server's initial goals/todos/status/settings
+    // broadcasts have all arrived (see remoteState.ts) — so everything
+    // built below can read getSettings()/getRemoteStatus() synchronously.
+    await connectRemoteState();
     statusEl.textContent = "";
   } catch (err) {
-    statusEl.textContent = `AW connection failed: ${(err as Error).message}`;
+    statusEl.textContent = `Server connection failed: ${(err as Error).message}`;
     console.error(err);
     return;
   }
 
-  await initGoalsState();
-  await initGoalHistoryState();
-  await initSettingsState();
-
   applyTheme(app, getSettings().theme);
   onSettingsChange(() => applyTheme(app, getSettings().theme));
 
-  // Backfills any scheduled day between each goal's creation (or last
-  // settle) and yesterday that hasn't been recorded yet — never blocks
-  // startup on this, since it's just gamification stats, not core function.
-  settleGoalHistory().catch((err) => console.error("[goals] failed to settle history", err));
-
   const house = await setupHouse(app);
-  await setupModals();
+  // Mirrors the old AW-resume-on-launch behavior: jump the camera to
+  // wherever's currently running, once, right after connecting. Later
+  // broadcasts (this device's own actions, or another device's) only
+  // resync the overlay — see House.applyRemoteStatus's own comment.
+  house.applyRemoteStatus(getRemoteStatus(), { followRoom: true });
+  onRemoteStatusChange(() => house.applyRemoteStatus(getRemoteStatus()));
+
+  setupModals();
   setupMobileUI(house);
-
-  const resumed = await resumeActivity().catch((err) => {
-    console.error("[aw] failed to resume previous activity", err);
-    return null;
-  });
-  if (resumed) house.resumeActivity(resumed);
-
-  // Pushed once on startup so a viewer isn't stuck showing stale data from
-  // last session; after that, `onActivityChange`/`onGoalsChange` above
-  // re-push whenever something that's actually displayed changes.
-  pushStatus();
-  pushGoals();
-
-  // Stats scan much more AW history than anything else pushed here, so they
-  // get their own slow timer instead of piggybacking on activity changes.
-  // pushPeriodStats/pushYesterdayStats/pushTodayStreaks ride along on the
-  // same timer rather than getting their own — see pushPeriodStats's
-  // comment for why.
-  pushStats();
-  pushPeriodStats();
-  pushYesterdayStats();
-  pushTodayStreaks();
-  setInterval(() => {
-    pushStats();
-    pushPeriodStats();
-    pushYesterdayStats();
-    pushTodayStreaks();
-  }, STATS_PUSH_INTERVAL_MS);
 }
 
 main().catch((err) => {

@@ -1,23 +1,26 @@
 import { Application, Container, Polygon } from "pixi.js";
 import { findRoomForActivityLabel, gridToScreen, ObjectAction, ObjectDef, RoomDef } from "./rooms";
 import { SceneRenderer } from "./renderer";
-import { getCurrentActivity, RunningActivity, startActivity, stopActivity } from "../aw/client";
+import { getRemoteStatus, RemoteStatus, sendCommand } from "../client/remoteState";
 
 export { preloadRoomAssets } from "./renderer";
 
-/** Adds click/interaction handling (and AW integration) on top of the shared scene renderer — the desktop app's interactive view. */
+/** Adds click/interaction handling on top of the shared scene renderer — the desktop app's interactive view. Starting/stopping activities is a fire-and-forget command to the Node server now; the overlay highlight and (on startup only) camera focus are driven back by its `status` broadcast via applyRemoteStatus(), not by awaiting the command itself. */
 export class House extends SceneRenderer {
   private menuEl: HTMLDivElement | null = null;
   // Which object actually started the currently-running activity — distinct
   // from the activity's label, since two different objects (e.g. a second
   // piano elsewhere) can share a label. null means "unknown" (e.g. right
-  // after resuming from AW on startup), treated as "assume it's this one"
-  // rather than refusing to stop an activity we can't otherwise attribute.
+  // after the server resumes an activity from before this client connected),
+  // treated as "assume it's this one" rather than refusing to stop an
+  // activity we can't otherwise attribute. Only ever set here, from this
+  // client's own clicks — never touched by applyRemoteStatus, so an
+  // in-flight click's optimistic attribution isn't wiped out by the status
+  // broadcast echoing its own change straight back.
   private currentActivitySource: { roomId: string; objectId: string } | null = null;
 
   constructor(
     app: Application,
-    private onActivityChange: (current: RunningActivity | null) => void,
     onRoomChange: (roomName: string) => void,
     initial: { devMode: boolean; scale: number },
   ) {
@@ -72,8 +75,8 @@ export class House extends SceneRenderer {
       return;
     }
 
-    const current = getCurrentActivity();
-    const isSameLabel = current?.label === action.label;
+    const current = getRemoteStatus();
+    const isSameLabel = current.activityLabel === action.label;
     // A different object representing the same ongoing activity (e.g. a
     // second piano elsewhere) shouldn't stop it just by being clicked —
     // only the object that's actually running it (or an unattributed
@@ -88,14 +91,10 @@ export class House extends SceneRenderer {
       return;
     }
 
-    const op = isSameLabel ? stopActivity() : startActivity(action.label);
-    op.then(() => {
-      this.currentActivitySource = isSameLabel ? null : { roomId, objectId };
-      this.setViewedRoom(roomId);
-      const current = getCurrentActivity();
-      this.updateActiveOverlays(current);
-      this.onActivityChange(current);
-    }).catch((err) => console.error("[house] action failed", err));
+    this.currentActivitySource = isSameLabel ? null : { roomId, objectId };
+    this.setViewedRoom(roomId);
+    if (isSameLabel) sendCommand("stopActivity");
+    else sendCommand("startActivity", { label: action.label });
   }
 
   private openMenu(roomId: string, objectId: string, actions: ObjectAction[], clientX: number, clientY: number) {
@@ -131,32 +130,37 @@ export class House extends SceneRenderer {
     this.menuEl = null;
   }
 
-  /** Re-applies a running activity recovered from AW on startup — same visual effects as clicking its object. */
-  public resumeActivity(current: RunningActivity) {
-    this.updateActiveOverlays(current);
-    const roomId = findRoomForActivityLabel(current.label);
-    if (roomId) this.setViewedRoom(roomId);
-    this.onActivityChange(current);
+  /**
+   * Syncs the overlay highlight to the server's current-activity broadcast —
+   * called once right after connecting (with `followRoom: true`, same as the
+   * old startup-only AW resume behavior: jump the camera to wherever it's
+   * running) and again every time the broadcast changes thereafter (overlay
+   * only — a different device starting/stopping something shouldn't yank
+   * this device's camera away from wherever it's currently looking).
+   */
+  public applyRemoteStatus(status: RemoteStatus, options: { followRoom?: boolean } = {}) {
+    this.updateActiveOverlays(status.activityLabel ? { label: status.activityLabel } : null);
+    if (options.followRoom && status.activityLabel) {
+      const roomId = findRoomForActivityLabel(status.activityLabel);
+      if (roomId) this.setViewedRoom(roomId);
+    }
   }
 
   /**
    * Start/stop an activity by label with no associated clicked object —
    * used by the mobile Pick Action list, which picks from the flat
    * ACTIVITIES registry rather than tapping a specific object in a
-   * specific room. Same start/stop-toggle + overlay/camera-focus effects
-   * as runAction(), just always treated as an unattributed source (same
-   * "assume it's this one" rule used when resuming from AW on startup).
+   * specific room. Same start/stop-toggle + camera-focus as runAction(),
+   * just always treated as an unattributed source (same "assume it's this
+   * one" rule used for an activity resumed before this client connected).
    */
-  public async toggleActivity(label: string): Promise<void> {
-    const current = getCurrentActivity();
-    const isSameLabel = current?.label === label;
+  public toggleActivity(label: string): void {
+    const current = getRemoteStatus();
+    const isSameLabel = current.activityLabel === label;
 
-    await (isSameLabel ? stopActivity() : startActivity(label));
+    if (isSameLabel) sendCommand("stopActivity");
+    else sendCommand("startActivity", { label });
     this.currentActivitySource = null;
-
-    const updated = getCurrentActivity();
-    this.updateActiveOverlays(updated);
-    this.onActivityChange(updated);
 
     const roomId = findRoomForActivityLabel(label);
     if (roomId) this.setViewedRoom(roomId);

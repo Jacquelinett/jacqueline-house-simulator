@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { GoalHistoryEntry } from "../../src/goals/history";
+import { GoalHistoryEntry } from "../../src/goals/types";
 
 interface HistoryRow {
   goal_id: string;

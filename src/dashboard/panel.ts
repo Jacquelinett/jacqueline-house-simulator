@@ -57,7 +57,7 @@ export function setupDashboardContent(container: HTMLElement, providedDateInput?
 
   async function renderGoals() {
     const progress = await getGoalProgressForDate(dateInput.value);
-    const history = getGoalHistory();
+    const history = await getGoalHistory();
     renderGoalList(
       goalList,
       progress.map((p) => ({

@@ -100,7 +100,12 @@ export function connectRemoteState(): Promise<void> {
     const ws = new WebSocket(url);
     socket = ws;
 
-    ws.addEventListener("open", () => resolve());
+    // `open` only means the socket connected, not that the server's initial
+    // goals/todos/status/settings pushes (sent right after connection) have
+    // arrived yet — resolving on `open` alone risks main.ts building UI off
+    // each store's empty initial value. Wait for all four instead.
+    const pendingInitialKeys = new Set(Object.keys(storesByKey));
+
     ws.addEventListener("error", () => reject(new Error("WebSocket connection failed")));
     ws.addEventListener("close", (event) => {
       console.error(`[remoteState] WebSocket closed (code ${event.code})`);
@@ -111,6 +116,7 @@ export function connectRemoteState(): Promise<void> {
 
       if (msg.type === "state") {
         storesByKey[msg.key]?._set(msg.data);
+        if (pendingInitialKeys.delete(msg.key) && pendingInitialKeys.size === 0) resolve();
         return;
       }
 

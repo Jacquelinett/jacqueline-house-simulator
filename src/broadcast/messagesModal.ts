@@ -1,6 +1,5 @@
 import { buildModal } from "../ui/modal";
-import { deleteMessage, fetchMessages, InboxMessage } from "./client";
-import { getSettings } from "../settings/state";
+import { deleteMessage, fetchMessages, getBroadcastHealth, InboxMessage } from "./client";
 
 export function setupMessagesModal(): { open: () => void } {
   const modal = buildModal("Messages", { resizable: true });
@@ -10,11 +9,15 @@ export function setupMessagesModal(): { open: () => void } {
   modal.body.appendChild(list);
 
   async function render() {
-    if (!getSettings().broadcastUrl) {
+    // broadcastUrl is server-only config now (server/serverConfig.ts),
+    // not something this client knows locally — ask the server instead
+    // of checking a local Settings field.
+    const { configured } = await getBroadcastHealth();
+    if (!configured) {
       list.textContent = "";
       const empty = document.createElement("div");
       empty.className = "goals-empty";
-      empty.textContent = "Set up status broadcasting in Settings to receive messages.";
+      empty.textContent = "Set up status broadcasting on the server to receive messages.";
       list.appendChild(empty);
       return;
     }

@@ -2,7 +2,7 @@ import { getCurrentActivity } from "../src/aw/client";
 import { getGoals } from "./goals";
 import { getTodayMinutesByLabel } from "./progress";
 import { getTodayStreaksByGoalId } from "./goalHistory";
-import { getActivityStats, getActivityStatsForDate } from "../src/dashboard/stats";
+import { getActivityStats, getActivityStatsForDate } from "./stats";
 import { computeFixedPeriodStats } from "./periodStats";
 import { addDaysToDateString, localDateString } from "../src/goals/recurrence";
 import { getServerConfig } from "./serverConfig";
@@ -99,4 +99,38 @@ export async function pushTodayStreaks(): Promise<void> {
 
   const ok = await pushWithHealth("/api/streaks", getTodayStreaksByGoalId(), "today's streaks");
   if (ok) streaksPushedForToday = todayStr;
+}
+
+/**
+ * For the Jacqueline panel's "VT: Synced..." line — `configured` used to
+ * be a client-side `!!getSettings().broadcastUrl` check; now that
+ * broadcastUrl lives in server_config instead of per-device Settings,
+ * the client has to ask the server for this too, via a query (polled on
+ * the same interval the panel already re-renders on).
+ */
+export function getBroadcastHealthInfo(): BroadcastHealth & { configured: boolean } {
+  return { ...health, configured: !!getServerConfig().broadcastUrl };
+}
+
+export interface InboxMessage {
+  id: number;
+  author: string | null;
+  text: string;
+  created_at: string;
+}
+
+/** Proxies the in-app inbox through the server, same reason pushing moved here — the client no longer has broadcastUrl/broadcastSecret locally to call val.town directly. */
+export async function fetchMessages(): Promise<InboxMessage[]> {
+  const { broadcastUrl } = getServerConfig();
+  if (!broadcastUrl) return [];
+  const res = await fetch(`${broadcastUrl}/api/messages`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`failed to fetch messages (${res.status})`);
+  return (await res.json()) as InboxMessage[];
+}
+
+export async function deleteMessage(id: number): Promise<void> {
+  const { broadcastUrl } = getServerConfig();
+  if (!broadcastUrl) return;
+  const res = await fetch(`${broadcastUrl}/api/messages/${id}`, { method: "DELETE", headers: authHeaders() });
+  if (!res.ok) throw new Error(`failed to delete message (${res.status})`);
 }

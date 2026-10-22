@@ -1,4 +1,4 @@
-import { ActivityStat, getActivityStatsForRange } from "../src/dashboard/stats";
+import { ActivityStat, getActivityStatsForRange } from "./stats";
 import { localDateString, periodRange, PeriodMode } from "../src/goals/recurrence";
 import { getGoalProgressForRange, RangeGoalProgress } from "./progress";
 import { summarizeGoalHistory, GoalHistorySummary } from "./goalHistory";

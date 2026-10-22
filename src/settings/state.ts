@@ -1,13 +1,15 @@
-import { createPersistedState } from "../lib/persistedState";
-import { settingsFileStore } from "./store";
-import { Settings } from "./types";
+import { DeviceSettings } from "./types";
+import { getDeviceSettings, onDeviceSettingsChange, sendCommand } from "../client/remoteState";
 
-const settingsState = createPersistedState(settingsFileStore.load, settingsFileStore.save);
+/**
+ * Thin wrapper, same exported names as before — but getSettings() now
+ * returns DeviceSettings (scale/theme/devMode only), not the old Settings
+ * type. broadcastUrl/broadcastSecret aren't client-side settings anymore
+ * at all; see server/serverConfig.ts.
+ */
+export const getSettings = getDeviceSettings;
+export const onSettingsChange = onDeviceSettingsChange;
 
-export const initSettingsState = settingsState.init;
-export const getSettings = settingsState.get;
-export const onSettingsChange = settingsState.onChange;
-
-export async function updateSettings(patch: Partial<Settings>): Promise<void> {
-  await settingsState.persist({ ...getSettings(), ...patch });
+export async function updateSettings(patch: Partial<DeviceSettings>): Promise<void> {
+  sendCommand("updateSettings", patch);
 }
