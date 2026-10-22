@@ -58,22 +58,7 @@ body {
 }
 
 .modal-dialog {
-  background: var(--panel-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
   width: min(360px, 90vw);
-  max-height: 80vh;
-  overflow-y: auto;
-  box-sizing: border-box;
-  color: var(--text);
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
 }
 
 .settings-checkbox-row {

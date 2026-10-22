@@ -1,10 +1,13 @@
 /**
  * Shared overlay/dialog/header chrome for the app's modals (Goals, Todos,
- * Timer, Settings, ...). `resizable` uses the browser's own CSS `resize`
- * (drag handle at the bottom-right corner, bounded by the `.resizable`
- * rule's min/max width/height) — the dialog already scrolls past its own
- * height regardless of whether that height comes from its default
- * max-height or a user-resized one.
+ * Timer, Settings, ...) — header/body split (pinned header, scrolling
+ * body) mirrors `buildFloatingPanel`'s, so the two chrome styles stay
+ * visually consistent instead of the modal looking like a plainer cousin
+ * of the panel. `resizable` uses the browser's own CSS `resize` (drag
+ * handle at the bottom-right corner, bounded by the `.resizable` rule's
+ * min/max width/height) — same as the floating panel's, including the same
+ * reserved-space fix for the resize grip landing behind the body's own
+ * scrollbar.
  */
 export function buildModal(
   title: string,
@@ -40,6 +43,7 @@ export function buildModal(
   header.appendChild(closeBtn);
 
   const body = document.createElement("div");
+  body.className = "modal-body";
   dialog.appendChild(body);
 
   const closeListeners = new Set<() => void>();

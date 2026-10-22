@@ -9,16 +9,33 @@ import { buildDashboardSections, renderActivityList, renderGoalList } from "./re
 
 const REFRESH_INTERVAL_MS = 30_000;
 
-/** Today-only goals progress + activity breakdown — shared by the desktop/viewer Dashboard panel and the mobile Dashboard tab. All-time standouts live in the separate Statistic surface instead, to avoid overlapping with the same info. */
-export function setupDashboardContent(container: HTMLElement): void {
-  const dateRow = document.createElement("div");
-  dateRow.className = "dashboard-date-row";
+function buildDateInput(): HTMLInputElement {
   const dateInput = document.createElement("input");
   dateInput.type = "date";
   dateInput.className = "dashboard-date-input";
   dateInput.value = localDateString(new Date());
-  dateRow.appendChild(dateInput);
-  container.appendChild(dateRow);
+  return dateInput;
+}
+
+/**
+ * Goals progress + activity breakdown for one day at a time (a date picker,
+ * default today) — shared by the desktop Dashboard panel and the app's
+ * mobile Dashboard tab. All-time standouts live in the separate Statistic
+ * surface instead, to avoid overlapping with the same info.
+ *
+ * `providedDateInput` lets the desktop panel place its date input in the
+ * panel header (via `buildFloatingPanel`'s `headerExtra`) instead of inline
+ * in the body; the mobile tab has no header to put it in, so it's left
+ * unset there and this builds + inserts its own inline copy instead.
+ */
+export function setupDashboardContent(container: HTMLElement, providedDateInput?: HTMLInputElement): void {
+  const dateInput = providedDateInput ?? buildDateInput();
+  if (!providedDateInput) {
+    const dateRow = document.createElement("div");
+    dateRow.className = "dashboard-date-row";
+    dateRow.appendChild(dateInput);
+    container.appendChild(dateRow);
+  }
 
   const { goalHeading, goalList, activityHeading, activityList } = buildDashboardSections(container);
 
@@ -85,9 +102,15 @@ export function setupDashboardContent(container: HTMLElement): void {
   }, REFRESH_INTERVAL_MS);
 }
 
-/** Always-visible corner panel version of the above. */
+/** Always-visible corner panel version of the above — its date picker lives in the header, next to the drag handle. */
 export function setupDashboardPanel(): void {
-  const panel = buildFloatingPanel("Dashboard", { closable: false, resizable: true, className: "dashboard-panel" });
-  setupDashboardContent(panel.body);
+  const dateInput = buildDateInput();
+  const panel = buildFloatingPanel("Dashboard", {
+    closable: false,
+    resizable: true,
+    className: "dashboard-panel",
+    headerExtra: dateInput,
+  });
+  setupDashboardContent(panel.body, dateInput);
   panel.open();
 }

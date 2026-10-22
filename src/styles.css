@@ -32,21 +32,7 @@ body {
 }
 
 .modal-dialog {
-  background: var(--panel-bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
   width: min(480px, 90vw);
-  max-height: 80vh;
-  overflow-y: auto;
-  color: var(--text);
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
 }
 
 #goals-manage-list {

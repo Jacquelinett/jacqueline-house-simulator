@@ -49,10 +49,15 @@ export function makeDraggable(panel: HTMLElement, handle: HTMLElement) {
  * width/height) rather than hand-rolled pointer-event math — the body
  * already scrolls past its own height regardless of whether that height
  * comes from the panel's default max-height or a user-resized one.
+ *
+ * `headerExtra` lets a caller drop one arbitrary element into the header
+ * (to the left of the drag handle, right of the title) instead of
+ * hand-rolling a second header-ish row inside the body — e.g. the
+ * Dashboard panel's date picker.
  */
 export function buildFloatingPanel(
   title: string,
-  options?: { closable?: boolean; draggable?: boolean; resizable?: boolean; className?: string },
+  options?: { closable?: boolean; draggable?: boolean; resizable?: boolean; className?: string; headerExtra?: HTMLElement },
 ): {
   body: HTMLElement;
   open: () => void;
@@ -79,6 +84,10 @@ export function buildFloatingPanel(
   const actions = document.createElement("div");
   actions.className = "floating-panel-header-actions";
   header.appendChild(actions);
+
+  if (options?.headerExtra) {
+    actions.appendChild(options.headerExtra);
+  }
 
   // Only this button drags the panel now, not the whole header — grabbing
   // the title text to move something used to fight with trying to just
