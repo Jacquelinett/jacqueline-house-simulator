@@ -471,16 +471,19 @@ body {
    "picks a parameter within a section" (Weekly/Monthly). */
 .stat-tabs {
   display: flex;
-  gap: 18px;
   border-bottom: 1px solid var(--line);
   margin-bottom: 14px;
 }
 
+/* buildToggleGroup wraps its buttons in one <span>, so a flex `gap` on
+   .stat-tabs would have nothing to apply between (just one child, that
+   wrapper span) — spacing is a margin on the button itself instead, same
+   as how .day-toggle spaces itself below. */
 .stat-tab {
   background: transparent;
   border: none;
   border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
+  margin: 0 18px -1px 0;
   color: var(--text);
   opacity: 0.6;
   font-size: 13px;
