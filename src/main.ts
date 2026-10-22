@@ -17,8 +17,16 @@ import { setupMobileTabs } from "./ui/mobileTabs";
 import { buildModal } from "./ui/modal";
 import { DEFAULT_DEVICE_SETTINGS } from "./settings/types";
 import { applyTheme, THEME_BACKGROUND } from "./settings/themes";
-import { ACTIVITIES, toCssColor } from "./scene/activities";
-import { connectRemoteState, getRemoteStatus, onRemoteStatusChange } from "./client/remoteState";
+import { ACTIVITIES, setActivities, toCssColor } from "./scene/activities";
+import { roomSpecsFromWire, setObjectTypes, setRooms } from "./scene/rooms";
+import {
+  connectRemoteState,
+  getRemoteActivities,
+  getRemoteObjectTypes,
+  getRemoteRoomSpecs,
+  getRemoteStatus,
+  onRemoteStatusChange,
+} from "./client/remoteState";
 
 // Only ever holds the boot-time "connecting…"/fatal-error text now —
 // ongoing AW connection, activity, and elapsed time all live in the
@@ -173,6 +181,14 @@ async function main() {
 
   applyTheme(app, getSettings().theme);
   onSettingsChange(() => applyTheme(app, getSettings().theme));
+
+  // Swaps the static fallback definitions for whatever the server
+  // actually has (admin-tool edits included) — must happen before
+  // setupHouse() builds anything, since House/SceneRenderer read rooms/
+  // objectTypes/ACTIVITIES as live module bindings, not a parameter.
+  setActivities(getRemoteActivities());
+  setObjectTypes(getRemoteObjectTypes());
+  setRooms(roomSpecsFromWire(getRemoteRoomSpecs()));
 
   const house = await setupHouse(app);
   // Applied once right after connecting (mirrors the old AW-resume-on-launch

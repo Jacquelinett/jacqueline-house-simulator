@@ -129,14 +129,19 @@ export function migrate(): void {
 
     -- Mirrors ObjectPlacement: type_id + position + optional per-placement
     -- action override (null action_json means "use the type's defaults").
+    -- id is only unique WITHIN a room (e.g. two different rooms can each
+    -- have a "stairs-up"), not globally — same as ObjectPlacement.id's own
+    -- original "disambiguates instances in one room" contract — so the
+    -- primary key is the (room_id, id) pair, not id alone.
     CREATE TABLE IF NOT EXISTS objects (
-      id TEXT PRIMARY KEY,
+      id TEXT NOT NULL,
       room_id TEXT NOT NULL,
       type_id TEXT NOT NULL,
       x INTEGER NOT NULL,
       y INTEGER NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
-      action_json TEXT
+      action_json TEXT,
+      PRIMARY KEY (room_id, id)
     );
   `);
 

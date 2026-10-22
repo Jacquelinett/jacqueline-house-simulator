@@ -7,7 +7,7 @@
 // a per-room background image. Object sprite layers still use individual
 // files: public/objects/<object-id>.png, referenced via `texture` in
 // `below`/`overlay`/`above`.
-import { FloorVariant, TileOverride, WallVariant, floor1, wall1 } from "./tileset";
+import { FLOOR_VARIANTS, FloorVariant, TileOverride, WALL_VARIANTS, WallVariant, floor1, wall1 } from "./tileset";
 import { ACTIVITIES, findActivityById } from "./activities";
 
 export interface SpriteLayer {
@@ -232,6 +232,44 @@ export interface RoomDef extends Omit<RoomSpec, "objects"> {
   width: number;
   height: number;
   level: number; // resolved — always a number, never undefined, unlike RoomSpec's
+}
+
+/**
+ * Server-sent room shape — floor/wall as named strings (what's actually
+ * stored, and what an admin-tool dropdown would pick from) instead of the
+ * full FloorVariant/WallVariant object RoomSpec itself expects. Converted
+ * via roomSpecsFromWire() before resolveRooms() ever sees it, so
+ * resolveRooms()/buildFloorAndWalls() (renderer.ts) don't need to know
+ * variants can arrive as strings at all.
+ */
+export interface RoomSpecWire {
+  id: string;
+  name: string;
+  cols: number;
+  rows: number;
+  level: number;
+  floorVariant: string;
+  wallVariant: string;
+  floorOverrides?: TileOverride[];
+  wallOverrides?: TileOverride[];
+  connectedTo?: { roomId: string; direction: ConnectionDirection; gapTiles: number };
+  objects: ObjectPlacement[];
+}
+
+export function roomSpecsFromWire(wire: RoomSpecWire[]): RoomSpec[] {
+  return wire.map((w) => ({
+    id: w.id,
+    name: w.name,
+    cols: w.cols,
+    rows: w.rows,
+    level: w.level,
+    floor: FLOOR_VARIANTS[w.floorVariant],
+    wall: WALL_VARIANTS[w.wallVariant],
+    floorOverrides: w.floorOverrides,
+    wallOverrides: w.wallOverrides,
+    connectedTo: w.connectedTo,
+    objects: w.objects,
+  }));
 }
 
 export function resolveRooms(specs: RoomSpec[]): RoomDef[] {

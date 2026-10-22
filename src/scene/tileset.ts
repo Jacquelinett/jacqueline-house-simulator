@@ -60,3 +60,12 @@ export const wall1: WallVariant = {
   edgeRight: { x: 192, y: 0, w: 32, h: 64 },
   corner: { x: 224, y: 0, w: 32, h: 64 },
 };
+
+// Named registries so a room spec can reference a variant by string name
+// (what the server stores/sends, and what an admin-tool dropdown would
+// pick from) instead of the full tile-rect object — resolved back to the
+// real object client-side before calling resolveRooms(). Only one variant
+// of each exists today; adding floor2/wall2 later just means a new entry
+// here, nothing structural.
+export const FLOOR_VARIANTS: Record<string, FloorVariant> = { floor1 };
+export const WALL_VARIANTS: Record<string, WallVariant> = { wall1 };

@@ -1,6 +1,8 @@
 import { Goal } from "../goals/types";
 import { Todo } from "../todos/types";
 import { DEFAULT_DEVICE_SETTINGS, DeviceSettings } from "../settings/types";
+import { ActivityDef } from "../scene/activities";
+import { ObjectTypeDef, RoomSpecWire } from "../scene/rooms";
 
 const DEVICE_ID_KEY = "houseSimulatorDeviceId";
 const SERVER_URL_KEY = "houseSimulatorServerUrl";
@@ -140,6 +142,13 @@ const settingsStore = createRemoteStore<DeviceSettings>(DEFAULT_DEVICE_SETTINGS)
 // old hardcoded CURRENT_USER_NAME for any surface that needs to work for
 // whichever character is actually connected (see goals/panel.ts).
 const characterStore = createRemoteStore<RemoteCharacter>({ id: "", name: "" });
+// Global scene registry (same for every character) — main.ts/viewer-main.ts
+// feed these straight into scene/activities.ts's setActivities()/
+// scene/rooms.ts's setObjectTypes()/setRooms() right after connecting, see
+// those files' own comments on why that's safe for every existing importer.
+const activitiesStore = createRemoteStore<ActivityDef[]>([]);
+const objectTypesStore = createRemoteStore<Record<string, ObjectTypeDef>>({});
+const roomSpecsStore = createRemoteStore<RoomSpecWire[]>([]);
 
 export const getGoals = goalsStore.get;
 export const onGoalsChange = goalsStore.onChange;
@@ -151,6 +160,9 @@ export const getDeviceSettings = settingsStore.get;
 export const onDeviceSettingsChange = settingsStore.onChange;
 export const getCharacter = characterStore.get;
 export const onCharacterChange = characterStore.onChange;
+export const getRemoteActivities = activitiesStore.get;
+export const getRemoteObjectTypes = objectTypesStore.get;
+export const getRemoteRoomSpecs = roomSpecsStore.get;
 
 const storesByKey: Record<string, { _set(data: unknown): void }> = {
   goals: goalsStore,
@@ -158,6 +170,9 @@ const storesByKey: Record<string, { _set(data: unknown): void }> = {
   status: statusStore,
   settings: settingsStore,
   character: characterStore,
+  activities: activitiesStore,
+  objectTypes: objectTypesStore,
+  roomSpecs: roomSpecsStore,
 };
 
 let socket: WebSocket | null = null;

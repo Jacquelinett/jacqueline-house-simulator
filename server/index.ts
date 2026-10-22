@@ -15,6 +15,9 @@ import { serveStatic } from "./staticServer";
 import { listCharacters } from "./characters";
 import { seedMockWorkoutsIfEmpty } from "./workouts";
 import { localDateString } from "../src/goals/recurrence";
+import { seedActivitiesIfEmpty } from "./activities";
+import { seedObjectTypesIfEmpty } from "./objectTypes";
+import { seedRoomsIfEmpty } from "./rooms";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // The Tauri app's own `npm run build` output — same bundle its webview
@@ -31,6 +34,9 @@ const SETTLE_INTERVAL_MS = 60 * 60 * 1000;
 
 async function main() {
   migrate();
+  seedActivitiesIfEmpty();
+  seedObjectTypesIfEmpty();
+  seedRoomsIfEmpty();
 
   const characters = listCharacters();
   console.log(`[server] characters: ${characters.map((c) => c.name).join(", ")}`);

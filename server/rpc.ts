@@ -19,6 +19,9 @@ import { deleteMessage, fetchMessages, getBroadcastHealthInfo, pushStatus } from
 import { getDeviceSettings, updateDeviceSettings } from "./deviceSettings";
 import { Character, getCharacterBySecret } from "./characters";
 import { getWorkoutsForDate } from "./workouts";
+import { getActivities } from "./activities";
+import { getObjectTypes } from "./objectTypes";
+import { getRoomSpecs } from "./rooms";
 
 /**
  * One WebSocket connection per client carries everything — commands
@@ -137,6 +140,12 @@ export function setupRpc(wss: WebSocketServer): void {
     ws.send(JSON.stringify({ type: "state", key: "goals", data: getGoals(character.id) }));
     ws.send(JSON.stringify({ type: "state", key: "todos", data: getTodos(character.id) }));
     ws.send(JSON.stringify({ type: "state", key: "status", data: currentStatus(character.awBucketId) }));
+    // Global registry, same for every character (see this module's own
+    // comment on character scoping) — sent once on connect; an admin-tool
+    // edit takes effect on the next reconnect, not live mid-session.
+    ws.send(JSON.stringify({ type: "state", key: "activities", data: getActivities() }));
+    ws.send(JSON.stringify({ type: "state", key: "objectTypes", data: getObjectTypes() }));
+    ws.send(JSON.stringify({ type: "state", key: "roomSpecs", data: getRoomSpecs() }));
     sendSettings(ws, deviceId);
 
     ws.on("close", () => {
