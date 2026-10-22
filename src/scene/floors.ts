@@ -1,10 +1,15 @@
 // A floor is just "a level, plus which room is its base" — formalizing
 // what floorButtons.ts (desktop app + viewer) used to hardcode directly:
-// clicking "1F"/"2F"/"B" always meant "go to this specific room." Not
-// programmatically enforced, but the base room is meant to be the one
-// nothing else points at (the root of that floor's own connection chain —
-// see rooms.ts's ConnectedToEntry) — same "hand-coordinated convention,
-// not a validated invariant" spirit as the rest of the room system.
+// clicking "1F"/"2F"/"B" always meant "go to this specific room." The base
+// room is meant to be the one nothing else points at (the root of that
+// floor's own connection chain — see rooms.ts's ConnectedToEntry) — the
+// admin tool's own pickers enforce this both ways (a used room can't be
+// picked as a base room; an existing base room can't be picked as a
+// connection target — see admin-main.ts's pickableBaseRooms/
+// pickableRooms), but nothing below the admin UI does: no DB constraint,
+// and the plain REST API (PATCH /api/admin/rooms|floors) writes whatever
+// it's given with no cross-check, so this is only as solid as "never
+// skip the admin tool's own forms to edit this directly."
 export interface Floor {
   level: number;
   label: string;

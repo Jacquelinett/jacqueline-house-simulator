@@ -1478,7 +1478,7 @@ async function renderRooms(body: HTMLElement) {
 
   const floorsHint = document.createElement("div");
   floorsHint.className = "admin-hint";
-  floorsHint.textContent = "Each floor is a level plus which room the floor-switch button jumps to. Not enforced, but that base room is meant to be the one nothing else connects to.";
+  floorsHint.textContent = "Each floor is a level plus which room the floor-switch button jumps to. The pickers below only offer rooms nothing connects to, so a base room stays that way as long as you edit through here.";
   body.appendChild(floorsHint);
 
   /** Rooms nothing else connects to (plus not already another floor's own base room) — `exemptBaseRoomId` keeps one floor's own current base room selectable in its own edit dropdown even though it'd otherwise count as "another floor's base room" against itself. */
