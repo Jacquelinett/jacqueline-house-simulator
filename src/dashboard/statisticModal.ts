@@ -210,10 +210,6 @@ export function setupStatisticContent(container: HTMLElement): { refresh(): void
   periodDateInput.onchange = refreshPeriod;
   controlsRow.appendChild(periodDateInput);
 
-  const rangeLabel = document.createElement("div");
-  rangeLabel.className = "stat-period-range-label";
-  periodSection.appendChild(rangeLabel);
-
   const periodGoalsHeading = document.createElement("h3");
   periodGoalsHeading.className = "panel-section-heading";
   periodGoalsHeading.textContent = "Period Goals";
@@ -246,7 +242,7 @@ export function setupStatisticContent(container: HTMLElement): { refresh(): void
 
   async function refreshPeriod() {
     const { start, end, label } = periodRange(mode, parseDateString(periodDateInput.value));
-    rangeLabel.textContent = label;
+    periodGoalsHeading.textContent = `Period Goals — ${label}`;
 
     const progress = await getGoalProgressForRange(start, end);
     renderGoalList(

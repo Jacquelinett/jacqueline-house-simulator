@@ -512,14 +512,8 @@ body {
 .stat-period-controls {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
   margin-bottom: 4px;
-}
-
-.stat-period-range-label {
-  font-size: 12px;
-  opacity: 0.8;
-  margin-bottom: 8px;
 }
 
 /* Mobile Pick Action list rows — app-only (the viewer never starts/stops
