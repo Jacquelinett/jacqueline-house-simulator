@@ -22,12 +22,12 @@
 // a snapped, single-click placement rather than continuous drag-and-drop,
 // since there's no browser available in this environment to visually
 // verify continuous pointer-drag math well enough to trust.
-import { Application, Assets, Container, FederatedPointerEvent, Graphics, Rectangle, Texture } from "pixi.js";
+import { Application, Assets, Container, Graphics, Texture } from "pixi.js";
 import { buildModal } from "./ui/modal";
 import { assetUrl, buildFloorAndWalls, buildLayer, preloadRoomAssets } from "./scene/renderer";
 import { AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
-import { gridToScreen, ObjectTypeDef, RoomDef, roomSpecsFromWire, screenToGrid, setObjectTypes, setRooms, SpriteLayer } from "./scene/rooms";
+import { gridToScreen, ObjectTypeDef, RoomDef, roomSpecsFromWire, screenToGrid, setObjectTypes, setRooms, SpriteLayer, TILE_WIDTH } from "./scene/rooms";
 import { floor1, wall1 } from "./scene/tileset";
 
 const ADMIN_SECRET_KEY = "houseSimulatorAdminSecret";
@@ -350,11 +350,13 @@ async function ensureTextureLoaded(path: string | undefined): Promise<void> {
  * public/objects/, or a solid-color placeholder) — every current type has
  * at most one `below` entry, so this doesn't lose anything for them;
  * `overlay`/`above`/`actions` are carried through unchanged from whatever
- * was loaded. The preview shows the sprite sitting at its own (0,0) — the
- * same pixel position a tile-mode placement at tile (0,0) with no anchor
- * offset would produce — with a small reference grid around the room's own
- * (0,0) corner, so clicking to set the anchor is judged against the actual
- * corner the object needs to sit flush against, not a bare image.
+ * was loaded. The preview renders a real floor+wall room corner (sized to
+ * the object's own footprint) and repositions the sprite so its anchor
+ * point always lands exactly on that corner — so tuning the anchor via the
+ * number inputs below shows, live, how the object will actually sit
+ * relative to the wall. No click-to-set: a live Pixi canvas turned out to
+ * be a fiddly, imprecise way to pick a specific pixel — the text inputs
+ * are the only way to set it.
  */
 async function openObjectTypeEditModal(
   id: string | null,
@@ -415,7 +417,7 @@ async function openObjectTypeEditModal(
   const anchorHint = document.createElement("div");
   anchorHint.className = "admin-hint";
   anchorHint.textContent =
-    "Click the preview to set the anchor point — the sprite shifts so that point lands on the room corner, same as it will when placed via the room editor's tile mode. Unset defaults to the sprite's own top-left (today's behavior).";
+    "Set the anchor point below — the sprite shifts so that point lands on the room corner, same as it will when placed via the room editor's tile mode. Unset defaults to the sprite's own top-left (today's behavior).";
   modal.body.appendChild(anchorHint);
 
   const anchorTileModeLabel = document.createElement("label");
@@ -455,8 +457,6 @@ async function openObjectTypeEditModal(
   const app = new Application();
   await app.init({ width: TYPE_PREVIEW_WIDTH, height: TYPE_PREVIEW_HEIGHT, background: 0x222228 });
   previewContainer.appendChild(app.canvas);
-  app.stage.eventMode = "static";
-  app.stage.hitArea = new Rectangle(0, 0, TYPE_PREVIEW_WIDTH, TYPE_PREVIEW_HEIGHT);
 
   const stage = new Container();
   stage.position.set(TYPE_PREVIEW_ORIGIN.x, TYPE_PREVIEW_ORIGIN.y);
@@ -464,8 +464,24 @@ async function openObjectTypeEditModal(
 
   // Real floor + walls (the exact same buildFloorAndWalls() the actual
   // game uses), not a bare wireframe grid — so the anchor is judged
-  // against what a room corner actually looks like.
-  stage.addChild(buildFloorAndWalls(TYPE_PREVIEW_ROOM));
+  // against what a room corner actually looks like. Sized off the
+  // object's own footprint (one tile is TILE_WIDTH px) plus one tile of
+  // margin, so a big object (e.g. a 64x64 piano, a 2x2 footprint) gets a
+  // 3x3 room instead of being cramped against a 2x2 one.
+  let floorWallLayer = new Container();
+  stage.addChild(floorWallLayer);
+
+  function roomSizeFor(width: number, height: number): number {
+    return Math.max(1, Math.ceil(Math.max(width, height) / TILE_WIDTH)) + 1;
+  }
+
+  function rebuildRoom() {
+    stage.removeChild(floorWallLayer);
+    floorWallLayer.destroy({ children: true });
+    const size = roomSizeFor(Number(widthInput.value) || 1, Number(heightInput.value) || 1);
+    floorWallLayer = buildFloorAndWalls({ ...TYPE_PREVIEW_ROOM, cols: size, rows: size });
+    stage.addChildAt(floorWallLayer, 0);
+  }
 
   let spriteLayer = new Container();
   stage.addChild(spriteLayer);
@@ -506,6 +522,7 @@ async function openObjectTypeEditModal(
   // crosshair floating over it. This is what makes moving the anchor
   // visibly shift the object relative to the room corner.
   function rebuildSprite() {
+    rebuildRoom();
     stage.removeChild(spriteLayer);
     spriteLayer.destroy({ children: true });
     spriteLayer = new Container();
@@ -519,26 +536,6 @@ async function openObjectTypeEditModal(
     syncAnchorInputs();
     app.render();
   }
-
-  app.stage.on("pointertap", (e: FederatedPointerEvent) => {
-    const local = e.getLocalPosition(stage);
-    // Click position relative to the sprite's own top-left (its current
-    // position already encodes the OLD anchor) — this is "what sprite-local
-    // pixel did I click," independent of where the sprite currently sits.
-    let x = local.x - spriteLayer.position.x;
-    let y = local.y - spriteLayer.position.y;
-    if (anchorTileModeCheckbox.checked) {
-      // Snap to the nearest diamond-grid vertex instead of an arbitrary
-      // pixel — "calculated based on the diamond tile."
-      const { u, v } = screenToGrid(x, y);
-      const snapped = gridToScreen(Math.round(u), Math.round(v));
-      x = snapped.x;
-      y = snapped.y;
-    }
-    anchorX = Math.round(x);
-    anchorY = Math.round(y);
-    rebuildSprite();
-  });
 
   spriteSelect.onchange = async () => {
     colorInput.style.display = spriteSelect.value === "__color__" ? "" : "none";
