@@ -1,4 +1,7 @@
 import http from "node:http";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { migrate } from "./db";
 import { getGoals, initGoalsState, onGoalsChange } from "./goals";
@@ -8,6 +11,13 @@ import { ensureStopwatchBucket, resumeActivity } from "../src/aw/client";
 import { setupRpc } from "./rpc";
 import { getServerConfig } from "./serverConfig";
 import { pushGoals, pushPeriodStats, pushStats, pushStatus, pushTodayStreaks, pushYesterdayStats } from "./broadcast";
+import { serveStatic } from "./staticServer";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// The Tauri app's own `npm run build` output — same bundle its webview
+// loads from disk, served over HTTP here for a plain browser on the LAN.
+// See CLAUDE.md's "One build, two delivery mechanisms".
+const DIST_DIR = resolve(__dirname, "../dist");
 
 const PORT = Number(process.env.PORT ?? 4000);
 const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
@@ -28,6 +38,9 @@ async function main() {
   }
   if (!getServerConfig().broadcastUrl) {
     console.warn("[server] no broadcast_url set in server_config — val.town pushes will silently no-op.");
+  }
+  if (!existsSync(DIST_DIR)) {
+    console.warn(`[server] ${DIST_DIR} does not exist — run \`npm run build\` first, or the frontend won't be servable over HTTP.`);
   }
 
   await initGoalsState();
@@ -78,6 +91,7 @@ async function main() {
       res.end(JSON.stringify({ ok: true, goalsCount: getGoals().length }));
       return;
     }
+    if (serveStatic(DIST_DIR, req, res)) return;
     res.writeHead(404);
     res.end();
   });
