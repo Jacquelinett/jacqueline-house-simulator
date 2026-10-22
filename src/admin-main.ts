@@ -1229,7 +1229,17 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
   }
 
   saveBtn.onclick = async () => {
-    if (!isDirty()) return;
+    // The `|| saveBtn.disabled` half matters more than the isDirty() check
+    // here — isDirty() alone doesn't change until the save below actually
+    // completes, so a second click fired while the first is still awaiting
+    // its PATCH/POST/DELETE calls would otherwise sail straight through,
+    // firing every one of them a second time (duplicate objects on the
+    // server) and then racing renderRooms(body) via two overlapping
+    // onSaved() calls (see renderRooms's own comment on that race).
+    // saveBtn.disabled is set synchronously, before any await, so even a
+    // same-tick double-click can't slip through.
+    if (!isDirty() || saveBtn.disabled) return;
+    saveBtn.disabled = true;
     try {
       if (isRoomFieldsDirty()) {
         await adminFetch(`/api/admin/rooms/${room.id}`, {
@@ -1259,6 +1269,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
       onSaved();
     } catch (err) {
       showError(err);
+      saveBtn.disabled = false; // let the admin retry; the dirty state didn't change
     }
   };
 
@@ -1374,7 +1385,19 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     const forcedNeighbors = (room.connectedTo ?? []).flatMap((entry) => {
       const neighbor = allRooms.find((r) => r.id === entry.roomId);
       if (!neighbor) return [];
-      const lateralOffset = entry.lateralOffset ?? 0;
+      // Inverting room's own entry to describe the SAME connection from
+      // neighbor's side needs its lateralOffset negated, not just its
+      // direction flipped — this is exactly rooms.ts's positionNeighbor()
+      // "reverse" branch (flip direction to PAIR_DIRECTION, negate
+      // lateralOffset, keep gapTiles), derived the same way there: solving
+      // placeRelativeTo() for the anchor's position given the far room's
+      // produces the paired direction with a sign-flipped lateralOffset in
+      // all four cases. Previously copied verbatim, which happened to
+      // still match the real resolveRooms() output when this was
+      // first verified — because that check used lateralOffset: 0, where
+      // negation is a no-op — so the preview silently rendered every
+      // nonzero lateral offset mirrored on every connection direction.
+      const lateralOffset = -(entry.lateralOffset ?? 0);
       return [{ ...neighbor, connectedTo: [{ roomId: room.id, direction: PAIR_DIRECTION[entry.direction], gapTiles: entry.gapTiles, lateralOffset }] }];
     });
     return [forcedRoom, ...forcedNeighbors];
@@ -1809,14 +1832,31 @@ function buildTreeChartEl(node: FloorTreeNode, onRoomClick: (room: FloorTreeNode
 // to 2F after every single save.
 let lastActiveRoomSubTab: string | null = null;
 
+// Every room/connection/floor edit's onSaved callback re-renders the whole
+// Rooms tab via renderRooms(body) — none of those save buttons disable
+// themselves while their own save is in flight (see openRoomEditModal's
+// saveBtn for one fix of that), so two clicks close enough together start
+// two overlapping calls here. Clearing `body` up front (before the await)
+// used to mean whichever call's fetch resolved LAST just appended its own
+// fresh copy of the Floors section/room table/sub-tabs on top of whatever
+// the other call had already appended — nothing cleared a second time in
+// between, so the page visibly doubled (or worse) in height every time
+// this raced. Only the most recently STARTED call is now allowed to touch
+// `body` at all: an older call that's still awaiting its fetch when a
+// newer one starts just abandons itself once its fetch resolves, instead
+// of racing to render.
+let roomsRenderGeneration = 0;
+
 async function renderRooms(body: HTMLElement) {
-  body.textContent = "";
+  const myGeneration = ++roomsRenderGeneration;
   const [rooms, objectTypes, floors] = await Promise.all([
     adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
     adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
     adminFetch<Floor[]>("/api/admin/floors"),
   ]);
+  if (myGeneration !== roomsRenderGeneration) return; // superseded by a newer call while this one was fetching
 
+  body.textContent = "";
   renderFloorsSection(body, rooms, floors);
 
   // Unorganized rooms have no floor tree to click for connections (there's
