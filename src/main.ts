@@ -172,11 +172,10 @@ async function main() {
   onSettingsChange(() => applyTheme(app, getSettings().theme));
 
   const house = await setupHouse(app);
-  // Mirrors the old AW-resume-on-launch behavior: jump the camera to
-  // wherever's currently running, once, right after connecting. Later
-  // broadcasts (this device's own actions, or another device's) only
-  // resync the overlay — see House.applyRemoteStatus's own comment.
-  house.applyRemoteStatus(getRemoteStatus(), { followRoom: true });
+  // Applied once right after connecting (mirrors the old AW-resume-on-launch
+  // behavior) and again on every subsequent broadcast — including a change
+  // from a different device, see House.applyRemoteStatus's own comment.
+  house.applyRemoteStatus(getRemoteStatus());
   onRemoteStatusChange(() => house.applyRemoteStatus(getRemoteStatus()));
 
   setupModals();

@@ -131,16 +131,17 @@ export class House extends SceneRenderer {
   }
 
   /**
-   * Syncs the overlay highlight to the server's current-activity broadcast —
-   * called once right after connecting (with `followRoom: true`, same as the
-   * old startup-only AW resume behavior: jump the camera to wherever it's
-   * running) and again every time the broadcast changes thereafter (overlay
-   * only — a different device starting/stopping something shouldn't yank
-   * this device's camera away from wherever it's currently looking).
+   * Syncs the overlay highlight and camera focus to the server's
+   * current-activity broadcast — called once right after connecting (same
+   * as the old startup-only AW resume behavior) and again every time the
+   * broadcast changes thereafter, including a change from a different
+   * device: seeing someone else start something is exactly the kind of
+   * "what's happening in the house right now" visibility multi-device
+   * access is for, so the camera follows every time, not just on connect.
    */
-  public applyRemoteStatus(status: RemoteStatus, options: { followRoom?: boolean } = {}) {
+  public applyRemoteStatus(status: RemoteStatus) {
     this.updateActiveOverlays(status.activityLabel ? { label: status.activityLabel } : null);
-    if (options.followRoom && status.activityLabel) {
+    if (status.activityLabel) {
       const roomId = findRoomForActivityLabel(status.activityLabel);
       if (roomId) this.setViewedRoom(roomId);
     }
