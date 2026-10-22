@@ -145,6 +145,25 @@ export function migrate(): void {
       action_json TEXT,
       PRIMARY KEY (room_id, id)
     );
+
+    -- Mirrors RoomSpec.connectedTo now being ConnectedToEntry[] instead of
+    -- one optional object — the old rooms.connected_to_* columns (still
+    -- present above, left unused rather than dropped, same never-drop-a-
+    -- column convention as everywhere else) could only ever hold one. idx
+    -- preserves array order since only entries[0] determines a room's own
+    -- position (see resolveRooms()'s own comment) — idx 0 is always that
+    -- primary entry, any further idx are additional asserted-but-unvalidated
+    -- doorway facts. room_id is NOT the primary key alone since a room can
+    -- have more than one entry.
+    CREATE TABLE IF NOT EXISTS room_connections (
+      room_id TEXT NOT NULL,
+      idx INTEGER NOT NULL,
+      target_room_id TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      gap_tiles INTEGER NOT NULL DEFAULT 0,
+      lateral_offset INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (room_id, idx)
+    );
   `);
 
   // ALTER TABLE for columns added to tables that may already exist on a
@@ -167,6 +186,24 @@ export function migrate(): void {
 
   seedJacquelineCharacter();
   backfillCharacterId();
+  backfillRoomConnections();
+}
+
+/**
+ * One-time carry-over from the old single-connection rooms.connected_to_*
+ * columns into room_connections (idx 0, i.e. the primary/position-
+ * determining entry) — idempotent via INSERT OR IGNORE against the
+ * (room_id, idx) primary key, so it's a no-op on every run after the
+ * first. Only runs for rooms that actually had a connection; an anchor
+ * room (connected_to_room_id IS NULL) correctly gets no row at all.
+ */
+function backfillRoomConnections(): void {
+  db.exec(`
+    INSERT OR IGNORE INTO room_connections (room_id, idx, target_room_id, direction, gap_tiles, lateral_offset)
+    SELECT id, 0, connected_to_room_id, connected_to_direction, connected_to_gap_tiles, 0
+    FROM rooms
+    WHERE connected_to_room_id IS NOT NULL
+  `);
 }
 
 /** Keeps Jacqueline's existing lan_secret working unchanged as her character secret, so none of her already-configured devices need to re-enter anything. */

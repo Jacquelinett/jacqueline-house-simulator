@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { ObjectAction, ObjectPlacement, RoomSpecWire, STATIC_ROOM_SPECS, ConnectionDirection } from "../src/scene/rooms";
+import { ConnectedToEntry, ConnectionDirection, ObjectAction, ObjectPlacement, RoomSpecWire, STATIC_ROOM_SPECS } from "../src/scene/rooms";
 import { TileOverride } from "../src/scene/tileset";
 
 interface RoomRow {
@@ -12,9 +12,15 @@ interface RoomRow {
   wall_variant: string;
   floor_overrides_json: string | null;
   wall_overrides_json: string | null;
-  connected_to_room_id: string | null;
-  connected_to_direction: ConnectionDirection | null;
-  connected_to_gap_tiles: number | null;
+}
+
+interface ConnectionRow {
+  room_id: string;
+  idx: number;
+  target_room_id: string;
+  direction: ConnectionDirection;
+  gap_tiles: number;
+  lateral_offset: number;
 }
 
 interface ObjectRow {
@@ -38,16 +44,24 @@ function rowToPlacement(row: ObjectRow): ObjectPlacement {
   };
 }
 
-/** Full room list, each with its own objects joined in — the one thing the client's resolveRooms()/roomSpecsFromWire() need. */
+/** Full room list, each with its own objects and connections joined in — the one thing the client's resolveRooms()/roomSpecsFromWire() need. */
 export function getRoomSpecs(): RoomSpecWire[] {
   const roomRows = db.prepare("SELECT * FROM rooms").all() as RoomRow[];
   const objectRows = db.prepare("SELECT * FROM objects").all() as ObjectRow[];
+  const connectionRows = db.prepare("SELECT * FROM room_connections ORDER BY room_id, idx").all() as ConnectionRow[];
 
   const objectsByRoom = new Map<string, ObjectPlacement[]>();
   for (const row of objectRows) {
     const list = objectsByRoom.get(row.room_id) ?? [];
     list.push(rowToPlacement(row));
     objectsByRoom.set(row.room_id, list);
+  }
+
+  const connectionsByRoom = new Map<string, ConnectedToEntry[]>();
+  for (const row of connectionRows) {
+    const list = connectionsByRoom.get(row.room_id) ?? [];
+    list.push({ roomId: row.target_room_id, direction: row.direction, gapTiles: row.gap_tiles, lateralOffset: row.lateral_offset });
+    connectionsByRoom.set(row.room_id, list);
   }
 
   return roomRows.map((row) => ({
@@ -60,11 +74,20 @@ export function getRoomSpecs(): RoomSpecWire[] {
     wallVariant: row.wall_variant,
     floorOverrides: row.floor_overrides_json ? (JSON.parse(row.floor_overrides_json) as TileOverride[]) : undefined,
     wallOverrides: row.wall_overrides_json ? (JSON.parse(row.wall_overrides_json) as TileOverride[]) : undefined,
-    connectedTo: row.connected_to_room_id
-      ? { roomId: row.connected_to_room_id, direction: row.connected_to_direction!, gapTiles: row.connected_to_gap_tiles! }
-      : undefined,
+    connectedTo: connectionsByRoom.get(row.id),
     objects: objectsByRoom.get(row.id) ?? [],
   }));
+}
+
+function replaceConnections(roomId: string, entries: ConnectedToEntry[] | undefined): void {
+  db.prepare("DELETE FROM room_connections WHERE room_id = ?").run(roomId);
+  const insert = db.prepare(`
+    INSERT INTO room_connections (room_id, idx, target_room_id, direction, gap_tiles, lateral_offset)
+    VALUES (@roomId, @idx, @targetRoomId, @direction, @gapTiles, @lateralOffset)
+  `);
+  (entries ?? []).forEach((entry, idx) => {
+    insert.run({ roomId, idx, targetRoomId: entry.roomId, direction: entry.direction, gapTiles: entry.gapTiles, lateralOffset: entry.lateralOffset ?? 0 });
+  });
 }
 
 /**
@@ -79,10 +102,8 @@ export function seedRoomsIfEmpty(): void {
   if (n > 0) return;
 
   const insertRoom = db.prepare(`
-    INSERT INTO rooms (id, name, cols, rows, level, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json,
-      connected_to_room_id, connected_to_direction, connected_to_gap_tiles)
-    VALUES (@id, @name, @cols, @rows, @level, 'floor1', 'wall1', @floorOverridesJson, @wallOverridesJson,
-      @connectedToRoomId, @connectedToDirection, @connectedToGapTiles)
+    INSERT INTO rooms (id, name, cols, rows, level, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json)
+    VALUES (@id, @name, @cols, @rows, @level, 'floor1', 'wall1', @floorOverridesJson, @wallOverridesJson)
   `);
   const insertObject = db.prepare(`
     INSERT INTO objects (id, room_id, type_id, x, y, enabled, action_json)
@@ -99,10 +120,8 @@ export function seedRoomsIfEmpty(): void {
         level: spec.level ?? 0,
         floorOverridesJson: spec.floorOverrides ? JSON.stringify(spec.floorOverrides) : null,
         wallOverridesJson: spec.wallOverrides ? JSON.stringify(spec.wallOverrides) : null,
-        connectedToRoomId: spec.connectedTo?.roomId ?? null,
-        connectedToDirection: spec.connectedTo?.direction ?? null,
-        connectedToGapTiles: spec.connectedTo?.gapTiles ?? null,
       });
+      replaceConnections(spec.id, spec.connectedTo);
       for (const placement of spec.objects) {
         insertObject.run({
           id: placement.id ?? placement.type,
@@ -122,15 +141,11 @@ export function seedRoomsIfEmpty(): void {
 export type RoomSpecInput = Omit<RoomSpecWire, "objects">;
 
 const roomUpsert = db.prepare(`
-  INSERT INTO rooms (id, name, cols, rows, level, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json,
-    connected_to_room_id, connected_to_direction, connected_to_gap_tiles)
-  VALUES (@id, @name, @cols, @rows, @level, @floorVariant, @wallVariant, @floorOverridesJson, @wallOverridesJson,
-    @connectedToRoomId, @connectedToDirection, @connectedToGapTiles)
+  INSERT INTO rooms (id, name, cols, rows, level, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json)
+  VALUES (@id, @name, @cols, @rows, @level, @floorVariant, @wallVariant, @floorOverridesJson, @wallOverridesJson)
   ON CONFLICT(id) DO UPDATE SET name=excluded.name, cols=excluded.cols, rows=excluded.rows, level=excluded.level,
     floor_variant=excluded.floor_variant, wall_variant=excluded.wall_variant,
-    floor_overrides_json=excluded.floor_overrides_json, wall_overrides_json=excluded.wall_overrides_json,
-    connected_to_room_id=excluded.connected_to_room_id, connected_to_direction=excluded.connected_to_direction,
-    connected_to_gap_tiles=excluded.connected_to_gap_tiles
+    floor_overrides_json=excluded.floor_overrides_json, wall_overrides_json=excluded.wall_overrides_json
 `);
 
 function roomUpsertParams(spec: RoomSpecInput) {
@@ -144,23 +159,35 @@ function roomUpsertParams(spec: RoomSpecInput) {
     wallVariant: spec.wallVariant,
     floorOverridesJson: spec.floorOverrides ? JSON.stringify(spec.floorOverrides) : null,
     wallOverridesJson: spec.wallOverrides ? JSON.stringify(spec.wallOverrides) : null,
-    connectedToRoomId: spec.connectedTo?.roomId ?? null,
-    connectedToDirection: spec.connectedTo?.direction ?? null,
-    connectedToGapTiles: spec.connectedTo?.gapTiles ?? null,
   };
 }
 
 export function createRoom(spec: RoomSpecInput): void {
-  roomUpsert.run(roomUpsertParams(spec));
+  const tx = db.transaction(() => {
+    roomUpsert.run(roomUpsertParams(spec));
+    replaceConnections(spec.id, spec.connectedTo);
+  });
+  tx();
 }
 
 export function updateRoom(spec: RoomSpecInput): void {
-  roomUpsert.run(roomUpsertParams(spec));
+  const tx = db.transaction(() => {
+    roomUpsert.run(roomUpsertParams(spec));
+    replaceConnections(spec.id, spec.connectedTo);
+  });
+  tx();
 }
 
 export function deleteRoom(id: string): void {
   const tx = db.transaction(() => {
     db.prepare("DELETE FROM objects WHERE room_id = ?").run(id);
+    db.prepare("DELETE FROM room_connections WHERE room_id = ?").run(id);
+    // A different room's own connectedTo entries may still reference this
+    // one as their target — left dangling rather than cascaded, same
+    // "hand-coordinated, not automatically validated" stance as the rest of
+    // this system; getRoomSpecs()/resolveRooms() will surface a clear
+    // "unknown room" error the next time that room is resolved, rather than
+    // silently vanishing a connection the admin didn't ask to remove.
     db.prepare("DELETE FROM rooms WHERE id = ?").run(id);
   });
   tx();

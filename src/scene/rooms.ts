@@ -221,13 +221,50 @@ export function screenToGrid(x: number, y: number): { u: number; v: number } {
   return { u: x / TILE_WIDTH + y / TILE_HEIGHT, v: y / TILE_HEIGHT - x / TILE_WIDTH };
 }
 
-// Which edge of the anchor this room extends from. Matches the x/y convention
+// Which edge of the ANCHOR (the room named by roomId, not the declaring
+// room itself) this connection extends from. Matches the x/y convention
 // used elsewhere (x/u runs top->bottom-right, y/v runs top->bottom-left):
 //  - behindLeft:  extends from anchor's u=0 (back-left/wall) edge, -u
 //  - behindRight: extends from anchor's v=0 (back-right/wall) edge, -v
 //  - frontLeft:   extends from anchor's v=rows (open, left-to-front) edge, +v
 //  - frontRight:  extends from anchor's u=cols (open, right-to-front) edge, +u
+// Because it's always named for the anchor's edge (not the declaring
+// room's own edge), the same 4 values double as edge names for ANY room
+// when it's being treated as the anchor — which is what the admin tool's
+// room-connections editor leans on (see rooms.ts's getEdgeConnections).
 export type ConnectionDirection = "behindLeft" | "behindRight" | "frontLeft" | "frontRight";
+
+/**
+ * Each entry pairs this (the declaring) room's edge — PAIR_DIRECTION[direction],
+ * see below — against the anchor room's `direction` edge. Only entries[0] is
+ * ever used to compute this room's own position (see resolveRooms); any
+ * further entries are additional doorway/connection facts this room is
+ * asserting about itself that don't feed back into layout math at all — not
+ * cross-validated against the rest of the layout for overlap/alignment,
+ * same "fully hand-coordinated, no automatic checking" spirit the whole
+ * room system already has.
+ */
+export interface ConnectedToEntry {
+  roomId: string;
+  direction: ConnectionDirection;
+  gapTiles: number; // 0 = flush shared edge, 1 = one empty tile row between
+  // Shift along the wall, on whichever axis `direction` doesn't already
+  // move on — e.g. for behindLeft/frontRight (which move along u), this
+  // shifts v; for behindRight/frontLeft (which move along v), this shifts
+  // u. 0 (default) reproduces the original flush-at-the-corner behavior.
+  lateralOffset?: number;
+}
+
+// Each direction's counterpart on the OTHER side of the same physical
+// edge — e.g. a wall edge (behindLeft) only ever meets an open edge on the
+// same axis (frontRight), never the perpendicular axis's pair. Exported so
+// the admin tool can validate/label edge pairings without re-deriving them.
+export const PAIR_DIRECTION: Record<ConnectionDirection, ConnectionDirection> = {
+  behindLeft: "frontRight",
+  frontRight: "behindLeft",
+  behindRight: "frontLeft",
+  frontLeft: "behindRight",
+};
 
 export interface RoomSpec {
   id: string;
@@ -243,13 +280,10 @@ export interface RoomSpec {
   wallOverrides?: TileOverride[];
   objects: ObjectPlacement[];
   // Placement relative to another room's edge, instead of an absolute pixel
-  // offset — stays correct if either room's size changes. Exactly one room
-  // should omit this (the anchor, placed at the grid origin).
-  connectedTo?: {
-    roomId: string;
-    direction: ConnectionDirection;
-    gapTiles: number; // 0 = flush shared edge, 1 = one empty tile row between
-  };
+  // offset — stays correct if either room's size changes. A room with no
+  // entries (or none at all) sits at the grid origin, i.e. "the anchor."
+  // See ConnectedToEntry for why only the first entry affects position.
+  connectedTo?: ConnectedToEntry[];
 }
 
 export interface RoomDef extends Omit<RoomSpec, "objects"> {
@@ -279,7 +313,7 @@ export interface RoomSpecWire {
   wallVariant: string;
   floorOverrides?: TileOverride[];
   wallOverrides?: TileOverride[];
-  connectedTo?: { roomId: string; direction: ConnectionDirection; gapTiles: number };
+  connectedTo?: ConnectedToEntry[];
   objects: ObjectPlacement[];
 }
 
@@ -299,43 +333,114 @@ export function roomSpecsFromWire(wire: RoomSpecWire[]): RoomSpec[] {
   }));
 }
 
+export interface EdgeConnection {
+  direction: ConnectionDirection; // the viewed room's OWN edge
+  otherRoomId: string;
+  gapTiles: number;
+  lateralOffset: number;
+  // Which room's connectedTo array actually holds this entry — "this"
+  // means roomId's own array (editing it mutates roomId's record);
+  // "other" means otherRoomId's array (editing it mutates THAT room's
+  // record instead, since direction is always named for the anchor).
+  owner: "this" | "other";
+  entryIndex: number; // index within the owning room's connectedTo array
+}
+
+/**
+ * Every connection touching one of `roomId`'s own 4 edges, found from
+ * BOTH directions: entries roomId itself declares (its own connectedTo
+ * array — roomId's own touching edge is PAIR_DIRECTION[entry.direction],
+ * since `direction` always names the ANCHOR's edge, not the declaring
+ * room's) and entries OTHER rooms declare that name roomId as their
+ * anchor (there, `direction` already IS roomId's own edge). Lets the admin
+ * tool's room-connections editor show what's attached to each of a room's
+ * 4 edges regardless of which room's record actually owns that fact.
+ */
+export function getEdgeConnections(allRooms: RoomSpecWire[], roomId: string): EdgeConnection[] {
+  const result: EdgeConnection[] = [];
+  const room = allRooms.find((r) => r.id === roomId);
+  (room?.connectedTo ?? []).forEach((entry, entryIndex) => {
+    result.push({
+      direction: PAIR_DIRECTION[entry.direction],
+      otherRoomId: entry.roomId,
+      gapTiles: entry.gapTiles,
+      lateralOffset: entry.lateralOffset ?? 0,
+      owner: "this",
+      entryIndex,
+    });
+  });
+  for (const other of allRooms) {
+    if (other.id === roomId) continue;
+    (other.connectedTo ?? []).forEach((entry, entryIndex) => {
+      if (entry.roomId !== roomId) return;
+      result.push({
+        direction: entry.direction,
+        otherRoomId: other.id,
+        gapTiles: entry.gapTiles,
+        lateralOffset: entry.lateralOffset ?? 0,
+        owner: "other",
+        entryIndex,
+      });
+    });
+  }
+  return result;
+}
+
 export function resolveRooms(specs: RoomSpec[]): RoomDef[] {
   const specById = new Map(specs.map((s) => [s.id, s]));
   const origins = new Map<string, { u: number; v: number }>();
 
-  function originOf(id: string): { u: number; v: number } {
+  // `visiting` detects a connectedTo cycle (A's primary entry chains back to
+  // A) — a fresh Set per top-level originOf() call below (default params are
+  // evaluated per call), not shared across different rooms' own traversals.
+  function originOf(id: string, visiting: Set<string> = new Set()): { u: number; v: number } {
     const cached = origins.get(id);
     if (cached) return cached;
+    if (visiting.has(id)) {
+      throw new Error(`[rooms] connectedTo cycle detected involving room "${id}"`);
+    }
+    visiting.add(id);
 
     const spec = specById.get(id)!;
+    // Only the first entry ever determines this room's own position — see
+    // ConnectedToEntry's own comment for why further entries are inert here.
+    const primary = spec.connectedTo?.[0];
     let origin: { u: number; v: number };
-    if (!spec.connectedTo) {
+    if (!primary) {
       origin = { u: 0, v: 0 };
     } else {
-      const { roomId, direction, gapTiles } = spec.connectedTo;
-      const anchor = originOf(roomId);
+      const { roomId, direction, gapTiles } = primary;
+      const lateralOffset = primary.lateralOffset ?? 0;
+      if (!specById.has(roomId)) {
+        throw new Error(`[rooms] room "${id}" connects to unknown room "${roomId}"`);
+      }
+      const anchor = originOf(roomId, visiting);
       const anchorSpec = specById.get(roomId)!;
       switch (direction) {
         // behindLeft/behindRight: this room's own far edge touches the
         // anchor's u=0/v=0 edge, so the shift uses THIS room's own size
         // (to clear its own extent before reaching the anchor's edge).
+        // The OTHER axis (the one not being shifted to clear the gap) is
+        // the "lateral" one — free to slide along the wall via lateralOffset,
+        // 0 reproducing the original flush-at-the-corner placement.
         case "behindLeft":
-          origin = { u: anchor.u - spec.cols - gapTiles, v: anchor.v };
+          origin = { u: anchor.u - spec.cols - gapTiles, v: anchor.v + lateralOffset };
           break;
         case "behindRight":
-          origin = { u: anchor.u, v: anchor.v - spec.rows - gapTiles };
+          origin = { u: anchor.u + lateralOffset, v: anchor.v - spec.rows - gapTiles };
           break;
         // frontLeft/frontRight: this room starts right where the anchor's
         // own extent ends, so the shift uses the ANCHOR's size instead.
         case "frontLeft":
-          origin = { u: anchor.u, v: anchor.v + anchorSpec.rows + gapTiles };
+          origin = { u: anchor.u + lateralOffset, v: anchor.v + anchorSpec.rows + gapTiles };
           break;
         case "frontRight":
-          origin = { u: anchor.u + anchorSpec.cols + gapTiles, v: anchor.v };
+          origin = { u: anchor.u + anchorSpec.cols + gapTiles, v: anchor.v + lateralOffset };
           break;
       }
     }
     origins.set(id, origin);
+    visiting.delete(id);
     return origin;
   }
 
@@ -382,7 +487,7 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
     rows: 6,
     floor: floor1,
     wall: wall1,
-    connectedTo: { roomId: "office", direction: "behindLeft", gapTiles: 1 },
+    connectedTo: [{ roomId: "office", direction: "behindLeft", gapTiles: 1 }],
     objects: [{ type: "ddrCabinet", id: "ddr-cabinet", x: 8, y: 0 }],
   },
   {
@@ -392,7 +497,7 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
     rows: 20,
     floor: floor1,
     wall: wall1,
-    connectedTo: { roomId: "ddr-room", direction: "frontLeft", gapTiles: 1 },
+    connectedTo: [{ roomId: "ddr-room", direction: "frontLeft", gapTiles: 1 }],
     // DDR's facing edge is open by default, but this room's own v=0 wall
     // (facing back toward DDR) still gets its default wall — needs a gap too.
     wallOverrides: [{ u: 5, v: 0, tile: null }],
@@ -420,7 +525,7 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
     // in turn connect off office's u=0 edge. Two separate doors below: one
     // in entrance's own v=0 wall (faces office, "top right"), one in its
     // own u=0 wall (faces Living Room, "top left").
-    connectedTo: { roomId: "office", direction: "frontLeft", gapTiles: 1 },
+    connectedTo: [{ roomId: "office", direction: "frontLeft", gapTiles: 1 }],
     wallOverrides: [
       { u: 4, v: 0, tile: null }, // door to office
       { u: 0, v: 3, tile: null }, // door to Living Room

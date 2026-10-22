@@ -27,7 +27,23 @@ import { buildModal } from "./ui/modal";
 import { assetUrl, buildFloorAndWalls, buildLayer, preloadRoomAssets } from "./scene/renderer";
 import { AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
-import { gridToScreen, ObjectTypeDef, RoomDef, roomSpecsFromWire, screenToGrid, setObjectTypes, setRooms, SpriteLayer, TILE_WIDTH } from "./scene/rooms";
+import {
+  ConnectedToEntry,
+  ConnectionDirection,
+  EdgeConnection,
+  getEdgeConnections,
+  gridToScreen,
+  ObjectTypeDef,
+  PAIR_DIRECTION,
+  resolveRooms,
+  RoomDef,
+  roomSpecsFromWire,
+  screenToGrid,
+  setObjectTypes,
+  setRooms,
+  SpriteLayer,
+  TILE_WIDTH,
+} from "./scene/rooms";
 import { floor1, wall1 } from "./scene/tileset";
 
 const ADMIN_SECRET_KEY = "houseSimulatorAdminSecret";
@@ -61,6 +77,7 @@ interface RoomSpecWire {
   level: number;
   floorVariant: string;
   wallVariant: string;
+  connectedTo?: ConnectedToEntry[];
   objects: ObjectPlacementWire[];
 }
 
@@ -1008,6 +1025,273 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
   modal.open();
 }
 
+// --- Room connections ---
+
+const EDGE_LABELS: Record<ConnectionDirection, string> = {
+  behindLeft: "Top-Left Wall",
+  behindRight: "Top-Right Wall",
+  frontLeft: "Bottom-Left (open)",
+  frontRight: "Bottom-Right (open)",
+};
+const EDGE_ORDER: ConnectionDirection[] = ["behindLeft", "behindRight", "frontLeft", "frontRight"];
+
+/**
+ * Edits which rooms attach to `room`'s 4 edges. A room can have any number
+ * of its edges connected, each to a different room — see ConnectedToEntry's
+ * own comment on why only the first entry of whichever room DECLARES a
+ * connection actually affects that room's position; this editor doesn't
+ * try to keep the rest geometrically consistent with the whole layout
+ * (rooms are "just containers," no alignment validation, by explicit
+ * choice when this was built).
+ *
+ * Every edge's status comes from getEdgeConnections(), which resolves both
+ * directions of ownership: entries `room` itself declares (its own
+ * touching edge is PAIR_DIRECTION[entry.direction], since `direction`
+ * always names the ANCHOR's edge) and entries OTHER rooms declare that
+ * point at `room` (direction there already IS room's own edge). Connecting
+ * is always framed as "room is the anchor, the picked room attaches to
+ * it" — a new entry is written onto the PICKED room's own connectedTo
+ * array, never room's — so every "+Connect" action from this modal ends up
+ * PATCHing some OTHER room's record. Editing/removing an existing entry
+ * writes back to whichever room's record actually owns it instead.
+ *
+ * Every action is an immediate PATCH (no staged draft, unlike the object
+ * editor) — a single action can touch a different room's record than the
+ * one being viewed, so there's no single draft to stage.
+ */
+async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWire[], onSaved: () => void) {
+  const modal = buildModal(`Connections: ${room.name}`, { size: "large" });
+
+  const previewContainer = document.createElement("div");
+  previewContainer.id = "admin-preview-canvas";
+  modal.body.appendChild(previewContainer);
+
+  const hint = document.createElement("div");
+  hint.className = "admin-hint";
+  hint.textContent = "Each action below saves immediately — there's no separate Save step.";
+  modal.body.appendChild(hint);
+
+  const errorEl = document.createElement("div");
+  errorEl.className = "admin-error";
+  errorEl.style.display = "none";
+  modal.body.appendChild(errorEl);
+
+  function showInlineError(err: unknown) {
+    errorEl.textContent = err instanceof Error ? err.message : String(err);
+    errorEl.style.display = "";
+  }
+  function clearInlineError() {
+    errorEl.style.display = "none";
+  }
+
+  const table = document.createElement("table");
+  table.className = "admin-table";
+  modal.body.appendChild(table);
+
+  let currentApp: Application | null = null;
+
+  async function renderPreview() {
+    currentApp?.destroy();
+    previewContainer.textContent = "";
+    try {
+      // Single-room spec, connectedTo stripped — same reasoning as the
+      // object editor's renderPreview(): nothing else exists in this
+      // one-room array for a real connectedTo chain to resolve against.
+      setRooms(roomSpecsFromWire([{ ...room, connectedTo: undefined }]));
+      currentApp = new Application();
+      await currentApp.init({ width: 420, height: 320, background: 0x222228 });
+      previewContainer.appendChild(currentApp.canvas);
+      new AdminPreviewRenderer(currentApp, () => {}, () => {});
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  /** Cycle/missing-room check reusing the engine's own resolveRooms() — thrown errors surface as a blocking inline error instead of silently corrupting the layout. */
+  function assertNoCycle(candidateRooms: RoomSpecWire[]) {
+    resolveRooms(roomSpecsFromWire(candidateRooms));
+  }
+  function withConnections(roomId: string, connectedTo: ConnectedToEntry[] | undefined): RoomSpecWire[] {
+    return allRooms.map((r) => (r.id === roomId ? { ...r, connectedTo } : r));
+  }
+
+  async function connect(direction: ConnectionDirection, targetRoomId: string, gapTiles: number, lateralOffset: number) {
+    const targetRoom = allRooms.find((r) => r.id === targetRoomId)!;
+    const newConnectedTo = [...(targetRoom.connectedTo ?? []), { roomId: room.id, direction, gapTiles, lateralOffset }];
+    try {
+      assertNoCycle(withConnections(targetRoomId, newConnectedTo));
+    } catch (err) {
+      showInlineError(err);
+      return;
+    }
+    try {
+      await adminFetch(`/api/admin/rooms/${targetRoomId}`, { method: "PATCH", body: JSON.stringify({ ...targetRoom, connectedTo: newConnectedTo }) });
+      targetRoom.connectedTo = newConnectedTo; // keep the local allRooms copy in sync, no refetch needed
+      clearInlineError();
+      renderTable();
+      await renderPreview();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function updateEdge(edge: EdgeConnection, gapTiles: number, lateralOffset: number) {
+    const ownerRoomId = edge.owner === "this" ? room.id : edge.otherRoomId;
+    const ownerRoom = allRooms.find((r) => r.id === ownerRoomId)!;
+    const newConnectedTo = (ownerRoom.connectedTo ?? []).map((entry, i) => (i === edge.entryIndex ? { ...entry, gapTiles, lateralOffset } : entry));
+    try {
+      assertNoCycle(withConnections(ownerRoomId, newConnectedTo));
+    } catch (err) {
+      showInlineError(err);
+      return;
+    }
+    try {
+      await adminFetch(`/api/admin/rooms/${ownerRoomId}`, { method: "PATCH", body: JSON.stringify({ ...ownerRoom, connectedTo: newConnectedTo }) });
+      ownerRoom.connectedTo = newConnectedTo;
+      clearInlineError();
+      renderTable();
+      await renderPreview();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function disconnect(edge: EdgeConnection) {
+    const ownerRoomId = edge.owner === "this" ? room.id : edge.otherRoomId;
+    const ownerRoom = allRooms.find((r) => r.id === ownerRoomId)!;
+    const newConnectedTo = (ownerRoom.connectedTo ?? []).filter((_, i) => i !== edge.entryIndex);
+    const payloadConnectedTo = newConnectedTo.length ? newConnectedTo : undefined;
+    try {
+      await adminFetch(`/api/admin/rooms/${ownerRoomId}`, { method: "PATCH", body: JSON.stringify({ ...ownerRoom, connectedTo: payloadConnectedTo }) });
+      ownerRoom.connectedTo = payloadConnectedTo;
+      clearInlineError();
+      renderTable();
+      await renderPreview();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  function openConnectPicker(direction: ConnectionDirection) {
+    const otherRooms = allRooms.filter((r) => r.id !== room.id);
+    if (otherRooms.length === 0) {
+      showInlineError(new Error("No other rooms exist to connect to."));
+      return;
+    }
+
+    const pairedEdge = PAIR_DIRECTION[direction];
+    const pickerModal = buildModal(`Connect ${EDGE_LABELS[direction]} to…`, {});
+    const form = document.createElement("div");
+    form.className = "admin-form";
+    pickerModal.body.appendChild(form);
+
+    const roomSelect = document.createElement("select");
+    for (const r of otherRooms) {
+      const opt = document.createElement("option");
+      opt.value = r.id;
+      opt.textContent = `${r.name} (${r.id}) — its ${EDGE_LABELS[pairedEdge]} edge`;
+      roomSelect.appendChild(opt);
+    }
+    form.append(document.createTextNode("Room:"), roomSelect);
+
+    const gapInput = document.createElement("input");
+    gapInput.type = "number";
+    gapInput.value = "1";
+    gapInput.style.width = "50px";
+    form.append(document.createTextNode("Gap:"), gapInput);
+
+    const offsetInput = document.createElement("input");
+    offsetInput.type = "number";
+    offsetInput.value = "0";
+    offsetInput.style.width = "50px";
+    form.append(document.createTextNode("Lateral offset:"), offsetInput);
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.textContent = "Connect";
+    confirmBtn.onclick = async () => {
+      await connect(direction, roomSelect.value, Number(gapInput.value), Number(offsetInput.value));
+      pickerModal.close();
+    };
+    form.appendChild(confirmBtn);
+
+    pickerModal.open();
+  }
+
+  function renderTable() {
+    const edges = getEdgeConnections(allRooms, room.id);
+    table.innerHTML = "<tr><th>Edge</th><th>Connected room</th><th>Gap</th><th>Lateral offset</th><th></th></tr>";
+    for (const direction of EDGE_ORDER) {
+      const edge = edges.find((e) => e.direction === direction);
+      const row = document.createElement("tr");
+
+      const edgeCell = document.createElement("td");
+      edgeCell.textContent = EDGE_LABELS[direction];
+      row.appendChild(edgeCell);
+
+      if (!edge) {
+        row.appendChild(document.createElement("td"));
+        row.appendChild(document.createElement("td"));
+        row.appendChild(document.createElement("td"));
+
+        const actionCell = document.createElement("td");
+        const connectBtn = document.createElement("button");
+        connectBtn.type = "button";
+        connectBtn.textContent = "+ Connect";
+        connectBtn.onclick = () => openConnectPicker(direction);
+        actionCell.appendChild(connectBtn);
+        row.appendChild(actionCell);
+      } else {
+        const confirmedEdge: EdgeConnection = edge; // re-bound so closures below don't lose the !edge narrowing
+        const otherRoom = allRooms.find((r) => r.id === confirmedEdge.otherRoomId);
+        const roomCell = document.createElement("td");
+        roomCell.textContent = otherRoom ? `${otherRoom.name} (${otherRoom.id})` : `(missing: ${edge.otherRoomId})`;
+        row.appendChild(roomCell);
+
+        const gapInput = document.createElement("input");
+        gapInput.type = "number";
+        gapInput.value = String(confirmedEdge.gapTiles);
+        gapInput.style.width = "50px";
+        const gapCell = document.createElement("td");
+        gapCell.appendChild(gapInput);
+        row.appendChild(gapCell);
+
+        const offsetInput = document.createElement("input");
+        offsetInput.type = "number";
+        offsetInput.value = String(confirmedEdge.lateralOffset);
+        offsetInput.style.width = "50px";
+        const offsetCell = document.createElement("td");
+        offsetCell.appendChild(offsetInput);
+        row.appendChild(offsetCell);
+
+        function applyEdit() {
+          updateEdge(confirmedEdge, Number(gapInput.value), Number(offsetInput.value));
+        }
+        gapInput.onchange = applyEdit;
+        offsetInput.onchange = applyEdit;
+
+        const actionCell = document.createElement("td");
+        const disconnectBtn = document.createElement("button");
+        disconnectBtn.type = "button";
+        disconnectBtn.textContent = "Disconnect";
+        disconnectBtn.onclick = () => disconnect(confirmedEdge);
+        actionCell.appendChild(disconnectBtn);
+        row.appendChild(actionCell);
+      }
+
+      table.appendChild(row);
+    }
+  }
+
+  modal.onClose(() => {
+    currentApp?.destroy();
+    onSaved();
+  });
+  renderTable();
+  await renderPreview();
+  modal.open();
+}
+
 async function renderRooms(body: HTMLElement) {
   body.textContent = "";
   const [rooms, objectTypes] = await Promise.all([
@@ -1026,6 +1310,10 @@ async function renderRooms(body: HTMLElement) {
     const editBtn = document.createElement("button");
     editBtn.textContent = "Edit";
     editBtn.onclick = () => openRoomEditModal(room, objectTypes, () => renderRooms(body));
+    const connectionsBtn = document.createElement("button");
+    connectionsBtn.type = "button";
+    connectionsBtn.textContent = "Connections";
+    connectionsBtn.onclick = () => openRoomConnectionsModal(room, rooms, () => renderRooms(body));
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {
@@ -1037,7 +1325,7 @@ async function renderRooms(body: HTMLElement) {
         showError(err);
       }
     };
-    actionCell.append(editBtn, deleteBtn);
+    actionCell.append(editBtn, connectionsBtn, deleteBtn);
     row.appendChild(actionCell);
 
     table.appendChild(row);
