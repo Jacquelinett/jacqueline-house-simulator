@@ -440,7 +440,7 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
       await currentApp.init({ width: 420, height: 320, background: 0x222228 });
       previewContainer.appendChild(currentApp.canvas);
       currentRenderer = new AdminPreviewRenderer(currentApp, () => {}, highlightRow);
-      console.debug("[admin] renderPreview rebuilt OK, currentRenderer set:", !!currentRenderer);
+      console.log("[admin] renderPreview rebuilt OK, currentRenderer set:", !!currentRenderer);
     } catch (err) {
       console.error("[admin] renderPreview failed", err);
       showError(err);
@@ -515,7 +515,7 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
           obj.y = enteredV;
         }
         updateSaveState();
-        console.debug(`[admin] applyPosition("${obj.id}") -> (${obj.x},${obj.y}), currentRenderer:`, !!currentRenderer);
+        console.log(`[admin] applyPosition("${obj.id}") -> (${obj.x},${obj.y}), currentRenderer:`, !!currentRenderer);
         currentRenderer?.moveObject(obj.id, obj.x, obj.y);
       }
       xInput.onchange = applyPosition;

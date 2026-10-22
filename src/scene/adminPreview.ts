@@ -23,6 +23,14 @@ import { SceneRenderer } from "./renderer";
  *   pointer math for well enough to trust).
  */
 export class AdminPreviewRenderer extends SceneRenderer {
+  // Diagnostic only — STATIC (not instance) fields so they're readable
+  // from attachObjectInteraction while it's being called from inside the
+  // base class's own constructor, before `this.instanceId` (an instance
+  // field) is assigned.
+  private static instanceCounter = 0;
+  private static currentlyConstructingId = 0;
+  private readonly instanceId: number;
+
   // Not initialized here: SceneRenderer's own constructor (via super()
   // below) calls buildRoom()/buildObject(), which call the overridden
   // attachObjectInteraction() below — *before* this subclass's own field
@@ -40,7 +48,12 @@ export class AdminPreviewRenderer extends SceneRenderer {
     onRoomChange: (roomName: string) => void,
     private onObjectClick: (roomId: string, objectId: string) => void,
   ) {
+    const instanceId = ++AdminPreviewRenderer.instanceCounter;
+    AdminPreviewRenderer.currentlyConstructingId = instanceId;
+    console.log(`[adminPreview] constructing instance #${instanceId}`);
     super(app, onRoomChange, { devMode: false, scale: 1.5 });
+    this.instanceId = instanceId;
+    console.log(`[adminPreview] instance #${instanceId} constructed, objectContainers size:`, this.objectContainers?.size ?? 0);
   }
 
   protected attachRoomInteraction(container: Container, room: RoomDef) {
@@ -55,7 +68,9 @@ export class AdminPreviewRenderer extends SceneRenderer {
 
   protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
     (this.objectContainers ??= new Map()).set(obj.id, container);
-    console.debug(`[adminPreview] registered container for "${obj.id}" at (${container.position.x}, ${container.position.y})`);
+    console.log(
+      `[adminPreview] instance #${AdminPreviewRenderer.currentlyConstructingId} registered "${obj.id}" at (${container.position.x}, ${container.position.y})`,
+    );
     container.eventMode = "static";
     container.cursor = "pointer";
     container.interactiveChildren = false;
@@ -69,12 +84,13 @@ export class AdminPreviewRenderer extends SceneRenderer {
   public moveObject(objectId: string, x: number, y: number): void {
     const container = this.objectContainers?.get(objectId);
     if (!container) {
-      console.warn(`[adminPreview] moveObject("${objectId}") — no container registered for this id. Known ids:`, [
-        ...(this.objectContainers?.keys() ?? []),
-      ]);
+      console.warn(
+        `[adminPreview] instance #${this.instanceId} moveObject("${objectId}") — no container registered for this id. Known ids:`,
+        [...(this.objectContainers?.keys() ?? [])],
+      );
       return;
     }
-    console.debug(`[adminPreview] moveObject("${objectId}") (${container.position.x},${container.position.y}) -> (${x},${y})`);
+    console.log(`[adminPreview] instance #${this.instanceId} moveObject("${objectId}") (${container.position.x},${container.position.y}) -> (${x},${y})`);
     container.position.set(x, y);
     // Forces an immediate repaint rather than waiting for the next
     // autoStart ticker frame — harmless if the ticker was already going
@@ -94,10 +110,10 @@ export class AdminPreviewRenderer extends SceneRenderer {
 
     const container = this.roomContainers.get(this.viewedRoomId);
     if (!container) {
-      console.warn(`[adminPreview] enablePlacement — no room container for viewedRoomId "${this.viewedRoomId}"`);
+      console.warn(`[adminPreview] instance #${this.instanceId} enablePlacement — no room container for viewedRoomId "${this.viewedRoomId}"`);
       return;
     }
-    console.debug(`[adminPreview] enablePlacement on room "${this.viewedRoomId}"`);
+    console.log(`[adminPreview] instance #${this.instanceId} enablePlacement on room "${this.viewedRoomId}"`);
     this.placingRoomContainer = container;
 
     const diamond = new Graphics();
@@ -123,14 +139,14 @@ export class AdminPreviewRenderer extends SceneRenderer {
       const { u, v } = screenToGrid(local.x, local.y);
       if (!loggedFirstMove) {
         loggedFirstMove = true;
-        console.debug(`[adminPreview] placement hover fired — local (${local.x},${local.y}) -> tile (${Math.floor(u)},${Math.floor(v)})`);
+        console.log(`[adminPreview] placement hover fired — local (${local.x},${local.y}) -> tile (${Math.floor(u)},${Math.floor(v)})`);
       }
       drawAt(Math.floor(u), Math.floor(v));
     };
     const onClick = (e: FederatedPointerEvent) => {
       const local = e.getLocalPosition(container);
       const { u, v } = screenToGrid(local.x, local.y);
-      console.debug(`[adminPreview] placement click — local (${local.x},${local.y}) -> tile (${Math.floor(u)},${Math.floor(v)})`);
+      console.log(`[adminPreview] placement click — local (${local.x},${local.y}) -> tile (${Math.floor(u)},${Math.floor(v)})`);
       onTileClick(Math.floor(u), Math.floor(v));
     };
 
