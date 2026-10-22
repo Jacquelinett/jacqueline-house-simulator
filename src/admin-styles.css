@@ -102,6 +102,39 @@ body {
   margin-bottom: 8px;
 }
 
+#admin-preview-canvas {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  width: 560px;
+  max-width: 100%;
+  margin-bottom: 6px;
+}
+
+#admin-preview-canvas canvas {
+  display: block;
+  width: 100%;
+}
+
+.admin-room-title button {
+  margin-left: 8px;
+  font-size: 11px;
+}
+
+@keyframes admin-row-flash {
+  0%,
+  100% {
+    background: transparent;
+  }
+  50% {
+    background: var(--accent-bg);
+  }
+}
+
+.admin-row-highlight {
+  animation: admin-row-flash 0.5s ease-in-out 2;
+}
+
 .admin-error {
   color: #d6336c;
   font-size: 13px;

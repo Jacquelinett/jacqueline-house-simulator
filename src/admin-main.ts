@@ -2,9 +2,22 @@
 // public viewer, served by the Node server itself at /admin/. Talks to the
 // plain REST surface under /api/admin/* (server/adminApi.ts), not the
 // game's WebSocket RPC protocol — this is traditional CRUD, not real-time
-// multiplayer state. List-based UI only for now (characters/activities/
-// rooms/object placements); visual room/object placement is a separate,
-// larger follow-up (see server/rooms.ts's own comments on this boundary).
+// multiplayer state.
+//
+// The room list below is editable (position/type/enabled, add/delete) via
+// plain form fields, not drag-and-drop — there's no browser available in
+// this environment to visually verify pointer-based drag math actually
+// works, so the one visual piece built is a read-only Pixi preview
+// (AdminPreviewRenderer, reusing the exact same SceneRenderer the game and
+// viewer use) with click-to-select instead: clicking an object in the
+// preview scrolls to and highlights its row below, where the actual edit
+// happens. Real visual value without inventing an interaction this session
+// can't actually test.
+import { Application } from "pixi.js";
+import { preloadRoomAssets } from "./scene/renderer";
+import { AdminPreviewRenderer } from "./scene/adminPreview";
+import { setActivities } from "./scene/activities";
+import { roomSpecsFromWire, setObjectTypes, setRooms } from "./scene/rooms";
 
 const ADMIN_SECRET_KEY = "houseSimulatorAdminSecret";
 
@@ -308,6 +321,10 @@ async function renderRooms(body: HTMLElement) {
     const title = document.createElement("div");
     title.className = "admin-room-title";
     title.textContent = `${room.name} (${room.id}) — ${room.cols}×${room.rows}, level ${room.level}`;
+    const previewBtn = document.createElement("button");
+    previewBtn.textContent = "Preview";
+    previewBtn.onclick = () => previewRenderer?.goToRoom(room.id);
+    title.appendChild(previewBtn);
     block.appendChild(title);
 
     const table = document.createElement("table");
@@ -315,6 +332,7 @@ async function renderRooms(body: HTMLElement) {
     table.innerHTML = "<tr><th>Object</th><th>Type</th><th>x</th><th>y</th><th>Enabled</th><th></th></tr>";
     for (const obj of room.objects) {
       const row = document.createElement("tr");
+      row.id = `obj-row-${room.id}-${obj.id}`;
       const idCell = document.createElement("td");
       idCell.textContent = obj.id;
       row.appendChild(idCell);
@@ -496,6 +514,49 @@ async function renderRooms(body: HTMLElement) {
   body.appendChild(form);
 }
 
+let previewRenderer: AdminPreviewRenderer | null = null;
+
+/** Click an object in the preview -> scroll to and flash its row in the plain list below, where the actual edit happens. */
+function highlightObjectRow(roomId: string, objectId: string) {
+  const row = document.getElementById(`obj-row-${roomId}-${objectId}`);
+  if (!row) return;
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  row.classList.add("admin-row-highlight");
+  setTimeout(() => row.classList.remove("admin-row-highlight"), 1500);
+}
+
+/** Fetches the same scene data the game/viewer get over WebSocket, but via the admin REST endpoints, and feeds it into the exact same setActivities/setObjectTypes/setRooms live bindings — see those files' own comments on why every consumer (SceneRenderer included) just works against whatever's currently set. */
+async function setupPreview(previewBody: HTMLElement): Promise<void> {
+  const [activities, objectTypes, roomSpecs] = await Promise.all([
+    adminFetch<ActivityDef[]>("/api/admin/activities"),
+    adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
+    adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
+  ]);
+  setActivities(activities);
+  setObjectTypes(objectTypes);
+  setRooms(roomSpecsFromWire(roomSpecs));
+
+  await preloadRoomAssets();
+
+  const canvasContainer = document.createElement("div");
+  canvasContainer.id = "admin-preview-canvas";
+  previewBody.appendChild(canvasContainer);
+
+  const roomLabel = document.createElement("div");
+  roomLabel.className = "admin-hint";
+  previewBody.appendChild(roomLabel);
+
+  const app = new Application();
+  await app.init({ width: 560, height: 360, background: 0x222228 });
+  canvasContainer.appendChild(app.canvas);
+
+  previewRenderer = new AdminPreviewRenderer(
+    app,
+    (roomName) => (roomLabel.textContent = `Viewing: ${roomName} — click a room to pan, an object to find it below`),
+    highlightObjectRow,
+  );
+}
+
 async function main() {
   secret = await getOrPromptSecret();
 
@@ -503,18 +564,17 @@ async function main() {
   header.textContent = "House Simulator Admin";
   app.appendChild(header);
 
+  const preview = section("Room Preview", "Read-only — click a room to pan the camera, an object to jump to its row below.");
   const characters = section("Characters");
   const activities = section("Activities");
   const objectTypes = section(
     "Object Types",
     "Read-only here — creating a new type needs a texture picker, which belongs with the visual room editor.",
   );
-  const rooms = section(
-    "Rooms & Objects",
-    "No visual placement yet — enable/disable or delete existing objects, or add a brand-new empty room.",
-  );
+  const rooms = section("Rooms & Objects", "Edit position/type/enabled directly, or add/delete rooms and objects.");
 
   try {
+    await setupPreview(preview.body);
     await Promise.all([
       renderCharacters(characters.body),
       renderActivities(activities.body),
