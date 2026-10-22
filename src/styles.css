@@ -465,9 +465,37 @@ body {
   font-size: 12px;
 }
 
+/* Real tab navigation (underline style) — distinct on purpose from
+   .day-toggle's pill-button look below, so "switches which section is
+   visible" (All Time/Period) doesn't read as the same kind of control as
+   "picks a parameter within a section" (Weekly/Monthly). */
 .stat-tabs {
   display: flex;
-  margin-bottom: 12px;
+  gap: 18px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 14px;
+}
+
+.stat-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--text);
+  opacity: 0.6;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 0 8px 0;
+  cursor: pointer;
+}
+
+.stat-tab:hover {
+  opacity: 0.85;
+}
+
+.stat-tab.selected {
+  opacity: 1;
+  border-bottom-color: var(--accent-border);
 }
 
 .stat-period-controls {

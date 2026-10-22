@@ -6,12 +6,22 @@ import { getGoalProgressForRange } from "../goals/progress";
 import { localDateString, parseDateString } from "../goals/recurrence";
 
 /**
- * A row of mutually-exclusive toggle buttons (same look as the day-of-week
- * toggles in goals/ui.ts, but single-select instead of multi-select) — used
- * twice below (All Time/Period, Weekly/Monthly), small enough to keep local
- * rather than promoting to a shared ui/ module until a third caller shows up.
+ * A row of mutually-exclusive buttons (single-select, as opposed to the
+ * multi-select day-of-week toggles in goals/ui.ts) — used twice below, with
+ * different classNames so the two don't read as the same kind of control:
+ * All Time/Period is real tab navigation (`stat-tab`, underline style) that
+ * swaps which section is visible, while Weekly/Monthly is a toggle/radio
+ * pair (`day-toggle`, the same pill style used everywhere else in this app)
+ * that just changes a parameter within the Period section. Small enough to
+ * keep local rather than promoting to a shared ui/ module until a third
+ * caller shows up.
  */
-function buildToggleGroup<T extends string>(options: readonly (readonly [T, string])[], initial: T, onChange: (value: T) => void): HTMLElement {
+function buildToggleGroup<T extends string>(
+  options: readonly (readonly [T, string])[],
+  initial: T,
+  onChange: (value: T) => void,
+  buttonClass: "day-toggle" | "stat-tab" = "day-toggle",
+): HTMLElement {
   const group = document.createElement("span");
   const buttons = new Map<T, HTMLButtonElement>();
   let current = initial;
@@ -19,7 +29,7 @@ function buildToggleGroup<T extends string>(options: readonly (readonly [T, stri
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = label;
-    btn.className = "day-toggle" + (value === initial ? " selected" : "");
+    btn.className = buttonClass + (value === initial ? " selected" : "");
     btn.onclick = () => {
       if (value === current) return;
       current = value;
@@ -82,6 +92,7 @@ export function setupStatisticContent(container: HTMLElement): { refresh(): void
         periodSection.style.display = tab === "period" ? "" : "none";
         if (tab === "period") refreshPeriod();
       },
+      "stat-tab",
     ),
   );
 
