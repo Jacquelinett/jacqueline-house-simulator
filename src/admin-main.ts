@@ -335,7 +335,11 @@ const TYPE_PREVIEW_ORIGIN = { x: 110, y: 70 };
 const TYPE_PREVIEW_ROOM: RoomDef = { id: "preview", name: "preview", cols: 2, rows: 2, level: 0, floor: floor1, wall: wall1, objects: [], x: 0, y: 0, width: 0, height: 0 };
 
 function makeDefaultObjectType(): ObjectTypeDef {
-  return { name: "", width: 32, height: 32, below: [{ color: 0x888888 }] };
+  // Anchor defaults to dead center (half width, half height) rather than
+  // (0,0) — a much more common "floor contact point" for a generic new
+  // object than the sprite's own top-left, and it's what every existing
+  // type got bulk-set to when anchors were introduced.
+  return { name: "", width: 32, height: 32, below: [{ color: 0x888888 }], anchorX: 16, anchorY: 16 };
 }
 
 async function ensureTextureLoaded(path: string | undefined): Promise<void> {
@@ -369,6 +373,11 @@ async function openObjectTypeEditModal(
     : makeDefaultObjectType();
   let anchorX = draftType.anchorX ?? 0;
   let anchorY = draftType.anchorY ?? 0;
+  // Only a brand-new type keeps auto-centering its anchor as width/height
+  // change — an existing type already has a real (now bulk-migrated)
+  // anchor the admin may be deliberately tuning, so a width/height edit
+  // there must never silently override it.
+  let anchorTouched = existing !== null;
 
   const modal = buildModal(id ? `Edit Object Type: ${draftType.name}` : "Add Object Type", {});
 
@@ -543,10 +552,18 @@ async function openObjectTypeEditModal(
     rebuildSprite();
   };
   colorInput.oninput = () => rebuildSprite();
-  widthInput.onchange = () => rebuildSprite();
-  heightInput.onchange = () => rebuildSprite();
+  function applyWidthHeight() {
+    if (!anchorTouched) {
+      anchorX = Math.round((Number(widthInput.value) || 0) / 2);
+      anchorY = Math.round((Number(heightInput.value) || 0) / 2);
+    }
+    rebuildSprite();
+  }
+  widthInput.onchange = applyWidthHeight;
+  heightInput.onchange = applyWidthHeight;
   anchorTileModeCheckbox.onchange = () => syncAnchorInputs(); // redisplay only — doesn't change the underlying anchor
   function applyAnchorInputs() {
+    anchorTouched = true;
     if (anchorTileModeCheckbox.checked) {
       const screen = gridToScreen(Number(anchorXInput.value), Number(anchorYInput.value));
       anchorX = Math.round(screen.x);
