@@ -455,14 +455,22 @@ body {
   margin-bottom: 8px;
 }
 
+/* Hyperlink-ish look (bold + underline) rather than a boxed input — same
+   text color as everything else, just styled as a text link rather than a
+   button. border-bottom instead of text-decoration: underline, since the
+   latter doesn't reliably reach a native date input's internal rendering
+   the way it would on plain text. */
 .dashboard-date-input,
 .stat-period-controls input[type="date"] {
-  background: var(--surface);
+  background: transparent;
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 4px 6px;
+  border: none;
+  border-bottom: 1px solid currentColor;
+  border-radius: 0;
+  padding: 2px 0;
   font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 /* Real tab navigation (underline style) — distinct on purpose from
