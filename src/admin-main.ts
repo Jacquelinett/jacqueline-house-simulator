@@ -210,6 +210,75 @@ function setupTabs(): Record<TabId, HTMLElement> {
 
 // --- Characters ---
 
+/**
+ * Edits (or creates, when `id` is null) a character — matches the
+ * Activities/Object-Types tabs' modal-based edit pattern. Secret/bucket id
+ * are only editable once a character exists (the server generates both on
+ * create); changing the secret immediately invalidates every device still
+ * connected with the old one (see updateCharacterSecret's own comment),
+ * and changing the bucket id points AW tracking at a different bucket
+ * going forward — it doesn't move any existing history over.
+ */
+function openCharacterEditModal(id: string | null, existing: Character | null, onSaved: () => void): void {
+  const modal = buildModal(id ? `Edit Character: ${existing!.name}` : "Add Character", {});
+
+  const form = document.createElement("div");
+  form.className = "admin-form";
+  modal.body.appendChild(form);
+
+  const nameInput = document.createElement("input");
+  nameInput.placeholder = "Name";
+  nameInput.value = existing?.name ?? "";
+  form.append(document.createTextNode("Name:"), nameInput);
+
+  let secretInput: HTMLInputElement | null = null;
+  let bucketInput: HTMLInputElement | null = null;
+  if (existing) {
+    secretInput = document.createElement("input");
+    secretInput.value = existing.secret;
+    form.append(document.createTextNode("Secret:"), secretInput);
+
+    bucketInput = document.createElement("input");
+    bucketInput.value = existing.awBucketId;
+    form.append(document.createTextNode("AW bucket:"), bucketInput);
+  }
+
+  const footer = document.createElement("div");
+  footer.className = "admin-form";
+  const saveBtn = document.createElement("button");
+  saveBtn.textContent = "Save";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Cancel";
+  footer.append(saveBtn, cancelBtn);
+  modal.body.appendChild(footer);
+
+  saveBtn.onclick = async () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      showError(new Error("Name is required"));
+      return;
+    }
+    try {
+      if (id) {
+        await adminFetch(`/api/admin/characters/${id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ name, secret: secretInput!.value.trim(), awBucketId: bucketInput!.value.trim() }),
+        });
+      } else {
+        await adminFetch("/api/admin/characters", { method: "POST", body: JSON.stringify({ name }) });
+      }
+      modal.close();
+      onSaved();
+    } catch (err) {
+      showError(err);
+    }
+  };
+  cancelBtn.onclick = () => modal.close();
+
+  modal.open();
+}
+
 async function renderCharacters(body: HTMLElement) {
   body.textContent = "";
   const characters = await adminFetch<Character[]>("/api/admin/characters");
@@ -221,6 +290,9 @@ async function renderCharacters(body: HTMLElement) {
     const row = document.createElement("tr");
     row.innerHTML = `<td>${c.name}</td><td><code>${c.secret}</code></td><td>${c.awBucketId}</td>`;
     const actionCell = document.createElement("td");
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "Edit";
+    editBtn.onclick = () => openCharacterEditModal(c.id, c, () => renderCharacters(body));
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {
@@ -232,31 +304,17 @@ async function renderCharacters(body: HTMLElement) {
         showError(err);
       }
     };
-    actionCell.appendChild(deleteBtn);
+    actionCell.append(editBtn, deleteBtn);
     row.appendChild(actionCell);
     table.appendChild(row);
   }
   body.appendChild(table);
 
-  const form = document.createElement("form");
-  form.className = "admin-form";
-  const nameInput = document.createElement("input");
-  nameInput.placeholder = "New character name";
-  nameInput.required = true;
-  const submitBtn = document.createElement("button");
-  submitBtn.type = "submit";
-  submitBtn.textContent = "Add Character";
-  form.append(nameInput, submitBtn);
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    try {
-      await adminFetch("/api/admin/characters", { method: "POST", body: JSON.stringify({ name: nameInput.value }) });
-      renderCharacters(body);
-    } catch (err) {
-      showError(err);
-    }
-  };
-  body.appendChild(form);
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.textContent = "Add Character";
+  addBtn.onclick = () => openCharacterEditModal(null, null, () => renderCharacters(body));
+  body.appendChild(addBtn);
 }
 
 // --- Activities ---
@@ -781,6 +839,12 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
   rowsInput.style.width = "60px";
   roomPropsForm.append(document.createTextNode("Cols:"), colsInput, document.createTextNode("Rows:"), rowsInput);
 
+  // Its own row, not crammed onto the Name/Cols/Rows line above — two
+  // checkboxes read much easier with room to breathe.
+  const wallVisibilityForm = document.createElement("div");
+  wallVisibilityForm.className = "admin-form";
+  modal.body.appendChild(wallVisibilityForm);
+
   const showLeftWallLabel = document.createElement("label");
   const showLeftWallCheckbox = document.createElement("input");
   showLeftWallCheckbox.type = "checkbox";
@@ -791,7 +855,7 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
   showRightWallCheckbox.type = "checkbox";
   showRightWallCheckbox.checked = roomFields.showRightWall;
   showRightWallLabel.append(showRightWallCheckbox, document.createTextNode(" Top-right wall"));
-  roomPropsForm.append(showLeftWallLabel, showRightWallLabel);
+  wallVisibilityForm.append(showLeftWallLabel, showRightWallLabel);
 
   function applyRoomFields() {
     roomFields.name = nameInput.value;

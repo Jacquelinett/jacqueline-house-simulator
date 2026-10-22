@@ -60,6 +60,16 @@ export function renameCharacter(id: string, name: string): void {
   db.prepare("UPDATE characters SET name = ? WHERE id = ?").run(name, id);
 }
 
+/** Changing a character's secret immediately invalidates every device currently connected with the old one — the WS auth lookup is always by secret, not a cached session, so the next reconnect attempt (or the self-healing reconnect logic) just gets a 4001 until re-entered with the new value. */
+export function updateCharacterSecret(id: string, secret: string): void {
+  db.prepare("UPDATE characters SET secret = ? WHERE id = ?").run(secret, id);
+}
+
+/** Changing a character's AW bucket id does NOT move their existing tracked history — it's a different aw-server bucket from here on, same as pointing a character at someone else's bucket would be. Only meaningful to change before real tracking has happened on the old one. */
+export function updateCharacterBucket(id: string, awBucketId: string): void {
+  db.prepare("UPDATE characters SET aw_bucket_id = ? WHERE id = ?").run(awBucketId, id);
+}
+
 export function deleteCharacter(id: string): void {
   db.prepare("DELETE FROM characters WHERE id = ?").run(id);
 }
