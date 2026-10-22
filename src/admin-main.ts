@@ -1090,16 +1090,44 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
 
   let currentApp: Application | null = null;
 
+  /**
+   * `room` plus every room connected to one of its edges, so the preview
+   * actually shows what's attached instead of just the one isolated room.
+   * `room` itself is forced to be the local anchor (connectedTo stripped)
+   * and every neighbor gets a SYNTHESIZED single-entry connectedTo pointing
+   * back at `room`, built straight from its own EdgeConnection — regardless
+   * of which room's record the real data stores that connection on
+   * (`owner: "this"` vs `"other"`), since direction/gapTiles/lateralOffset
+   * on an EdgeConnection already describe "my edge, these numbers" and the
+   * pairing is symmetric either way. Confirmed against the real global
+   * resolveRooms() output (both the straightforward owner="other" case and
+   * the inverted owner="this" case) with a standalone script before relying
+   * on it here — relative positions matched exactly in both directions.
+   * `room` is placed first in the array specifically because SceneRenderer
+   * defaults `viewedRoomId` to the array's first room — giving the "one
+   * room in focus, neighbors dimmed but visible" rendering the real game
+   * already has, for free, instead of needing a new public focus method.
+   */
+  function buildPreviewRoomSet(): RoomSpecWire[] {
+    const edges = getEdgeConnections(allRooms, room.id);
+    const neighborIds = [...new Set(edges.map((e) => e.otherRoomId))];
+    const forcedRoom: RoomSpecWire = { ...room, connectedTo: undefined };
+    const forcedNeighbors = neighborIds.flatMap((nid) => {
+      const neighbor = allRooms.find((r) => r.id === nid);
+      const edge = edges.find((e) => e.otherRoomId === nid);
+      if (!neighbor || !edge) return [];
+      return [{ ...neighbor, connectedTo: [{ roomId: room.id, direction: edge.direction, gapTiles: edge.gapTiles, lateralOffset: edge.lateralOffset }] }];
+    });
+    return [forcedRoom, ...forcedNeighbors];
+  }
+
   async function renderPreview() {
     currentApp?.destroy();
     previewContainer.textContent = "";
     try {
-      // Single-room spec, connectedTo stripped — same reasoning as the
-      // object editor's renderPreview(): nothing else exists in this
-      // one-room array for a real connectedTo chain to resolve against.
-      setRooms(roomSpecsFromWire([{ ...room, connectedTo: undefined }]));
+      setRooms(roomSpecsFromWire(buildPreviewRoomSet()));
       currentApp = new Application();
-      await currentApp.init({ width: 420, height: 320, background: 0x222228 });
+      await currentApp.init({ width: 480, height: 380, background: 0x222228 });
       previewContainer.appendChild(currentApp.canvas);
       new AdminPreviewRenderer(currentApp, () => {}, () => {});
     } catch (err) {
@@ -1218,68 +1246,88 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     pickerModal.open();
   }
 
+  function buildConnectionRow(direction: ConnectionDirection, edge: EdgeConnection): HTMLTableRowElement {
+    const row = document.createElement("tr");
+
+    const edgeCell = document.createElement("td");
+    edgeCell.textContent = EDGE_LABELS[direction];
+    row.appendChild(edgeCell);
+
+    const otherRoom = allRooms.find((r) => r.id === edge.otherRoomId);
+    const roomCell = document.createElement("td");
+    roomCell.textContent = otherRoom ? `${otherRoom.name} (${otherRoom.id})` : `(missing: ${edge.otherRoomId})`;
+    row.appendChild(roomCell);
+
+    const gapInput = document.createElement("input");
+    gapInput.type = "number";
+    gapInput.value = String(edge.gapTiles);
+    gapInput.style.width = "50px";
+    const gapCell = document.createElement("td");
+    gapCell.appendChild(gapInput);
+    row.appendChild(gapCell);
+
+    const offsetInput = document.createElement("input");
+    offsetInput.type = "number";
+    offsetInput.value = String(edge.lateralOffset);
+    offsetInput.style.width = "50px";
+    const offsetCell = document.createElement("td");
+    offsetCell.appendChild(offsetInput);
+    row.appendChild(offsetCell);
+
+    function applyEdit() {
+      updateEdge(edge, Number(gapInput.value), Number(offsetInput.value));
+    }
+    gapInput.onchange = applyEdit;
+    offsetInput.onchange = applyEdit;
+
+    const actionCell = document.createElement("td");
+    const disconnectBtn = document.createElement("button");
+    disconnectBtn.type = "button";
+    disconnectBtn.textContent = "Disconnect";
+    disconnectBtn.onclick = () => disconnect(edge);
+    actionCell.appendChild(disconnectBtn);
+    row.appendChild(actionCell);
+
+    return row;
+  }
+
+  function buildAddRow(direction: ConnectionDirection): HTMLTableRowElement {
+    const row = document.createElement("tr");
+
+    const edgeCell = document.createElement("td");
+    edgeCell.textContent = EDGE_LABELS[direction];
+    row.appendChild(edgeCell);
+
+    row.appendChild(document.createElement("td"));
+    row.appendChild(document.createElement("td"));
+    row.appendChild(document.createElement("td"));
+
+    const actionCell = document.createElement("td");
+    const connectBtn = document.createElement("button");
+    connectBtn.type = "button";
+    connectBtn.textContent = "+ Connect";
+    connectBtn.onclick = () => openConnectPicker(direction);
+    actionCell.appendChild(connectBtn);
+    row.appendChild(actionCell);
+
+    return row;
+  }
+
+  /**
+   * Each edge can hold any number of connections (a room may legitimately
+   * face several others, e.g. a long wall shared with two neighbors) — so
+   * every existing connection gets its own row, and "+ Connect" is always
+   * available below them regardless of how many are already there, rather
+   * than disappearing once an edge has its first one.
+   */
   function renderTable() {
     const edges = getEdgeConnections(allRooms, room.id);
     table.innerHTML = "<tr><th>Edge</th><th>Connected room</th><th>Gap</th><th>Lateral offset</th><th></th></tr>";
     for (const direction of EDGE_ORDER) {
-      const edge = edges.find((e) => e.direction === direction);
-      const row = document.createElement("tr");
-
-      const edgeCell = document.createElement("td");
-      edgeCell.textContent = EDGE_LABELS[direction];
-      row.appendChild(edgeCell);
-
-      if (!edge) {
-        row.appendChild(document.createElement("td"));
-        row.appendChild(document.createElement("td"));
-        row.appendChild(document.createElement("td"));
-
-        const actionCell = document.createElement("td");
-        const connectBtn = document.createElement("button");
-        connectBtn.type = "button";
-        connectBtn.textContent = "+ Connect";
-        connectBtn.onclick = () => openConnectPicker(direction);
-        actionCell.appendChild(connectBtn);
-        row.appendChild(actionCell);
-      } else {
-        const confirmedEdge: EdgeConnection = edge; // re-bound so closures below don't lose the !edge narrowing
-        const otherRoom = allRooms.find((r) => r.id === confirmedEdge.otherRoomId);
-        const roomCell = document.createElement("td");
-        roomCell.textContent = otherRoom ? `${otherRoom.name} (${otherRoom.id})` : `(missing: ${edge.otherRoomId})`;
-        row.appendChild(roomCell);
-
-        const gapInput = document.createElement("input");
-        gapInput.type = "number";
-        gapInput.value = String(confirmedEdge.gapTiles);
-        gapInput.style.width = "50px";
-        const gapCell = document.createElement("td");
-        gapCell.appendChild(gapInput);
-        row.appendChild(gapCell);
-
-        const offsetInput = document.createElement("input");
-        offsetInput.type = "number";
-        offsetInput.value = String(confirmedEdge.lateralOffset);
-        offsetInput.style.width = "50px";
-        const offsetCell = document.createElement("td");
-        offsetCell.appendChild(offsetInput);
-        row.appendChild(offsetCell);
-
-        function applyEdit() {
-          updateEdge(confirmedEdge, Number(gapInput.value), Number(offsetInput.value));
-        }
-        gapInput.onchange = applyEdit;
-        offsetInput.onchange = applyEdit;
-
-        const actionCell = document.createElement("td");
-        const disconnectBtn = document.createElement("button");
-        disconnectBtn.type = "button";
-        disconnectBtn.textContent = "Disconnect";
-        disconnectBtn.onclick = () => disconnect(confirmedEdge);
-        actionCell.appendChild(disconnectBtn);
-        row.appendChild(actionCell);
+      for (const edge of edges.filter((e) => e.direction === direction)) {
+        table.appendChild(buildConnectionRow(direction, edge));
       }
-
-      table.appendChild(row);
+      table.appendChild(buildAddRow(direction));
     }
   }
 
