@@ -107,6 +107,17 @@ body {
   padding: 2px 0;
 }
 
+.admin-tree-room {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.admin-tree-room:hover {
+  background: var(--surface);
+}
+
 .admin-table {
   width: 100%;
   border-collapse: collapse;

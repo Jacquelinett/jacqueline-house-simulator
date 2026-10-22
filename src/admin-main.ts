@@ -259,6 +259,58 @@ async function renderCharacters(body: HTMLElement) {
 
 // --- Activities ---
 
+/** Edits (or creates, when `id` is null) one activity's label/color — matches the Object Types tab's modal-based edit pattern rather than always-editable inline table fields. */
+function openActivityEditModal(id: number | null, existing: ActivityDef | null, onSaved: () => void): void {
+  const modal = buildModal(id ? `Edit Activity: ${existing!.label}` : "Add Activity", {});
+
+  const form = document.createElement("div");
+  form.className = "admin-form";
+  modal.body.appendChild(form);
+
+  const labelInput = document.createElement("input");
+  labelInput.placeholder = "Label";
+  labelInput.value = existing?.label ?? "";
+  form.append(document.createTextNode("Label:"), labelInput);
+
+  const colorInput = document.createElement("input");
+  colorInput.type = "color";
+  colorInput.value = `#${(existing?.color ?? 0x888888).toString(16).padStart(6, "0")}`;
+  form.append(document.createTextNode("Color:"), colorInput);
+
+  const footer = document.createElement("div");
+  footer.className = "admin-form";
+  const saveBtn = document.createElement("button");
+  saveBtn.textContent = "Save";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Cancel";
+  footer.append(saveBtn, cancelBtn);
+  modal.body.appendChild(footer);
+
+  saveBtn.onclick = async () => {
+    const label = labelInput.value.trim();
+    if (!label) {
+      showError(new Error("Label is required"));
+      return;
+    }
+    const color = parseInt(colorInput.value.slice(1), 16);
+    try {
+      if (id) {
+        await adminFetch(`/api/admin/activities/${id}`, { method: "PATCH", body: JSON.stringify({ label, color }) });
+      } else {
+        await adminFetch("/api/admin/activities", { method: "POST", body: JSON.stringify({ label, color }) });
+      }
+      modal.close();
+      onSaved();
+    } catch (err) {
+      showError(err);
+    }
+  };
+  cancelBtn.onclick = () => modal.close();
+
+  modal.open();
+}
+
 async function renderActivities(body: HTMLElement) {
   body.textContent = "";
   const activities = await adminFetch<ActivityDef[]>("/api/admin/activities");
@@ -269,36 +321,20 @@ async function renderActivities(body: HTMLElement) {
   for (const a of activities) {
     const row = document.createElement("tr");
     const labelCell = document.createElement("td");
-    const labelInput = document.createElement("input");
-    labelInput.value = a.label;
-    labelCell.appendChild(labelInput);
+    labelCell.textContent = a.label;
     row.appendChild(labelCell);
 
     const colorCell = document.createElement("td");
     const swatch = document.createElement("span");
     swatch.className = "admin-swatch";
     swatch.style.background = `#${a.color.toString(16).padStart(6, "0")}`;
-    const colorInput = document.createElement("input");
-    colorInput.type = "color";
-    colorInput.value = `#${a.color.toString(16).padStart(6, "0")}`;
-    colorCell.append(swatch, colorInput);
+    colorCell.appendChild(swatch);
     row.appendChild(colorCell);
 
     const actionCell = document.createElement("td");
-    const saveBtn = document.createElement("button");
-    saveBtn.textContent = "Save";
-    saveBtn.onclick = async () => {
-      try {
-        const color = parseInt(colorInput.value.slice(1), 16);
-        await adminFetch(`/api/admin/activities/${a.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ label: labelInput.value, color }),
-        });
-        renderActivities(body);
-      } catch (err) {
-        showError(err);
-      }
-    };
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "Edit";
+    editBtn.onclick = () => openActivityEditModal(a.id, a, () => renderActivities(body));
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {
@@ -310,35 +346,17 @@ async function renderActivities(body: HTMLElement) {
         showError(err);
       }
     };
-    actionCell.append(saveBtn, deleteBtn);
+    actionCell.append(editBtn, deleteBtn);
     row.appendChild(actionCell);
     table.appendChild(row);
   }
   body.appendChild(table);
 
-  const form = document.createElement("form");
-  form.className = "admin-form";
-  const labelInput = document.createElement("input");
-  labelInput.placeholder = "New activity label";
-  labelInput.required = true;
-  const colorInput = document.createElement("input");
-  colorInput.type = "color";
-  colorInput.value = "#888888";
-  const submitBtn = document.createElement("button");
-  submitBtn.type = "submit";
-  submitBtn.textContent = "Add Activity";
-  form.append(labelInput, colorInput, submitBtn);
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    try {
-      const color = parseInt(colorInput.value.slice(1), 16);
-      await adminFetch("/api/admin/activities", { method: "POST", body: JSON.stringify({ label: labelInput.value, color }) });
-      renderActivities(body);
-    } catch (err) {
-      showError(err);
-    }
-  };
-  body.appendChild(form);
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.textContent = "Add Activity";
+  addBtn.onclick = () => openActivityEditModal(null, null, () => renderActivities(body));
+  body.appendChild(addBtn);
 }
 
 // --- Object types ---
@@ -1516,23 +1534,34 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
   body.appendChild(floorForm);
 }
 
-/** One `<li>` per node, nested `<ul>`s for children — a plain indented tree, not a graphical chart, consistent with the rest of this tool's plain-table style. */
-function buildTreeNodeEl(node: FloorTreeNode): HTMLLIElement {
+/**
+ * One `<li>` per node, nested `<ul>`s for children — a plain indented tree,
+ * not a graphical chart, consistent with the rest of this tool's plain-table
+ * style. The tree is what manages connections now — clicking a room's own
+ * label opens its connections editor directly, rather than a separate
+ * "Connections" button living on the room list below (see buildRoomsTable,
+ * which is for editing the room itself).
+ */
+function buildTreeNodeEl(node: FloorTreeNode, onRoomClick: (room: FloorTreeNode["room"]) => void): HTMLLIElement {
   const li = document.createElement("li");
-  li.textContent = node.room.name;
+  const label = document.createElement("span");
+  label.className = "admin-tree-room";
+  label.textContent = node.room.name;
+  label.onclick = () => onRoomClick(node.room);
+  li.appendChild(label);
   if (node.children.length > 0) {
     const ul = document.createElement("ul");
-    for (const child of node.children) ul.appendChild(buildTreeNodeEl(child));
+    for (const child of node.children) ul.appendChild(buildTreeNodeEl(child, onRoomClick));
     li.appendChild(ul);
   }
   return li;
 }
 
-function buildTreeChartEl(node: FloorTreeNode): HTMLElement {
+function buildTreeChartEl(node: FloorTreeNode, onRoomClick: (room: FloorTreeNode["room"]) => void): HTMLElement {
   const container = document.createElement("div");
   container.className = "admin-tree";
   const ul = document.createElement("ul");
-  ul.appendChild(buildTreeNodeEl(node));
+  ul.appendChild(buildTreeNodeEl(node, onRoomClick));
   container.appendChild(ul);
   return container;
 }
@@ -1555,7 +1584,11 @@ async function renderRooms(body: HTMLElement) {
 
   renderFloorsSection(body, rooms, floors);
 
-  function buildRoomsTable(roomsForTab: RoomSpecWire[]): HTMLElement {
+  // Unorganized rooms have no floor tree to click for connections (there's
+  // nothing to draw a tree from yet), so they're the one case that still
+  // needs a Connections button on the row itself — every room already on a
+  // floor manages connections via its tree item instead (see buildTreeNodeEl).
+  function buildRoomsTable(roomsForTab: RoomSpecWire[], showConnectionsButton: boolean): HTMLElement {
     const table = document.createElement("table");
     table.className = "admin-table";
     table.innerHTML = "<tr><th>Room</th><th>Size</th><th>Objects</th><th></th></tr>";
@@ -1567,10 +1600,14 @@ async function renderRooms(body: HTMLElement) {
       const editBtn = document.createElement("button");
       editBtn.textContent = "Edit";
       editBtn.onclick = () => openRoomEditModal(room, objectTypes, () => renderRooms(body));
-      const connectionsBtn = document.createElement("button");
-      connectionsBtn.type = "button";
-      connectionsBtn.textContent = `Connections (${room.connectedTo?.length ?? 0})`;
-      connectionsBtn.onclick = () => openRoomConnectionsModal(room, rooms, floors, () => renderRooms(body));
+      const buttons = [editBtn];
+      if (showConnectionsButton) {
+        const connectionsBtn = document.createElement("button");
+        connectionsBtn.type = "button";
+        connectionsBtn.textContent = `Connections (${room.connectedTo?.length ?? 0})`;
+        connectionsBtn.onclick = () => openRoomConnectionsModal(room, rooms, floors, () => renderRooms(body));
+        buttons.push(connectionsBtn);
+      }
       const deleteBtn = document.createElement("button");
       deleteBtn.textContent = "Delete";
       deleteBtn.onclick = async () => {
@@ -1582,7 +1619,8 @@ async function renderRooms(body: HTMLElement) {
           showError(err);
         }
       };
-      actionCell.append(editBtn, connectionsBtn, deleteBtn);
+      buttons.push(deleteBtn);
+      actionCell.append(...buttons);
       row.appendChild(actionCell);
 
       table.appendChild(row);
@@ -1685,13 +1723,20 @@ async function renderRooms(body: HTMLElement) {
     const page = subPages[tab.id];
     if (tab.floor) {
       const tree = buildFloorTree(tab.floor.baseRoomId, rooms);
-      if (tree) page.appendChild(buildTreeChartEl(tree));
+      if (tree) {
+        page.appendChild(
+          buildTreeChartEl(tree, (treeRoom) => {
+            const room = rooms.find((r) => r.id === treeRoom.id)!;
+            openRoomConnectionsModal(room, rooms, floors, () => renderRooms(body));
+          }),
+        );
+      }
     }
     const roomsForTab = rooms.filter((r) => {
       const level = membership.get(r.id) ?? null;
       return tab.floor ? level === tab.floor.level : level === null;
     });
-    page.appendChild(buildRoomsTable(roomsForTab));
+    page.appendChild(buildRoomsTable(roomsForTab, !tab.floor));
     if (!tab.floor) page.appendChild(buildAddRoomForm());
   }
 }
