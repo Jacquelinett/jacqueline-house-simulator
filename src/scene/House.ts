@@ -1,5 +1,5 @@
 import { Application, Container, Polygon } from "pixi.js";
-import { findRoomForActivityLabel, gridToScreen, ObjectAction, ObjectDef, RoomDef } from "./rooms";
+import { findObjectForActivityLabel, gridToScreen, ObjectAction, ObjectDef, RoomDef } from "./rooms";
 import { SceneRenderer } from "./renderer";
 import { getRemoteStatus, RemoteStatus, sendCommand } from "../client/remoteState";
 
@@ -87,12 +87,12 @@ export class House extends SceneRenderer {
       (this.currentActivitySource.roomId !== roomId || this.currentActivitySource.objectId !== objectId);
 
     if (isDifferentSource) {
-      this.setViewedRoom(roomId);
+      this.setViewedRoom(roomId, objectId);
       return;
     }
 
     this.currentActivitySource = isSameLabel ? null : { roomId, objectId };
-    this.setViewedRoom(roomId);
+    this.setViewedRoom(roomId, objectId);
     if (isSameLabel) sendCommand("stopActivity");
     else sendCommand("startActivity", { label: action.label });
   }
@@ -142,8 +142,8 @@ export class House extends SceneRenderer {
   public applyRemoteStatus(status: RemoteStatus) {
     this.updateActiveOverlays(status.activityLabel ? { label: status.activityLabel } : null);
     if (status.activityLabel) {
-      const roomId = findRoomForActivityLabel(status.activityLabel);
-      if (roomId) this.setViewedRoom(roomId);
+      const found = findObjectForActivityLabel(status.activityLabel);
+      if (found) this.setViewedRoom(found.roomId, found.objectId);
     }
   }
 
@@ -163,7 +163,7 @@ export class House extends SceneRenderer {
     else sendCommand("startActivity", { label });
     this.currentActivitySource = null;
 
-    const roomId = findRoomForActivityLabel(label);
-    if (roomId) this.setViewedRoom(roomId);
+    const found = findObjectForActivityLabel(label);
+    if (found) this.setViewedRoom(found.roomId, found.objectId);
   }
 }

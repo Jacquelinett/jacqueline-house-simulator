@@ -1,5 +1,5 @@
 import { Container, Graphics, Polygon, Text } from "pixi.js";
-import { findRoomForActivityLabel, gridToScreen, ObjectDef, RoomDef } from "./rooms";
+import { findObjectForActivityLabel, gridToScreen, ObjectDef, RoomDef } from "./rooms";
 import { SceneRenderer } from "./renderer";
 
 export { preloadRoomAssets } from "./renderer";
@@ -19,12 +19,12 @@ const LABEL_GAP = 4; // above the object's own top edge
 export class HouseViewer extends SceneRenderer {
   private activeLabel: Container | null = null;
 
-  /** Highlights whichever activity is currently running and follows its room. */
+  /** Highlights whichever activity is currently running and follows its object. */
   public showActivity(current: { label: string } | null) {
     this.updateActiveOverlays(current);
     if (current) {
-      const roomId = findRoomForActivityLabel(current.label);
-      if (roomId) this.setViewedRoom(roomId);
+      const found = findObjectForActivityLabel(current.label);
+      if (found) this.setViewedRoom(found.roomId, found.objectId);
     }
   }
 
@@ -38,7 +38,7 @@ export class HouseViewer extends SceneRenderer {
     container.on("pointertap", () => this.setViewedRoom(room.id));
   }
 
-  protected attachObjectInteraction(container: Container, _roomId: string, obj: ObjectDef) {
+  protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
     if (!obj.actions?.length) return;
 
     const navigateAction = obj.actions.find((a) => a.kind === "navigate");
@@ -51,6 +51,7 @@ export class HouseViewer extends SceneRenderer {
       if (navigateAction) {
         this.setViewedRoom(navigateAction.roomId);
       } else {
+        this.setViewedRoom(roomId, obj.id);
         this.toggleLabel(container, obj);
       }
     });

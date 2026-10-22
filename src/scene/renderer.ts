@@ -165,6 +165,10 @@ export class SceneRenderer {
   // can just flip visibility live, without rebuilding any room/object.
   protected devOutlines: Graphics[] = [];
   protected viewedRoomId: string;
+  // Which object (if any) within viewedRoomId the camera is centered on,
+  // rather than the room's own silhouette center — set whenever a specific
+  // object is clicked or an activity starts; cleared by a plain room click.
+  protected viewedObjectId: string | null = null;
   protected cameraTarget = { x: 0, y: 0 };
   protected scale: number;
   protected devMode: boolean;
@@ -197,11 +201,11 @@ export class SceneRenderer {
 
     this.viewedRoomId = roomDefs[0].id;
     this.applyFocus();
-    this.computeCameraTarget(this.viewedRoomId);
+    this.computeCameraTarget();
     this.world.position.set(this.cameraTarget.x, this.cameraTarget.y);
     this.onRoomChange(roomDefs[0].name);
 
-    window.addEventListener("resize", () => this.computeCameraTarget(this.viewedRoomId));
+    window.addEventListener("resize", () => this.computeCameraTarget());
     app.ticker.add(() => this.tick());
   }
 
@@ -284,12 +288,24 @@ export class SceneRenderer {
     }
   }
 
-  protected setViewedRoom(roomId: string) {
-    if (this.viewedRoomId === roomId) return;
+  /**
+   * objectId focuses the camera on that specific object's own position
+   * instead of the room's silhouette center — omit it (or pass null) for
+   * plain room-level framing, e.g. clicking the room itself rather than
+   * anything in it. A no-op only when neither the room nor the focused
+   * object actually changes, since the same room can still need a camera
+   * re-center when the focused object within it changes.
+   */
+  protected setViewedRoom(roomId: string, objectId: string | null = null) {
+    const roomChanged = this.viewedRoomId !== roomId;
+    if (!roomChanged && this.viewedObjectId === objectId) return;
     this.viewedRoomId = roomId;
-    this.applyFocus();
-    this.computeCameraTarget(roomId);
-    this.onRoomChange(roomDefs.find((r) => r.id === roomId)!.name);
+    this.viewedObjectId = objectId;
+    if (roomChanged) {
+      this.applyFocus();
+      this.onRoomChange(roomDefs.find((r) => r.id === roomId)!.name);
+    }
+    this.computeCameraTarget();
   }
 
   /** For external UI (e.g. a floor-switcher) — same path as clicking a room/object. */
@@ -323,19 +339,32 @@ export class SceneRenderer {
     }
   }
 
-  protected computeCameraTarget(roomId: string) {
-    const room = roomDefs.find((r) => r.id === roomId)!;
-    // Derived from the room's actual corner points, not room.x/width — room.x
-    // is the back-vertex, which isn't the left edge of the bounding box, so
-    // "room.x + width/2" was double-counting and skewing the camera off-center.
-    const left = gridToScreen(0, room.rows);
-    const right = gridToScreen(room.cols, 0);
-    const front = gridToScreen(room.cols, room.rows);
-    const cx = room.x + (left.x + right.x) / 2;
-    // Center on the room's full visible silhouette (walls + floor), not just
-    // the floor's own box — walls add height purely above the floor, so the
-    // true vertical center sits half a wall-height higher than the floor's.
-    const cy = room.y + front.y / 2 - room.wall.left.h / 2;
+  protected computeCameraTarget() {
+    const room = roomDefs.find((r) => r.id === this.viewedRoomId)!;
+    const obj = this.viewedObjectId ? room.objects.find((o) => o.id === this.viewedObjectId) : undefined;
+
+    let cx: number, cy: number;
+    if (obj) {
+      // obj.x/y/width/height are already a plain pixel box relative to the
+      // room's own origin (see buildObject) — center on that directly.
+      cx = room.x + obj.x + obj.width / 2;
+      cy = room.y + obj.y + obj.height / 2;
+    } else {
+      // Derived from the room's actual corner points, not room.x/width —
+      // room.x is the back-vertex, which isn't the left edge of the
+      // bounding box, so "room.x + width/2" was double-counting and
+      // skewing the camera off-center.
+      const left = gridToScreen(0, room.rows);
+      const right = gridToScreen(room.cols, 0);
+      const front = gridToScreen(room.cols, room.rows);
+      cx = room.x + (left.x + right.x) / 2;
+      // Center on the room's full visible silhouette (walls + floor), not
+      // just the floor's own box — walls add height purely above the
+      // floor, so the true vertical center sits half a wall-height higher
+      // than the floor's.
+      cy = room.y + front.y / 2 - room.wall.left.h / 2;
+    }
+
     // world.position is in unscaled screen space, but (cx,cy) is in world's
     // own local space, which gets multiplied by world.scale when rendered —
     // so the offset needed to land it on screen center must account for that.
@@ -352,7 +381,7 @@ export class SceneRenderer {
   public setScale(scale: number) {
     this.scale = scale;
     this.world.scale.set(scale);
-    this.computeCameraTarget(this.viewedRoomId);
+    this.computeCameraTarget();
     this.world.position.set(this.cameraTarget.x, this.cameraTarget.y);
   }
 

@@ -389,12 +389,21 @@ const roomSpecs: RoomSpec[] = [
 
 export const rooms: RoomDef[] = resolveRooms(roomSpecs);
 
-/** The id of the room containing the object whose action matches this activity label, if any. */
-export function findRoomForActivityLabel(label: string): string | undefined {
+/**
+ * The room + object whose action matches this activity label, if any — for
+ * camera focus when an activity starts (the default is to center on the
+ * specific object, not just its room; see House.ts/viewer.ts). If more than
+ * one object shares the same label (e.g. a second piano elsewhere), this
+ * just returns whichever comes first in room order — there's no signal
+ * carried over the wire about which physical object a *remote* device
+ * actually clicked, so this is a reasonable default rather than something
+ * worth plumbing through the RPC protocol for.
+ */
+export function findObjectForActivityLabel(label: string): { roomId: string; objectId: string } | undefined {
   for (const room of rooms) {
     for (const obj of room.objects) {
       for (const action of obj.actions ?? []) {
-        if (action.kind === "activity" && action.label === label) return room.id;
+        if (action.kind === "activity" && action.label === label) return { roomId: room.id, objectId: obj.id };
       }
     }
   }
