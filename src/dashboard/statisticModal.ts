@@ -189,7 +189,7 @@ export function setupStatisticContent(container: HTMLElement): { refresh(): void
   };
 }
 
-/** Opened on demand from the "Statistic" button, as opposed to the always-visible Dashboard panel's today-only data. */
+/** Opened on demand from the "Statistic" button, as opposed to the always-visible Dashboard panel's one-day-at-a-time data. */
 export function setupStatisticModal(): { open: () => void } {
   const modal = buildModal("Statistic", { size: "large", resizable: true });
   const content = setupStatisticContent(modal.body);

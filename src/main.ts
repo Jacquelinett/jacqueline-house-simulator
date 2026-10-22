@@ -26,8 +26,8 @@ import { ACTIVITIES, toCssColor } from "./scene/activities";
 const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
 
 // Only ever holds the boot-time "connecting…"/fatal-error text now —
-// ongoing AW connection, activity, and elapsed time all live in the Today
-// Overview panel instead (see goals/panel.ts), so this is cleared the
+// ongoing AW connection, activity, and elapsed time all live in the
+// Jacqueline panel instead (see goals/panel.ts), so this is cleared the
 // moment AW connects and #status:empty hides the box.
 const statusEl = document.querySelector<HTMLDivElement>("#status")!;
 const roomLabelEl = document.querySelector<HTMLDivElement>("#room-label")!;

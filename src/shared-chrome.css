@@ -453,9 +453,12 @@
   flex-shrink: 0;
 }
 
-/* Shared container for the "Today's Goals" / "Today's Activity" lists —
-   used by both the desktop Dashboard panel and the viewer's equivalent
-   section, via dashboard/render.ts's buildDashboardSections(). */
+/* Shared list-row spacing — originally just the Dashboard's "Today's
+   Goals"/"Today's Activity" lists via dashboard/render.ts's
+   buildDashboardSections(), now also applied directly (just the
+   className, not that builder) to the Statistic modal's All-Time/Period
+   goal and activity lists, so every goal/activity list in the app reads
+   consistently regardless of which surface built it. */
 .dashboard-list {
   display: flex;
   flex-direction: column;

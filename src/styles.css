@@ -13,7 +13,7 @@ body {
 
 /* Only ever holds boot-time connecting/fatal-error text now — once AW
    connects, this stays empty and :empty hides the box entirely, since
-   ongoing status lives in the Today Overview panel instead. */
+   ongoing status lives in the Jacqueline panel instead. */
 #status {
   position: fixed;
   top: 8px;

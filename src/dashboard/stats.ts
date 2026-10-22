@@ -35,7 +35,7 @@ export async function getActivityStats(): Promise<ActivityStat[]> {
   return stats.sort((a, b) => b.totalMinutesAllTime - a.totalMinutesAllTime);
 }
 
-export interface TodayActivityStat {
+export interface DateActivityStat {
   label: string;
   color: number;
   minutes: number;
@@ -49,7 +49,7 @@ export interface TodayActivityStat {
  * running session; any other day (the date picker looking at a past/future
  * day) runs the full midnight-to-midnight range instead.
  */
-export async function getActivityStatsForDate(dateStr: string): Promise<TodayActivityStat[]> {
+export async function getActivityStatsForDate(dateStr: string): Promise<DateActivityStat[]> {
   const date = parseDateString(dateStr);
   const isToday = dateStr === localDateString(new Date());
   const end = isToday ? new Date() : parseDateString(addDaysToDateString(dateStr, 1));
