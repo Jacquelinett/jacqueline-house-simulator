@@ -52,19 +52,26 @@ function promptForConnectionDetails(): Promise<{ serverUrl: string; lanSecret: s
     body.appendChild(form);
 
     const urlLabel = document.createElement("label");
-    urlLabel.textContent = "Server address (e.g. ws://192.168.0.50:4000)";
+    urlLabel.textContent = "Server address (e.g. ws://192.168.0.50:4000) — not http://, and not 0.0.0.0";
     const urlInput = document.createElement("input");
     urlInput.type = "text";
     urlInput.required = true;
+    // Defaults to the overwhelmingly common same-machine dev case — the
+    // WebSocket RPC server (server/index.ts), not the Vite dev server.
+    urlInput.value = "ws://localhost:4000";
     urlLabel.appendChild(urlInput);
     form.appendChild(urlLabel);
 
     const secretLabel = document.createElement("label");
-    secretLabel.textContent = "Server secret (leave blank if none)";
+    secretLabel.textContent = "Server secret (server_config.lan_secret — leave blank if none)";
     const secretInput = document.createElement("input");
     secretInput.type = "text";
     secretLabel.appendChild(secretInput);
     form.appendChild(secretLabel);
+
+    const errorEl = document.createElement("div");
+    errorEl.className = "connection-setup-error";
+    form.appendChild(errorEl);
 
     const submitBtn = document.createElement("button");
     submitBtn.type = "submit";
@@ -74,7 +81,19 @@ function promptForConnectionDetails(): Promise<{ serverUrl: string; lanSecret: s
     form.onsubmit = (e) => {
       e.preventDefault();
       const serverUrl = urlInput.value.trim();
-      if (!serverUrl) return;
+      // The WebSocket constructor requires ws:/wss: — it doesn't upgrade
+      // http:// the way <img>/fetch would, and a bare 0.0.0.0 is the
+      // server's own "listen on every interface" bind address, not
+      // something a client can connect to. Catching both here instead of
+      // letting them fail opaquely once the connection attempt starts.
+      if (!/^wss?:\/\//i.test(serverUrl)) {
+        errorEl.textContent = "Address must start with ws:// or wss://";
+        return;
+      }
+      if (/\b0\.0\.0\.0\b/.test(serverUrl)) {
+        errorEl.textContent = "0.0.0.0 isn't a connectable address — use localhost or the server's real IP";
+        return;
+      }
       const lanSecret = secretInput.value.trim();
       localStorage.setItem(SERVER_URL_KEY, serverUrl);
       localStorage.setItem(LAN_SECRET_KEY, lanSecret);

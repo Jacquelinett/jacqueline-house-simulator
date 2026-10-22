@@ -219,6 +219,12 @@ body {
   font-size: 13px;
 }
 
+.connection-setup-error {
+  color: #d6336c;
+  font-size: 12px;
+  min-height: 14px;
+}
+
 #connection-setup-form button {
   align-self: flex-start;
   background: var(--surface);
