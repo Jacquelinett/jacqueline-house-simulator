@@ -8,7 +8,7 @@ import { getAllGoals, initGoalsState, onGoalsChange } from "./goals";
 import { initTodosState } from "./todos";
 import { settleGoalHistory } from "./goalHistory";
 import { ensureStopwatchBucket, resumeActivity } from "../src/aw/client";
-import { setupRpc } from "./rpc";
+import { setupRpc, stopOrphanedActivities } from "./rpc";
 import { getServerConfig } from "./serverConfig";
 import { pushGoals, pushPeriodStats, pushStats, pushStatus, pushTodayStreaks, pushYesterdayStats } from "./broadcast";
 import { serveStatic } from "./staticServer";
@@ -79,6 +79,12 @@ async function main() {
       console.error(`[server] failed to resume previous activity for ${character.name}`, err),
     );
   }
+
+  // A resumed session could be tracking a room/object that was deleted
+  // (or reconfigured) while the server was down — default back to idle
+  // rather than silently keep accruing time for something that no longer
+  // exists anywhere in the house. See rpc.ts's own comment.
+  await stopOrphanedActivities().catch((err) => console.error("[server] stopOrphanedActivities at startup failed", err));
 
   const jacqueline = characters.find((c) => c.name === "Jacqueline");
 

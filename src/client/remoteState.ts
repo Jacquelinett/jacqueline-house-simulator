@@ -47,7 +47,14 @@ function getOrCreateDeviceId(): string {
  * usable behind it yet (no connection, no scene) for a cancel to fall
  * back to.
  */
-function promptForConnectionDetails(): Promise<{ serverUrl: string; lanSecret: string }> {
+/**
+ * `prefill`/`connectError` turn this into the same form shown again after a
+ * failed attempt (wrong secret, unreachable server, ...) — see
+ * connectRemoteState()'s retry loop — pre-filled with whatever was just
+ * tried (so fixing a typo doesn't mean retyping both fields) and showing
+ * why it failed, rather than the bare first-launch form.
+ */
+function promptForConnectionDetails(prefill?: { serverUrl: string; lanSecret: string }, connectError?: string): Promise<{ serverUrl: string; lanSecret: string }> {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "modal-overlay open";
@@ -60,7 +67,7 @@ function promptForConnectionDetails(): Promise<{ serverUrl: string; lanSecret: s
     const header = document.createElement("div");
     header.className = "modal-header";
     const titleEl = document.createElement("h2");
-    titleEl.textContent = "Connect to House Simulator server";
+    titleEl.textContent = connectError ? "Couldn't connect — check the details below" : "Connect to House Simulator server";
     header.appendChild(titleEl);
     dialog.appendChild(header);
 
@@ -79,7 +86,7 @@ function promptForConnectionDetails(): Promise<{ serverUrl: string; lanSecret: s
     urlInput.required = true;
     // Defaults to the overwhelmingly common same-machine dev case — the
     // WebSocket RPC server (server/index.ts), not the Vite dev server.
-    urlInput.value = "ws://localhost:4000";
+    urlInput.value = prefill?.serverUrl ?? "ws://localhost:4000";
     urlLabel.appendChild(urlInput);
     form.appendChild(urlLabel);
 
@@ -87,11 +94,13 @@ function promptForConnectionDetails(): Promise<{ serverUrl: string; lanSecret: s
     secretLabel.textContent = "Server secret (server_config.lan_secret — leave blank if none)";
     const secretInput = document.createElement("input");
     secretInput.type = "text";
+    secretInput.value = prefill?.lanSecret ?? "";
     secretLabel.appendChild(secretInput);
     form.appendChild(secretLabel);
 
     const errorEl = document.createElement("div");
     errorEl.className = "connection-setup-error";
+    errorEl.textContent = connectError ?? "";
     form.appendChild(errorEl);
 
     const submitBtn = document.createElement("button");
@@ -201,48 +210,27 @@ let socket: WebSocket | null = null;
 let requestCounter = 0;
 const pendingQueries = new Map<string, { resolve(value: unknown): void; reject(err: Error): void }>();
 
-/**
- * Opens the one WebSocket connection everything else in this module
- * depends on — resolves once connected, so callers (main.ts, eventually)
- * can await this before building UI that expects goals/todos/status to
- * already be populated. See server/rpc.ts for the protocol this speaks.
- */
-export async function connectRemoteState(): Promise<void> {
-  let serverUrl = localStorage.getItem(SERVER_URL_KEY);
-  let lanSecret = localStorage.getItem(LAN_SECRET_KEY);
-  if (!serverUrl || lanSecret === null) {
-    const entered = await promptForConnectionDetails();
-    serverUrl = entered.serverUrl;
-    lanSecret = entered.lanSecret;
-  }
-
+/** One attempt — resolves once the WS is open AND every initial state broadcast has arrived, rejects on any connection failure (bad secret, unreachable server, ...). Doesn't touch localStorage itself; connectRemoteState()'s retry loop decides what to do with a failure. */
+function attemptConnect(serverUrl: string, lanSecret: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const deviceId = getOrCreateDeviceId();
-    const url = `${serverUrl}?deviceId=${encodeURIComponent(deviceId)}&secret=${encodeURIComponent(lanSecret ?? "")}`;
+    const url = `${serverUrl}?deviceId=${encodeURIComponent(deviceId)}&secret=${encodeURIComponent(lanSecret)}`;
 
     const ws = new WebSocket(url);
     socket = ws;
 
     // `open` only means the socket connected, not that the server's initial
-    // goals/todos/status/settings pushes (sent right after connection) have
-    // arrived yet — resolving on `open` alone risks main.ts building UI off
-    // each store's empty initial value. Wait for all four instead.
+    // state broadcasts (sent right after connection) have arrived yet —
+    // resolving on `open` alone risks main.ts building UI off each store's
+    // empty initial value. Wait for all of them instead.
     const pendingInitialKeys = new Set(Object.keys(storesByKey));
 
-    ws.addEventListener("error", () => reject(new Error("WebSocket connection failed")));
+    ws.addEventListener("error", () => reject(new Error("Couldn't reach that server address")));
     ws.addEventListener("close", (event) => {
       console.error(`[remoteState] WebSocket closed (code ${event.code})`);
-      // The server rejected the secret/deviceId outright (see server/rpc.ts's
-      // connection handler) — clearing the stored value here means the next
-      // launch re-shows the setup form instead of retrying the same bad
-      // value forever with no way to correct it short of clearing
-      // localStorage by hand.
-      if (event.code === 4001) {
-        localStorage.removeItem(LAN_SECRET_KEY);
-        reject(new Error("server rejected the secret — re-enter it on next launch"));
-      } else if (event.code === 4002) {
-        reject(new Error("missing device id"));
-      }
+      if (event.code === 4001) reject(new Error("Server rejected the secret"));
+      else if (event.code === 4002) reject(new Error("Missing device id"));
+      else reject(new Error(`Connection closed (code ${event.code})`));
     });
 
     ws.addEventListener("message", (event) => {
@@ -263,6 +251,45 @@ export async function connectRemoteState(): Promise<void> {
       }
     });
   });
+}
+
+/**
+ * Opens the one WebSocket connection everything else in this module
+ * depends on — resolves once connected, so callers (main.ts) can await
+ * this before building UI that expects goals/todos/status to already be
+ * populated. See server/rpc.ts for the protocol this speaks.
+ *
+ * The common case (a working cached serverUrl/lanSecret from a previous
+ * launch) connects silently, no prompt at all. Any failure — wrong secret,
+ * unreachable address, anything attemptConnect() rejects with — re-shows
+ * the same connection-setup form (pre-filled with what was just tried) and
+ * retries, in a loop, rather than giving up after one failed attempt and
+ * leaving the caller to show a dead error screen. There's no way to
+ * cancel out of this loop short of entering something that actually
+ * connects — same "nothing usable behind it yet" reasoning
+ * promptForConnectionDetails's own comment gives for having no close
+ * button.
+ */
+export async function connectRemoteState(): Promise<void> {
+  let serverUrl = localStorage.getItem(SERVER_URL_KEY);
+  let lanSecret = localStorage.getItem(LAN_SECRET_KEY);
+  if (!serverUrl || lanSecret === null) {
+    const entered = await promptForConnectionDetails();
+    serverUrl = entered.serverUrl;
+    lanSecret = entered.lanSecret;
+  }
+
+  while (true) {
+    try {
+      await attemptConnect(serverUrl, lanSecret);
+      return;
+    } catch (err) {
+      console.error("[remoteState] connection attempt failed", err);
+      const entered = await promptForConnectionDetails({ serverUrl, lanSecret }, (err as Error).message);
+      serverUrl = entered.serverUrl;
+      lanSecret = entered.lanSecret;
+    }
+  }
 }
 
 /** Fire-and-forget write — the server re-broadcasts whatever state actually changed, so there's nothing to await here. */

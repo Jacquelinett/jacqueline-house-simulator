@@ -88,9 +88,10 @@ interface RoomSpecWire {
   objects: ObjectPlacementWire[];
 }
 
-function getOrPromptSecret(): Promise<string> {
+/** `wrongSecret` turns this into the same form shown again after a 401 — pre-filled with nothing (there's no point re-showing a value just proven wrong) but with an error explaining why, rather than the bare first-launch form. */
+function getOrPromptSecret(wrongSecret?: string): Promise<string> {
   const existing = localStorage.getItem(ADMIN_SECRET_KEY);
-  if (existing) return Promise.resolve(existing);
+  if (existing && !wrongSecret) return Promise.resolve(existing);
 
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
@@ -100,7 +101,7 @@ function getOrPromptSecret(): Promise<string> {
     form.id = "admin-secret-form";
 
     const title = document.createElement("h2");
-    title.textContent = "Admin secret";
+    title.textContent = wrongSecret ? "Wrong admin secret — try again" : "Admin secret";
     form.appendChild(title);
 
     const input = document.createElement("input");
@@ -109,6 +110,13 @@ function getOrPromptSecret(): Promise<string> {
     input.required = true;
     form.appendChild(input);
 
+    if (wrongSecret) {
+      const errorEl = document.createElement("div");
+      errorEl.className = "admin-error";
+      errorEl.textContent = `"${wrongSecret}" was rejected by the server.`;
+      form.appendChild(errorEl);
+    }
+
     const button = document.createElement("button");
     button.type = "submit";
     button.textContent = "Continue";
@@ -116,11 +124,11 @@ function getOrPromptSecret(): Promise<string> {
 
     form.onsubmit = (e) => {
       e.preventDefault();
-      const secret = input.value.trim();
-      if (!secret) return;
-      localStorage.setItem(ADMIN_SECRET_KEY, secret);
+      const newSecret = input.value.trim();
+      if (!newSecret) return;
+      localStorage.setItem(ADMIN_SECRET_KEY, newSecret);
       overlay.remove();
-      resolve(secret);
+      resolve(newSecret);
     };
 
     overlay.appendChild(form);
@@ -131,24 +139,33 @@ function getOrPromptSecret(): Promise<string> {
 
 let secret = "";
 
+/**
+ * On a 401 (wrong/changed secret — e.g. the server_config.admin_secret
+ * value itself was just updated), re-prompts immediately instead of
+ * clearing localStorage and telling the admin to reload — same
+ * self-healing reasoning as the game's own connection form, just without
+ * needing a page reload to see the new prompt. Retries the SAME request
+ * once the admin enters a new value; `options.body` is always a plain
+ * JSON string here (never a one-shot stream), so re-sending it is safe.
+ */
 async function adminFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(path, {
-    ...options,
-    headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      Authorization: `Bearer ${secret}`,
-      ...options.headers,
-    },
-  });
-  if (res.status === 401) {
-    // Wrong secret saved locally — clear it so a reload re-prompts, same
-    // self-healing reasoning as the game's own connection form.
-    localStorage.removeItem(ADMIN_SECRET_KEY);
-    throw new Error("Unauthorized — wrong admin secret. Reload to re-enter it.");
+  while (true) {
+    const res = await fetch(path, {
+      ...options,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        Authorization: `Bearer ${secret}`,
+        ...options.headers,
+      },
+    });
+    if (res.status === 401) {
+      secret = await getOrPromptSecret(secret);
+      continue;
+    }
+    if (!res.ok) throw new Error(`${options.method ?? "GET"} ${path} failed (${res.status})`);
+    if (res.status === 204) return undefined as T;
+    return res.json() as Promise<T>;
   }
-  if (!res.ok) throw new Error(`${options.method ?? "GET"} ${path} failed (${res.status})`);
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
 }
 
 const app = document.getElementById("admin-app")!;

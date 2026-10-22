@@ -17,7 +17,8 @@ import { computePeriodStats } from "./periodStats";
 import { addTodo, deleteTodo, getTodos, onTodosChange, toggleTodo } from "./todos";
 import { deleteMessage, fetchMessages, getBroadcastHealthInfo, pushStatus } from "./broadcast";
 import { getDeviceSettings, updateDeviceSettings } from "./deviceSettings";
-import { Character, getCharacterBySecret } from "./characters";
+import { Character, getCharacterBySecret, listCharacters } from "./characters";
+import { activityLabelHasLiveObject } from "./activityGuard";
 import { getWorkoutsForDate } from "./workouts";
 import { getActivities } from "./activities";
 import { getObjectTypes } from "./objectTypes";
@@ -78,21 +79,56 @@ function currentStatus(bucketId: string) {
   return { activityLabel: current?.label ?? null, startedAt: current?.startedAt.toISOString() ?? null };
 }
 
-export function setupRpc(wss: WebSocketServer): void {
-  const clients = new Set<WebSocket>();
-  const deviceIdByClient = new Map<WebSocket, string>();
-  const characterByClient = new Map<WebSocket, Character>();
+// Module-level (setupRpc() is only ever called once, from index.ts) rather
+// than local to setupRpc(), specifically so stopOrphanedActivities() below
+// can broadcast an auto-stop to a character's connected clients from
+// outside the WS connection handler itself (called from index.ts at
+// startup and from adminApi.ts after a mutation that could orphan a
+// running activity).
+const clients = new Set<WebSocket>();
+const deviceIdByClient = new Map<WebSocket, string>();
+const characterByClient = new Map<WebSocket, Character>();
 
-  /** Sends one character's data to only that character's own connected clients. */
-  function broadcastToCharacter(characterId: string, key: string, data: unknown) {
-    const message = JSON.stringify({ type: "state", key, data });
-    for (const client of clients) {
-      if (client.readyState === WebSocket.OPEN && characterByClient.get(client)?.id === characterId) {
-        client.send(message);
-      }
+/** Sends one character's data to only that character's own connected clients. */
+function broadcastToCharacter(characterId: string, key: string, data: unknown) {
+  const message = JSON.stringify({ type: "state", key, data });
+  for (const client of clients) {
+    if (client.readyState === WebSocket.OPEN && characterByClient.get(client)?.id === characterId) {
+      client.send(message);
     }
   }
+}
 
+/**
+ * Auto-stops any character's currently-running activity if the room/object
+ * that was tracking it has since been deleted or reconfigured out from
+ * under it (e.g. via the admin tool) — defaults back to idle rather than
+ * leaving a session running for something that no longer exists anywhere
+ * in the house. Checked at server startup (resumeActivity may have just
+ * picked up a stale running session left over from before a deletion) and
+ * after any admin-tool mutation that could invalidate one (see
+ * adminApi.ts's own calls to this) — cheap enough to just run after every
+ * relevant mutation rather than trying to reason about exactly which ones
+ * could possibly orphan something.
+ */
+export async function stopOrphanedActivities(): Promise<void> {
+  for (const character of listCharacters()) {
+    const current = getCurrentActivity(character.awBucketId);
+    if (!current) continue;
+    if (activityLabelHasLiveObject(current.label)) continue;
+
+    console.warn(`[rpc] "${current.label}" (tracked by ${character.name}) no longer has a live object — stopping and defaulting to idle`);
+    await stopActivity(character.awBucketId);
+    broadcastToCharacter(character.id, "status", currentStatus(character.awBucketId));
+    // val.town/the public viewer only ever show Jacqueline for now — see
+    // server/broadcast.ts's own comment on why this check is here too.
+    if (character.name === "Jacqueline") {
+      pushStatus(character.id).catch((err) => console.error("[rpc] pushStatus after auto-stop failed", err));
+    }
+  }
+}
+
+export function setupRpc(wss: WebSocketServer): void {
   /**
    * goals/todos changing doesn't carry *which* character changed (one
    * shared in-memory store underneath, see server/goals.ts's own comment)
