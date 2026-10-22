@@ -1,6 +1,7 @@
 import { WebSocket, WebSocketServer } from "ws";
 import { getCurrentActivity, startActivity, stopActivity } from "../src/aw/client";
 import { getActivityStats, getActivityStatsForDate } from "../src/dashboard/stats";
+import { DeviceSettings } from "../src/settings/types";
 import {
   addGoal,
   deleteGoal,
@@ -15,6 +16,7 @@ import { getGoalProgressForDate, getTodayMinutesByLabel } from "./progress";
 import { computeFixedPeriodStats, computePeriodStats } from "./periodStats";
 import { addTodo, deleteTodo, getTodos, onTodosChange, toggleTodo } from "./todos";
 import { pushStatus } from "./broadcast";
+import { getDeviceSettings, updateDeviceSettings } from "./deviceSettings";
 
 /**
  * One WebSocket connection per client carries everything — commands
@@ -23,6 +25,8 @@ import { pushStatus } from "./broadcast";
  * requestId), and unsolicited state broadcasts on change. See the
  * migration plan's "RPC protocol" section for the shape. Command/query
  * names map 1:1 onto the functions above via these two dispatch tables.
+ * `updateSettings` is handled separately below (not in this table) since
+ * it needs the connection's own deviceId, which the other commands don't.
  */
 const commands: Record<string, (args: any) => Promise<void>> = {
   startActivity: ({ label }) => startActivity(label),
@@ -55,12 +59,17 @@ function currentStatus() {
 
 export function setupRpc(wss: WebSocketServer, lanSecret: string | null): void {
   const clients = new Set<WebSocket>();
+  const deviceIdByClient = new Map<WebSocket, string>();
 
   function broadcast(key: string, data: unknown) {
     const message = JSON.stringify({ type: "state", key, data });
     for (const client of clients) {
       if (client.readyState === WebSocket.OPEN) client.send(message);
     }
+  }
+
+  function sendSettings(ws: WebSocket, deviceId: string) {
+    ws.send(JSON.stringify({ type: "state", key: "settings", data: getDeviceSettings(deviceId) }));
   }
 
   // Re-broadcast whenever goals/todos change for any reason (an RPC
@@ -77,18 +86,43 @@ export function setupRpc(wss: WebSocketServer, lanSecret: string | null): void {
       return;
     }
 
+    // One id per browser/device (generated client-side, stored in
+    // localStorage) — settings are scoped to it so a phone and a Mac can
+    // have different zoom/theme without one overwriting the other.
+    const deviceId = url.searchParams.get("deviceId");
+    if (!deviceId) {
+      ws.close(4002, "missing deviceId");
+      return;
+    }
+    deviceIdByClient.set(ws, deviceId);
+
     clients.add(ws);
     ws.send(JSON.stringify({ type: "state", key: "goals", data: getGoals() }));
     ws.send(JSON.stringify({ type: "state", key: "todos", data: getTodos() }));
     ws.send(JSON.stringify({ type: "state", key: "status", data: currentStatus() }));
+    sendSettings(ws, deviceId);
 
-    ws.on("close", () => clients.delete(ws));
+    ws.on("close", () => {
+      clients.delete(ws);
+      deviceIdByClient.delete(ws);
+    });
 
     ws.on("message", async (raw) => {
       let msg: any;
       try {
         msg = JSON.parse(raw.toString());
       } catch {
+        return;
+      }
+
+      if (msg.type === "command" && msg.name === "updateSettings") {
+        try {
+          const patch = msg.args as Partial<DeviceSettings>;
+          updateDeviceSettings(deviceId, patch);
+          sendSettings(ws, deviceId);
+        } catch (err) {
+          console.error("[rpc] updateSettings failed", err);
+        }
         return;
       }
 
