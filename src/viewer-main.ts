@@ -66,19 +66,69 @@ interface StatusResponse {
   todayMinutesByLabel: Record<string, number>;
 }
 
-/** Builds the "current activity" line (+ optional title above it, for the mobile Home tab, which has no panel header to show one) — shared by the Jacqueline panel and its mobile equivalent, which otherwise hand-built this same markup twice. */
+interface CharacterEntry {
+  id: string;
+  name: string;
+}
+
+const SELECTED_CHARACTER_KEY = "houseSimulatorViewerCharacterId";
+
+function loadSelectedCharacterId(): string | null {
+  try {
+    return localStorage.getItem(SELECTED_CHARACTER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function saveSelectedCharacterId(id: string) {
+  try {
+    localStorage.setItem(SELECTED_CHARACTER_KEY, id);
+  } catch {
+    // ignore corrupt/inaccessible storage, same as saveViewerSettings
+  }
+}
+
+/** Empty list (rather than throwing) when the endpoint 404s — the live val.town deployment may not have been re-pasted with per-character support yet, same "fall back, don't break the page" reasoning as loadHouseLayout's catch below. */
+async function fetchCharacters(): Promise<CharacterEntry[]> {
+  try {
+    const res = await fetch(`${STATUS_API_BASE}/api/characters`);
+    if (!res.ok) return [];
+    return (await res.json()) as CharacterEntry[];
+  } catch {
+    return [];
+  }
+}
+
+/** Restores the last-selected character if it's still published, else defaults to Jacqueline (or the first entry) — same "restore or sensible default" shape as loadViewerSettings. */
+function pickInitialCharacter(characters: CharacterEntry[]): CharacterEntry | null {
+  if (characters.length === 0) return null;
+  const savedId = loadSelectedCharacterId();
+  const saved = savedId ? characters.find((c) => c.id === savedId) : undefined;
+  return saved ?? characters.find((c) => c.name === CURRENT_USER_NAME) ?? characters[0];
+}
+
+/** Appended to every status/goals/stats/... fetch below. Empty string (not a "?character=" with a blank value) when there's no known character id, so a not-yet-re-pasted val.town deployment keeps working exactly as it did before multi-character support existed. */
+function characterQueryParam(id: string): string {
+  return id ? `?character=${encodeURIComponent(id)}` : "";
+}
+
+/** Builds the "current activity" line (+ optional title above it, for the mobile Home tab, which has no panel header to show one) — shared by the Jacqueline panel and its mobile equivalent, which otherwise hand-built this same markup twice. On mobile the title is a clickable link-styled button (opens the character picker); the desktop panel doesn't pass showTitle at all, since its title lives in buildFloatingPanel's own header instead (kept in sync separately via setTitle). */
 function buildCurrentActivityBlock(
   container: HTMLElement,
-  options?: { showTitle?: boolean },
+  options?: { showTitle?: boolean; initialTitle?: string; onTitleClick?: () => void },
 ): {
   render(status: { label: string | null; startedAt: Date | null }): void;
   showError(message: string): void;
+  setTitleText(name: string): void;
 } {
+  let titleEl: HTMLButtonElement | null = null;
   if (options?.showTitle) {
-    const title = document.createElement("div");
-    title.className = "mobile-status-title";
-    title.textContent = CURRENT_USER_NAME;
-    container.appendChild(title);
+    titleEl = document.createElement("button");
+    titleEl.className = "mobile-status-title mobile-status-title-link";
+    titleEl.textContent = options.initialTitle ?? CURRENT_USER_NAME;
+    titleEl.onclick = () => options.onTitleClick?.();
+    container.appendChild(titleEl);
   }
 
   const currentEl = document.createElement("div");
@@ -89,6 +139,9 @@ function buildCurrentActivityBlock(
     render: (status) => renderCurrentActivity(currentEl, status),
     showError: (message) => {
       currentEl.textContent = message;
+    },
+    setTitleText: (name) => {
+      if (titleEl) titleEl.textContent = name;
     },
   };
 }
@@ -430,6 +483,30 @@ function setupMobileMessageModal(): { open: () => void } {
   };
 }
 
+/** Mobile Home's clickable character name (see buildCurrentActivityBlock's onTitleClick) opens this — one row per /api/characters entry, selecting one hands the chosen character back to the caller. */
+function setupCharacterPickerModal(characters: CharacterEntry[], onSelect: (character: CharacterEntry) => void): { open: () => void } {
+  const modal = buildModal("Switch character");
+
+  for (const character of characters) {
+    const row = document.createElement("button");
+    row.className = "character-picker-row";
+    row.textContent = character.name;
+    row.onclick = () => {
+      onSelect(character);
+      modal.close();
+    };
+    modal.body.appendChild(row);
+  }
+
+  if (characters.length === 0) {
+    const empty = document.createElement("div");
+    empty.textContent = "No characters available.";
+    modal.body.appendChild(empty);
+  }
+
+  return { open: () => modal.open() };
+}
+
 /**
  * Fetched once, before the scene is ever built — the viewer has no
  * WebSocket connection, so unlike the desktop app (which gets this same
@@ -475,6 +552,15 @@ async function main() {
   // (see scene/rooms.ts etc.), and setupFloorButtons() below reads FLOORS
   // synchronously at call time, not reactively.
   await loadHouseLayout();
+
+  // Who the viewer can show, and which one was last picked (if any) — the
+  // sentinel empty-id entry is what every status/goals/stats/... fetch
+  // below falls back to when there's no character directory yet (an
+  // un-re-pasted val.town deployment), so those fetches hit the exact same
+  // URLs they always did rather than breaking.
+  const characters = await fetchCharacters();
+  let selectedCharacter: CharacterEntry = pickInitialCharacter(characters) ?? { id: "", name: CURRENT_USER_NAME };
+  let openCharacterPicker: () => void = () => {};
 
   // Building the floor buttons before the HouseViewer needs no viewer at
   // all (bindGoToRoom happens after) — so the HouseViewer's own
@@ -531,8 +617,12 @@ async function main() {
   settingsModalUI = settingsModal;
 
   // --- Jacqueline panel: same corner panel the desktop app has, minus the
-  // AW line (no AW access here) and plus "Leave a note" (viewer-only). ---
-  const jacquelinePanel = buildFloatingPanel(CURRENT_USER_NAME, {
+  // AW line (no AW access here) and plus "Leave a note" (viewer-only). Its
+  // title isn't fixed at "Jacqueline" like the desktop app's — it reflects
+  // whichever character is currently selected (see selectCharacter below),
+  // kept in sync via setTitle rather than a clickable switcher of its own
+  // (the switcher itself is mobile-only, per the user's explicit scoping). ---
+  const jacquelinePanel = buildFloatingPanel(selectedCharacter.name, {
     closable: false,
     draggable: false,
     className: "goals-panel",
@@ -611,7 +701,11 @@ async function main() {
   mobileStatus.className = "mobile-status";
   mobileTabs.pages.home.appendChild(mobileStatus);
 
-  const renderCurrentMobile = buildCurrentActivityBlock(mobileStatus, { showTitle: true });
+  const renderCurrentMobile = buildCurrentActivityBlock(mobileStatus, {
+    showTitle: true,
+    initialTitle: selectedCharacter.name,
+    onTitleClick: () => openCharacterPicker(),
+  });
 
   const mobileDivider = document.createElement("div");
   mobileDivider.className = "panel-divider";
@@ -683,13 +777,14 @@ async function main() {
 
   async function refreshStatus() {
     try {
+      const q = characterQueryParam(selectedCharacter.id);
       const [statusRes, goalsRes, statsRes, periodStatsRes, yesterdayRes, streaksRes] = await Promise.all([
-        fetch(`${STATUS_API_BASE}/api/status`),
-        fetch(`${STATUS_API_BASE}/api/goals`),
-        fetch(`${STATUS_API_BASE}/api/stats`),
-        fetch(`${STATUS_API_BASE}/api/period-stats`),
-        fetch(`${STATUS_API_BASE}/api/yesterday`),
-        fetch(`${STATUS_API_BASE}/api/streaks`),
+        fetch(`${STATUS_API_BASE}/api/status${q}`),
+        fetch(`${STATUS_API_BASE}/api/goals${q}`),
+        fetch(`${STATUS_API_BASE}/api/stats${q}`),
+        fetch(`${STATUS_API_BASE}/api/period-stats${q}`),
+        fetch(`${STATUS_API_BASE}/api/yesterday${q}`),
+        fetch(`${STATUS_API_BASE}/api/streaks${q}`),
       ]);
       const data: StatusResponse = await statusRes.json();
       latestGoals = await goalsRes.json();
@@ -717,6 +812,21 @@ async function main() {
       renderSync();
     }
   }
+
+  // Switching characters: persist the choice, update both titles that show
+  // a character's name (the desktop-layout panel's header, the mobile
+  // title button itself), then re-fetch everything under the new
+  // character's ?character= query param.
+  function selectCharacter(character: CharacterEntry) {
+    selectedCharacter = character;
+    saveSelectedCharacterId(character.id);
+    jacquelinePanel.setTitle(character.name);
+    renderCurrentMobile.setTitleText(character.name);
+    refreshStatus();
+  }
+
+  const characterPicker = setupCharacterPickerModal(characters, selectCharacter);
+  openCharacterPicker = characterPicker.open;
 
   function tickElapsed() {
     renderCurrent();

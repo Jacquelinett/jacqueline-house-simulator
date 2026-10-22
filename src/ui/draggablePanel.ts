@@ -63,6 +63,7 @@ export function buildFloatingPanel(
   open: () => void;
   close: () => void;
   onClose(cb: () => void): void;
+  setTitle(text: string): void;
 } {
   const panel = document.createElement("div");
   panel.className =
@@ -124,6 +125,12 @@ export function buildFloatingPanel(
     close,
     onClose(cb: () => void) {
       closeListeners.add(cb);
+    },
+    // Lets a caller whose title isn't fixed at construction time (e.g. the
+    // viewer's own panel, which can switch which character it's showing —
+    // see viewer-main.ts) update it without rebuilding the whole panel.
+    setTitle(text: string) {
+      titleEl.textContent = text;
     },
   };
 }

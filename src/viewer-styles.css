@@ -112,3 +112,26 @@ body {
 .day-link.selected {
   opacity: 1;
 }
+
+/* Mobile character-switcher popup's rows (one per /api/characters entry)
+   — viewer-only (the desktop app has no character switcher at all, see
+   .mobile-status-title-link in shared-chrome.css), same reasoning as
+   .mobile-modal-cancel above for why this lives here instead of there. */
+.character-picker-row {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.character-picker-row:hover {
+  background: var(--surface-soft);
+}

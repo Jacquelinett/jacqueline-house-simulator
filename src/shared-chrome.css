@@ -667,6 +667,20 @@
     margin-bottom: 2px;
   }
 
+  /* The viewer's own clickable variant (desktop has no equivalent — see
+     viewer-main.ts's buildCurrentActivityBlock) — a plain <button> reset
+     back to look like bold underlined text, not a button, so it reads as
+     a "this is a link" affordance rather than UI chrome. */
+  .mobile-status-title-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+
   .mobile-fab {
     position: fixed;
     right: 16px;
