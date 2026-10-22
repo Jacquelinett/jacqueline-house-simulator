@@ -265,6 +265,16 @@
   min-height: 160px;
   max-width: 90vw;
   max-height: 85vh;
+  /* The resize grip belongs to this element (it's the one with `resize`),
+     but the scrollbar belongs to .floating-panel-body — same bottom-right
+     corner, two different elements each wanting it, and the body's
+     scrollbar wins the pixels, leaving the grip unclickable. Reserving a
+     blank strip after the body (which, being the flex container's last
+     item, is what padding-bottom actually insets here) keeps the grip in
+     its own space the scrollbar never reaches. .modal-dialog doesn't need
+     this: resize and scroll are both on that single element there, which
+     browsers already handle correctly without any help. */
+  padding-bottom: 14px;
 }
 
 .goals-empty {
