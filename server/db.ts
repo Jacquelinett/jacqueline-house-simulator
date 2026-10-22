@@ -197,21 +197,53 @@ export function migrate(): void {
   seedJacquelineCharacter();
   backfillCharacterId();
   backfillRoomConnections();
+  clearLegacyRoomConnectionColumns();
 }
 
 /**
  * One-time carry-over from the old single-connection rooms.connected_to_*
  * columns into room_connections (idx 0, i.e. the primary/position-
- * determining entry) — idempotent via INSERT OR IGNORE against the
- * (room_id, idx) primary key, so it's a no-op on every run after the
- * first. Only runs for rooms that actually had a connection; an anchor
- * room (connected_to_room_id IS NULL) correctly gets no row at all.
+ * determining entry) — gated on room_connections being completely empty,
+ * so it only ever runs against a genuinely pre-migration database.
+ *
+ * This used to run unconditionally on every startup, guarded only by
+ * "INSERT OR IGNORE is a no-op once the (room_id, idx) row already
+ * exists" — which is true only as long as that row is never deleted
+ * again. The legacy rooms.connected_to_* columns are never cleared by
+ * any current write path (updateRoomConnections only ever touches
+ * room_connections), so they just sit there as stale data forever. The
+ * first time an admin removed a connection on one of the original rooms
+ * (the only ones old enough to have a legacy value at all), the
+ * room_connections row disappeared — but the zombie legacy column did
+ * not, and the very next server restart happily re-inserted it right
+ * back, resurrecting a connection the admin had deliberately deleted.
+ * Confirmed this was the exact live mechanism behind a "my connections
+ * keep reverting after I restart the server" report — ddr-room/
+ * living-room/entrance all still carried real values in their legacy
+ * columns from before room_connections existed.
  */
 function backfillRoomConnections(): void {
+  const { n } = db.prepare("SELECT COUNT(*) as n FROM room_connections").get() as { n: number };
+  if (n > 0) return;
   db.exec(`
     INSERT OR IGNORE INTO room_connections (room_id, idx, target_room_id, direction, gap_tiles, lateral_offset)
     SELECT id, 0, connected_to_room_id, connected_to_direction, connected_to_gap_tiles, 0
     FROM rooms
+    WHERE connected_to_room_id IS NOT NULL
+  `);
+}
+
+/**
+ * Nulls out the legacy rooms.connected_to_* columns once their data has
+ * had a chance to migrate into room_connections — they're never read by
+ * any current code path, but leaving real-looking values sitting in them
+ * is exactly the landmine backfillRoomConnections() (above) tripped on.
+ * Cheap no-op once they're already NULL, so this just runs every startup
+ * rather than needing its own one-time gate.
+ */
+function clearLegacyRoomConnectionColumns(): void {
+  db.exec(`
+    UPDATE rooms SET connected_to_room_id = NULL, connected_to_direction = NULL, connected_to_gap_tiles = NULL
     WHERE connected_to_room_id IS NOT NULL
   `);
 }
