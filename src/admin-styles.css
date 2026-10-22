@@ -109,6 +109,19 @@ body {
   background: var(--border);
 }
 
+.admin-tile-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.admin-placing-active {
+  background: var(--accent-bg) !important;
+  border-color: var(--accent-border) !important;
+}
+
 .admin-hint {
   font-size: 12px;
   opacity: 0.7;

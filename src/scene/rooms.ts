@@ -194,6 +194,11 @@ export function gridToScreen(u: number, v: number) {
   return { x: (u - v) * (TILE_WIDTH / 2), y: (u + v) * (TILE_HEIGHT / 2) };
 }
 
+/** Exact inverse of gridToScreen — solving x=(u-v)*(TW/2), y=(u+v)*(TH/2) for u,v. Not rounded (a non-tile-aligned pixel position, which plenty of existing objects have, legitimately produces a fractional tile coordinate) — callers that want a snapped tile should floor/round themselves. */
+export function screenToGrid(x: number, y: number): { u: number; v: number } {
+  return { u: x / TILE_WIDTH + y / TILE_HEIGHT, v: y / TILE_HEIGHT - x / TILE_WIDTH };
+}
+
 // Which edge of the anchor this room extends from. Matches the x/y convention
 // used elsewhere (x/u runs top->bottom-right, y/v runs top->bottom-left):
 //  - behindLeft:  extends from anchor's u=0 (back-left/wall) edge, -u

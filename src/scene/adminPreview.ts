@@ -1,17 +1,32 @@
-import { Container, Polygon } from "pixi.js";
-import { gridToScreen, ObjectDef, RoomDef } from "./rooms";
+import { Container, FederatedPointerEvent, Graphics, Polygon } from "pixi.js";
+import { gridToScreen, ObjectDef, RoomDef, screenToGrid } from "./rooms";
 import { SceneRenderer } from "./renderer";
 
 /**
- * Read-only preview renderer for the admin tool — same house scene as the
- * game/viewer (reused via SceneRenderer, not reimplemented), but the only
- * interaction is "click a room to focus it" (for getting around the house)
- * and "click an object to select it" (reported via onObjectClick, which
- * admin-main.ts uses to scroll/highlight the matching row in the plain
- * list below — not drag-to-reposition; see this file's own module-level
- * comment in admin-main.ts for why that's out of scope tonight).
+ * Read-only-except-for-placement preview renderer for the admin tool —
+ * same house scene as the game/viewer (reused via SceneRenderer, not
+ * reimplemented). Three things layer on top of the base renderer:
+ *
+ * - "click a room to focus it" / "click an object to select it" (reported
+ *   via onObjectClick, which admin-main.ts uses to scroll/highlight the
+ *   matching row in the plain list) — the original read-only behavior.
+ * - moveObject(): repositions one object's own container directly,
+ *   bypassing a full scene rebuild — used for continuous x/y field edits
+ *   (holding an arrow key) so that doesn't tear down and recreate the
+ *   whole Pixi canvas on every keystroke (that's what was causing the
+ *   "blip"). Only ever called for an object whose size/sprite hasn't
+ *   changed; a type change still goes through a full rebuild.
+ * - Tile placement mode: enablePlacement()/disablePlacement() draw a
+ *   snapped-to-grid diamond under the pointer and report the clicked
+ *   tile back — the "pseudo drag and drop" (click a tile instead of
+ *   dragging continuously, which there's no browser available to verify
+ *   pointer math for well enough to trust).
  */
 export class AdminPreviewRenderer extends SceneRenderer {
+  private objectContainers = new Map<string, Container>();
+  private hoverDiamond: Graphics | null = null;
+  private placingRoomContainer: Container | null = null;
+
   constructor(
     app: ConstructorParameters<typeof SceneRenderer>[0],
     onRoomChange: (roomName: string) => void,
@@ -31,6 +46,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
   }
 
   protected attachObjectInteraction(container: Container, roomId: string, obj: ObjectDef) {
+    this.objectContainers.set(obj.id, container);
     container.eventMode = "static";
     container.cursor = "pointer";
     container.interactiveChildren = false;
@@ -38,5 +54,74 @@ export class AdminPreviewRenderer extends SceneRenderer {
       e.stopPropagation();
       this.onObjectClick(roomId, obj.id);
     });
+  }
+
+  /** Moves one object's own sprite directly — no scene rebuild, so this never blips. Only valid for an already-built object (same type/size as when the scene was last built). */
+  public moveObject(objectId: string, x: number, y: number): void {
+    this.objectContainers.get(objectId)?.position.set(x, y);
+  }
+
+  /**
+   * Starts tile-placement mode on whichever room is currently viewed: a
+   * diamond follows the pointer, snapped to the tile grid, and a click
+   * reports that tile's (u, v) back to onTileClick. Call disablePlacement()
+   * when done (committing or cancelling) — it does not auto-disable itself
+   * on click, since the caller may want to keep placing more objects.
+   */
+  public enablePlacement(onTileClick: (u: number, v: number) => void): void {
+    this.disablePlacement();
+
+    const container = this.roomContainers.get(this.viewedRoomId);
+    if (!container) return;
+    this.placingRoomContainer = container;
+
+    const diamond = new Graphics();
+    this.hoverDiamond = diamond;
+    container.addChild(diamond);
+
+    const drawAt = (u: number, v: number) => {
+      const back = gridToScreen(u, v);
+      const right = gridToScreen(u + 1, v);
+      const frontPt = gridToScreen(u + 1, v + 1);
+      const left = gridToScreen(u, v + 1);
+      diamond
+        .clear()
+        .poly([back.x, back.y, right.x, right.y, frontPt.x, frontPt.y, left.x, left.y])
+        .fill({ color: 0xff3366, alpha: 0.35 })
+        .stroke({ width: 1, color: 0xff3366 });
+    };
+
+    const onMove = (e: FederatedPointerEvent) => {
+      const local = e.getLocalPosition(container);
+      const { u, v } = screenToGrid(local.x, local.y);
+      drawAt(Math.floor(u), Math.floor(v));
+    };
+    const onClick = (e: FederatedPointerEvent) => {
+      const local = e.getLocalPosition(container);
+      const { u, v } = screenToGrid(local.x, local.y);
+      onTileClick(Math.floor(u), Math.floor(v));
+    };
+
+    container.eventMode = "static";
+    container.on("pointermove", onMove);
+    container.on("pointertap", onClick);
+    // Stashed on the container itself so disablePlacement can remove the
+    // exact same listener instances (Pixi's .off needs the same function
+    // reference, not just the event name).
+    (container as Container & { _placementHandlers?: unknown })._placementHandlers = { onMove, onClick };
+  }
+
+  public disablePlacement(): void {
+    if (this.hoverDiamond) {
+      this.hoverDiamond.destroy();
+      this.hoverDiamond = null;
+    }
+    const container = this.placingRoomContainer as (Container & { _placementHandlers?: { onMove: (e: FederatedPointerEvent) => void; onClick: (e: FederatedPointerEvent) => void } }) | null;
+    if (container?._placementHandlers) {
+      container.off("pointermove", container._placementHandlers.onMove);
+      container.off("pointertap", container._placementHandlers.onClick);
+      delete container._placementHandlers;
+    }
+    this.placingRoomContainer = null;
   }
 }

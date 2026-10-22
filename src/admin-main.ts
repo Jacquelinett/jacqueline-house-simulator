@@ -12,16 +12,22 @@
 // viewer use) lives inside the edit modal, shows only that one room (no
 // panning — there's nothing else to pan to), and re-renders from the
 // in-memory draft on every field change, so what you see is always what
-// Save would actually persist. No drag-and-drop: there's no browser
-// available in this environment to visually verify pointer-based
-// placement math actually works, so the interaction stays "edit the row's
-// plain fields, watch the preview update."
+// Save would actually persist.
+//
+// x/y can be entered as raw pixels (the underlying storage, always) or,
+// with "Tile mode" on, as grid coordinates — converted through
+// gridToScreen/screenToGrid, the exact same isometric math the renderer
+// itself uses for tile placement, not a flat multiply. "Place" puts the
+// preview into click-a-tile mode instead of typing coordinates by hand —
+// a snapped, single-click placement rather than continuous drag-and-drop,
+// since there's no browser available in this environment to visually
+// verify continuous pointer-drag math well enough to trust.
 import { Application } from "pixi.js";
 import { buildModal } from "./ui/modal";
 import { preloadRoomAssets } from "./scene/renderer";
 import { AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
-import { roomSpecsFromWire, setObjectTypes, setRooms } from "./scene/rooms";
+import { gridToScreen, roomSpecsFromWire, screenToGrid, setObjectTypes, setRooms } from "./scene/rooms";
 
 const ADMIN_SECRET_KEY = "houseSimulatorAdminSecret";
 
@@ -359,6 +365,13 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
   hint.textContent = "Preview reflects unsaved changes below — nothing is written until you press Save.";
   modal.body.appendChild(hint);
 
+  const tileModeLabel = document.createElement("label");
+  tileModeLabel.className = "admin-tile-mode-toggle";
+  const tileModeCheckbox = document.createElement("input");
+  tileModeCheckbox.type = "checkbox";
+  tileModeLabel.append(tileModeCheckbox, document.createTextNode(" Tile mode (enter grid coordinates instead of raw pixels)"));
+  modal.body.appendChild(tileModeLabel);
+
   const table = document.createElement("table");
   table.className = "admin-table";
   modal.body.appendChild(table);
@@ -378,6 +391,8 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
   modal.body.appendChild(footer);
 
   let currentApp: Application | null = null;
+  let currentRenderer: AdminPreviewRenderer | null = null;
+  let placingObjectId: string | null = null;
 
   function isDirty(): boolean {
     return JSON.stringify(original) !== JSON.stringify(draft);
@@ -395,7 +410,9 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
     setTimeout(() => row.classList.remove("admin-row-highlight"), 1500);
   }
 
+  /** Full scene rebuild — only for changes a live move can't express (type, enabled, add/remove). x/y-only edits use moveObject() instead (see applyPosition below), which never tears down the canvas. */
   async function renderPreview() {
+    placingObjectId = null;
     currentApp?.destroy();
     previewContainer.textContent = "";
 
@@ -406,11 +423,17 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
     currentApp = new Application();
     await currentApp.init({ width: 420, height: 320, background: 0x222228 });
     previewContainer.appendChild(currentApp.canvas);
-    new AdminPreviewRenderer(currentApp, () => {}, highlightRow);
+    currentRenderer = new AdminPreviewRenderer(currentApp, () => {}, highlightRow);
+  }
+
+  /** 2 decimals is plenty — most existing objects aren't tile-aligned at all, so this is routinely a non-round fraction, not floating-point noise to hide. */
+  function round2(n: number): number {
+    return Math.round(n * 100) / 100;
   }
 
   function renderTable() {
-    table.innerHTML = "<tr><th>Object</th><th>Type</th><th>x</th><th>y</th><th>Enabled</th><th></th></tr>";
+    const tileMode = tileModeCheckbox.checked;
+    table.innerHTML = `<tr><th>Object</th><th>Type</th><th>${tileMode ? "tile u" : "x"}</th><th>${tileMode ? "tile v" : "y"}</th><th>Enabled</th><th></th><th></th></tr>`;
     for (const obj of draft) {
       const row = document.createElement("tr");
       row.id = `modal-obj-row-${obj.id}`;
@@ -431,9 +454,10 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
       typeCell.appendChild(typeSelect);
       row.appendChild(typeCell);
 
+      const displayed = tileMode ? screenToGrid(obj.x, obj.y) : { u: obj.x, v: obj.y };
       const xInput = document.createElement("input");
       xInput.type = "number";
-      xInput.value = String(obj.x);
+      xInput.value = String(round2(displayed.u));
       xInput.style.width = "60px";
       const xCell = document.createElement("td");
       xCell.appendChild(xInput);
@@ -441,7 +465,7 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
 
       const yInput = document.createElement("input");
       yInput.type = "number";
-      yInput.value = String(obj.y);
+      yInput.value = String(round2(displayed.v));
       yInput.style.width = "60px";
       const yCell = document.createElement("td");
       yCell.appendChild(yInput);
@@ -454,18 +478,76 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
       enabledCell.appendChild(checkbox);
       row.appendChild(enabledCell);
 
-      function applyFieldsToDraft() {
+      // x/y move the object live (AdminPreviewRenderer.moveObject) instead
+      // of a full scene rebuild — this is the fix for the "blip" when
+      // nudging a number input's spinner/arrow keys repeatedly, which was
+      // tearing down and recreating the whole Pixi canvas on every change.
+      function applyPosition() {
+        const enteredU = Number(xInput.value);
+        const enteredV = Number(yInput.value);
+        if (tileModeCheckbox.checked) {
+          const screen = gridToScreen(enteredU, enteredV);
+          obj.x = screen.x;
+          obj.y = screen.y;
+        } else {
+          obj.x = enteredU;
+          obj.y = enteredV;
+        }
+        updateSaveState();
+        currentRenderer?.moveObject(obj.id, obj.x, obj.y);
+      }
+      xInput.onchange = applyPosition;
+      yInput.onchange = applyPosition;
+
+      // Type/enabled changes need a real rebuild — the object's sprite/size
+      // (or whether it renders at all) actually changes, not just its
+      // position, so there's nothing to "move" in place.
+      function applyTypeAndEnabled() {
         obj.type = typeSelect.value;
-        obj.x = Number(xInput.value);
-        obj.y = Number(yInput.value);
         obj.enabled = checkbox.checked;
         updateSaveState();
         renderPreview();
       }
-      typeSelect.onchange = applyFieldsToDraft;
-      xInput.onchange = applyFieldsToDraft;
-      yInput.onchange = applyFieldsToDraft;
-      checkbox.onchange = applyFieldsToDraft;
+      typeSelect.onchange = applyTypeAndEnabled;
+      checkbox.onchange = applyTypeAndEnabled;
+
+      const placeCell = document.createElement("td");
+      const placeBtn = document.createElement("button");
+      placeBtn.type = "button";
+      function setPlacingUI(active: boolean) {
+        placeBtn.textContent = active ? "Click a tile…" : "Place";
+        placeBtn.classList.toggle("admin-placing-active", active);
+      }
+      setPlacingUI(false);
+      placeBtn.onclick = () => {
+        if (placingObjectId === obj.id) {
+          currentRenderer?.disablePlacement();
+          placingObjectId = null;
+          setPlacingUI(false);
+          return;
+        }
+        placingObjectId = obj.id;
+        setPlacingUI(true);
+        currentRenderer?.enablePlacement((u, v) => {
+          const screen = gridToScreen(u, v);
+          obj.x = screen.x;
+          obj.y = screen.y;
+          if (tileModeCheckbox.checked) {
+            xInput.value = String(round2(u));
+            yInput.value = String(round2(v));
+          } else {
+            xInput.value = String(screen.x);
+            yInput.value = String(screen.y);
+          }
+          updateSaveState();
+          currentRenderer?.moveObject(obj.id, obj.x, obj.y);
+          currentRenderer?.disablePlacement();
+          placingObjectId = null;
+          setPlacingUI(false);
+        });
+      };
+      placeCell.appendChild(placeBtn);
+      row.appendChild(placeCell);
 
       const actionCell = document.createElement("td");
       const deleteBtn = document.createElement("button");
@@ -484,6 +566,8 @@ async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved:
       table.appendChild(row);
     }
   }
+
+  tileModeCheckbox.onchange = () => renderTable();
 
   function renderAddForm() {
     addForm.textContent = "";
