@@ -69,6 +69,18 @@ export interface ObjectTypeDef {
   // where every placement has its own destination and there's nothing
   // sensible to default to.
   actions?: ObjectAction[];
+  // Pixel offset from the sprite's own top-left to its "floor contact"
+  // point — the spot that should land on a tile's corner when placed via
+  // the admin tool's tile mode. Most sprites include padding for height/
+  // perspective, so x/y (always the top-left, unaffected by this field —
+  // see adminPreview.ts/admin-main.ts) landing a tile's corner directly at
+  // the top-left routinely leaves the object floating off its tile (e.g.
+  // not flush against a wall at tile (0,0)). Only consumed by the admin
+  // tool's tile-mode (u,v)<->(x,y) conversion and placement-ghost
+  // positioning — unset (default 0,0) reproduces today's behavior exactly,
+  // and nothing outside the admin tool ever reads this.
+  anchorX?: number;
+  anchorY?: number;
 }
 
 /**

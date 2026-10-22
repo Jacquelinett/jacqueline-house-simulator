@@ -22,12 +22,12 @@
 // a snapped, single-click placement rather than continuous drag-and-drop,
 // since there's no browser available in this environment to visually
 // verify continuous pointer-drag math well enough to trust.
-import { Application } from "pixi.js";
+import { Application, Assets, Container, FederatedPointerEvent, Graphics, Rectangle, Texture } from "pixi.js";
 import { buildModal } from "./ui/modal";
-import { preloadRoomAssets } from "./scene/renderer";
+import { assetUrl, buildLayer, preloadRoomAssets } from "./scene/renderer";
 import { AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
-import { gridToScreen, roomSpecsFromWire, screenToGrid, setObjectTypes, setRooms } from "./scene/rooms";
+import { gridToScreen, ObjectTypeDef, roomSpecsFromWire, screenToGrid, setObjectTypes, setRooms, SpriteLayer } from "./scene/rooms";
 
 const ADMIN_SECRET_KEY = "houseSimulatorAdminSecret";
 
@@ -42,12 +42,6 @@ interface ActivityDef {
   id: string;
   label: string;
   color: number;
-}
-
-interface ObjectTypeDef {
-  name: string;
-  width: number;
-  height: number;
 }
 
 interface ObjectPlacementWire {
@@ -319,22 +313,287 @@ async function renderActivities(body: HTMLElement) {
   body.appendChild(form);
 }
 
-// --- Object types (read-only list — creating/editing sprite layers needs
-// a texture picker, out of scope here) ---
+// --- Object types ---
+
+const TYPE_PREVIEW_WIDTH = 220;
+const TYPE_PREVIEW_HEIGHT = 200;
+// Where the room's (0,0) tile corner lands on the canvas — chosen so a few
+// tiles' worth of grid are visible around it, with room below/right for a
+// typical object's width/height to not get clipped.
+const TYPE_PREVIEW_ORIGIN = { x: 90, y: 30 };
+
+function makeDefaultObjectType(): ObjectTypeDef {
+  return { name: "", width: 32, height: 32, below: [{ color: 0x888888 }] };
+}
+
+async function ensureTextureLoaded(path: string | undefined): Promise<void> {
+  if (!path) return;
+  const texture = await Assets.load<Texture>(assetUrl(path));
+  texture.source.scaleMode = "nearest"; // keep pixel art crisp, same as preloadRoomAssets
+}
+
+/**
+ * Edits one object type's name/size/primary sprite/anchor point. Only
+ * `below[0]` is editable here (a texture picked from existing files under
+ * public/objects/, or a solid-color placeholder) — every current type has
+ * at most one `below` entry, so this doesn't lose anything for them;
+ * `overlay`/`above`/`actions` are carried through unchanged from whatever
+ * was loaded. The preview shows the sprite sitting at its own (0,0) — the
+ * same pixel position a tile-mode placement at tile (0,0) with no anchor
+ * offset would produce — with a small reference grid around the room's own
+ * (0,0) corner, so clicking to set the anchor is judged against the actual
+ * corner the object needs to sit flush against, not a bare image.
+ */
+async function openObjectTypeEditModal(
+  id: string | null,
+  existing: ObjectTypeDef | null,
+  assetPaths: string[],
+  onSaved: () => void,
+) {
+  const draftType: ObjectTypeDef = existing
+    ? { ...existing, below: existing.below ? [...existing.below] : undefined }
+    : makeDefaultObjectType();
+  let anchorX = draftType.anchorX ?? 0;
+  let anchorY = draftType.anchorY ?? 0;
+
+  const modal = buildModal(id ? `Edit Object Type: ${draftType.name}` : "Add Object Type", {});
+
+  const form = document.createElement("div");
+  form.className = "admin-form";
+  modal.body.appendChild(form);
+
+  const nameInput = document.createElement("input");
+  nameInput.placeholder = "Name";
+  nameInput.value = draftType.name;
+  form.append(document.createTextNode("Name:"), nameInput);
+
+  const widthInput = document.createElement("input");
+  widthInput.type = "number";
+  widthInput.value = String(draftType.width);
+  widthInput.style.width = "60px";
+  const heightInput = document.createElement("input");
+  heightInput.type = "number";
+  heightInput.value = String(draftType.height);
+  heightInput.style.width = "60px";
+  form.append(document.createTextNode("W:"), widthInput, document.createTextNode("H:"), heightInput);
+
+  const spriteSelect = document.createElement("select");
+  const colorOpt = document.createElement("option");
+  colorOpt.value = "__color__";
+  colorOpt.textContent = "(solid color)";
+  spriteSelect.appendChild(colorOpt);
+  for (const path of assetPaths) {
+    const opt = document.createElement("option");
+    opt.value = path;
+    opt.textContent = path.replace(/^\/objects\//, "");
+    spriteSelect.appendChild(opt);
+  }
+  const initialTexture = draftType.below?.[0]?.texture;
+  spriteSelect.value = initialTexture ?? "__color__";
+  form.append(document.createTextNode("Sprite:"), spriteSelect);
+
+  const colorInput = document.createElement("input");
+  colorInput.type = "color";
+  const initialColor = draftType.below?.[0]?.color;
+  colorInput.value = `#${(initialColor ?? 0x888888).toString(16).padStart(6, "0")}`;
+  colorInput.style.display = initialTexture ? "none" : "";
+  form.appendChild(colorInput);
+  modal.body.appendChild(form);
+
+  const anchorHint = document.createElement("div");
+  anchorHint.className = "admin-hint";
+  anchorHint.textContent =
+    "Click the preview to set the anchor point — the pixel that lands on a tile's corner when placed via the room editor's tile mode. Unset defaults to the sprite's own top-left (today's behavior).";
+  modal.body.appendChild(anchorHint);
+
+  const anchorRow = document.createElement("div");
+  anchorRow.className = "admin-form";
+  const anchorXInput = document.createElement("input");
+  anchorXInput.type = "number";
+  anchorXInput.value = String(anchorX);
+  anchorXInput.style.width = "60px";
+  const anchorYInput = document.createElement("input");
+  anchorYInput.type = "number";
+  anchorYInput.value = String(anchorY);
+  anchorYInput.style.width = "60px";
+  anchorRow.append(document.createTextNode("Anchor X:"), anchorXInput, document.createTextNode("Anchor Y:"), anchorYInput);
+  modal.body.appendChild(anchorRow);
+
+  const previewContainer = document.createElement("div");
+  previewContainer.id = "admin-preview-canvas";
+  modal.body.appendChild(previewContainer);
+
+  const footer = document.createElement("div");
+  footer.className = "admin-form";
+  const saveBtn = document.createElement("button");
+  saveBtn.textContent = "Save";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Cancel";
+  footer.append(saveBtn, cancelBtn);
+  modal.body.appendChild(footer);
+
+  const app = new Application();
+  await app.init({ width: TYPE_PREVIEW_WIDTH, height: TYPE_PREVIEW_HEIGHT, background: 0x222228 });
+  previewContainer.appendChild(app.canvas);
+  app.stage.eventMode = "static";
+  app.stage.hitArea = new Rectangle(0, 0, TYPE_PREVIEW_WIDTH, TYPE_PREVIEW_HEIGHT);
+
+  const stage = new Container();
+  stage.position.set(TYPE_PREVIEW_ORIGIN.x, TYPE_PREVIEW_ORIGIN.y);
+  app.stage.addChild(stage);
+
+  // Reference grid, drawn once — a few tile diamonds around the room's own
+  // (0,0) corner, same gridToScreen math the real renderer uses, purely so
+  // there's a "room corner" to judge the anchor point against.
+  const grid = new Graphics();
+  for (let u = 0; u < 3; u++) {
+    for (let v = 0; v < 3; v++) {
+      const back = gridToScreen(u, v);
+      const right = gridToScreen(u + 1, v);
+      const front = gridToScreen(u + 1, v + 1);
+      const left = gridToScreen(u, v + 1);
+      grid.poly([back.x, back.y, right.x, right.y, front.x, front.y, left.x, left.y]).stroke({ width: 1, color: 0x555566 });
+    }
+  }
+  stage.addChild(grid);
+
+  let spriteLayer = new Container();
+  stage.addChild(spriteLayer);
+  const crosshair = new Graphics();
+  stage.addChild(crosshair);
+
+  function currentPrimaryLayer(): SpriteLayer {
+    return spriteSelect.value === "__color__" ? { color: parseInt(colorInput.value.slice(1), 16) } : { texture: spriteSelect.value };
+  }
+
+  function drawCrosshair() {
+    crosshair
+      .clear()
+      .moveTo(anchorX - 6, anchorY)
+      .lineTo(anchorX + 6, anchorY)
+      .moveTo(anchorX, anchorY - 6)
+      .lineTo(anchorX, anchorY + 6)
+      .stroke({ width: 2, color: 0xff3366 })
+      .circle(anchorX, anchorY, 3)
+      .fill({ color: 0xff3366 });
+    app.render();
+  }
+
+  function rebuildSprite() {
+    stage.removeChild(spriteLayer);
+    spriteLayer.destroy({ children: true });
+    spriteLayer = new Container();
+    const width = Number(widthInput.value) || 1;
+    const height = Number(heightInput.value) || 1;
+    for (const layer of [currentPrimaryLayer(), ...(draftType.above ?? [])]) {
+      spriteLayer.addChild(buildLayer(layer, width, height));
+    }
+    stage.addChildAt(spriteLayer, 1); // above the grid, below the crosshair
+    drawCrosshair();
+  }
+
+  app.stage.on("pointertap", (e: FederatedPointerEvent) => {
+    const local = e.getLocalPosition(stage);
+    anchorX = Math.round(local.x);
+    anchorY = Math.round(local.y);
+    anchorXInput.value = String(anchorX);
+    anchorYInput.value = String(anchorY);
+    drawCrosshair();
+  });
+
+  spriteSelect.onchange = async () => {
+    colorInput.style.display = spriteSelect.value === "__color__" ? "" : "none";
+    if (spriteSelect.value !== "__color__") await ensureTextureLoaded(spriteSelect.value);
+    rebuildSprite();
+  };
+  colorInput.oninput = () => rebuildSprite();
+  widthInput.onchange = () => rebuildSprite();
+  heightInput.onchange = () => rebuildSprite();
+  anchorXInput.onchange = () => {
+    anchorX = Number(anchorXInput.value);
+    drawCrosshair();
+  };
+  anchorYInput.onchange = () => {
+    anchorY = Number(anchorYInput.value);
+    drawCrosshair();
+  };
+
+  saveBtn.onclick = async () => {
+    const name = nameInput.value.trim();
+    if (!name) {
+      showError(new Error("Name is required"));
+      return;
+    }
+    const payload: ObjectTypeDef = {
+      ...draftType,
+      name,
+      width: Number(widthInput.value),
+      height: Number(heightInput.value),
+      below: [currentPrimaryLayer()],
+      anchorX,
+      anchorY,
+    };
+    try {
+      if (id) {
+        await adminFetch(`/api/admin/object-types/${id}`, { method: "PATCH", body: JSON.stringify(payload) });
+      } else {
+        await adminFetch("/api/admin/object-types", { method: "POST", body: JSON.stringify(payload) });
+      }
+      modal.close();
+      onSaved();
+    } catch (err) {
+      showError(err);
+    }
+  };
+  cancelBtn.onclick = () => modal.close();
+  modal.onClose(() => app.destroy());
+
+  await ensureTextureLoaded(initialTexture);
+  rebuildSprite();
+  modal.open();
+}
 
 async function renderObjectTypes(body: HTMLElement) {
   body.textContent = "";
-  const types = await adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types");
+  const [types, assetPaths] = await Promise.all([
+    adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
+    adminFetch<string[]>("/api/admin/object-assets"),
+  ]);
 
   const table = document.createElement("table");
   table.className = "admin-table";
-  table.innerHTML = "<tr><th>Id</th><th>Name</th><th>Size</th></tr>";
+  table.innerHTML = "<tr><th>Id</th><th>Name</th><th>Size</th><th>Anchor</th><th></th></tr>";
   for (const [id, type] of Object.entries(types)) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td><code>${id}</code></td><td>${type.name}</td><td>${type.width}×${type.height}</td>`;
+    row.innerHTML = `<td><code>${id}</code></td><td>${type.name}</td><td>${type.width}×${type.height}</td><td>${type.anchorX ?? 0}, ${type.anchorY ?? 0}</td>`;
+
+    const actionCell = document.createElement("td");
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "Edit";
+    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, () => renderObjectTypes(body));
+    const deleteBtn = document.createElement("button");
+    deleteBtn.textContent = "Delete";
+    deleteBtn.onclick = async () => {
+      if (!confirm(`Delete object type "${type.name}"? Any room placement still referencing it will stop rendering.`)) return;
+      try {
+        await adminFetch(`/api/admin/object-types/${id}`, { method: "DELETE" });
+        renderObjectTypes(body);
+      } catch (err) {
+        showError(err);
+      }
+    };
+    actionCell.append(editBtn, deleteBtn);
+    row.appendChild(actionCell);
     table.appendChild(row);
   }
   body.appendChild(table);
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.textContent = "Add Object Type";
+  addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, () => renderObjectTypes(body));
+  body.appendChild(addBtn);
 }
 
 // --- Rooms ---

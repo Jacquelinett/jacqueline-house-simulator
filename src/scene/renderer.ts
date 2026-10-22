@@ -17,7 +17,8 @@ const MOBILE_BREAKPOINT_QUERY = "(max-width: 700px) and (orientation: portrait)"
 // sites: "/<repo>/"). BASE_URL is "/" for the Tauri app (no-op here) and the
 // configured subpath for the viewer build (see vite.viewer.config.ts),
 // so resolving every texture path through this keeps both working.
-function assetUrl(path: string): string {
+/** Exported for the admin tool's object-type texture picker (admin-main.ts), which needs to Assets.load() an arbitrary asset path on demand — one not necessarily referenced by any currently-placed object, so preloadRoomAssets() alone wouldn't have loaded it. */
+export function assetUrl(path: string): string {
   return import.meta.env.BASE_URL + path.replace(/^\//, "");
 }
 

@@ -10,6 +10,8 @@ interface TypeRow {
   width: number;
   height: number;
   actions_json: string | null;
+  anchor_x: number | null;
+  anchor_y: number | null;
 }
 
 function rowToType(row: TypeRow): ObjectTypeDef {
@@ -21,6 +23,8 @@ function rowToType(row: TypeRow): ObjectTypeDef {
     overlay: row.overlay_json ? (JSON.parse(row.overlay_json) as SpriteLayer[]) : undefined,
     above: row.above_json ? (JSON.parse(row.above_json) as SpriteLayer[]) : undefined,
     actions: row.actions_json ? (JSON.parse(row.actions_json) as ObjectAction[]) : undefined,
+    anchorX: row.anchor_x ?? undefined,
+    anchorY: row.anchor_y ?? undefined,
   };
 }
 
@@ -37,8 +41,8 @@ export function seedObjectTypesIfEmpty(): void {
   const { n } = db.prepare("SELECT COUNT(*) as n FROM object_types").get() as { n: number };
   if (n > 0) return;
   const insert = db.prepare(`
-    INSERT INTO object_types (id, name, below_json, overlay_json, above_json, width, height, actions_json)
-    VALUES (@id, @name, @belowJson, @overlayJson, @aboveJson, @width, @height, @actionsJson)
+    INSERT INTO object_types (id, name, below_json, overlay_json, above_json, width, height, actions_json, anchor_x, anchor_y)
+    VALUES (@id, @name, @belowJson, @overlayJson, @aboveJson, @width, @height, @actionsJson, @anchorX, @anchorY)
   `);
   const tx = db.transaction(() => {
     // `satisfies` on STATIC_OBJECT_TYPES preserves each entry's own narrow
@@ -56,6 +60,8 @@ export function seedObjectTypesIfEmpty(): void {
         width: type.width,
         height: type.height,
         actionsJson: type.actions ? JSON.stringify(type.actions) : null,
+        anchorX: type.anchorX ?? null,
+        anchorY: type.anchorY ?? null,
       });
     }
   });
@@ -65,8 +71,8 @@ export function seedObjectTypesIfEmpty(): void {
 export function createObjectType(def: ObjectTypeDef): string {
   const id = crypto.randomUUID();
   db.prepare(
-    `INSERT INTO object_types (id, name, below_json, overlay_json, above_json, width, height, actions_json)
-     VALUES (@id, @name, @belowJson, @overlayJson, @aboveJson, @width, @height, @actionsJson)`,
+    `INSERT INTO object_types (id, name, below_json, overlay_json, above_json, width, height, actions_json, anchor_x, anchor_y)
+     VALUES (@id, @name, @belowJson, @overlayJson, @aboveJson, @width, @height, @actionsJson, @anchorX, @anchorY)`,
   ).run({
     id,
     name: def.name,
@@ -76,6 +82,8 @@ export function createObjectType(def: ObjectTypeDef): string {
     width: def.width,
     height: def.height,
     actionsJson: def.actions ? JSON.stringify(def.actions) : null,
+    anchorX: def.anchorX ?? null,
+    anchorY: def.anchorY ?? null,
   });
   return id;
 }
@@ -83,7 +91,8 @@ export function createObjectType(def: ObjectTypeDef): string {
 export function updateObjectType(id: string, def: ObjectTypeDef): void {
   db.prepare(
     `UPDATE object_types SET name = @name, below_json = @belowJson, overlay_json = @overlayJson,
-     above_json = @aboveJson, width = @width, height = @height, actions_json = @actionsJson WHERE id = @id`,
+     above_json = @aboveJson, width = @width, height = @height, actions_json = @actionsJson,
+     anchor_x = @anchorX, anchor_y = @anchorY WHERE id = @id`,
   ).run({
     id,
     name: def.name,
@@ -93,6 +102,8 @@ export function updateObjectType(id: string, def: ObjectTypeDef): void {
     width: def.width,
     height: def.height,
     actionsJson: def.actions ? JSON.stringify(def.actions) : null,
+    anchorX: def.anchorX ?? null,
+    anchorY: def.anchorY ?? null,
   });
 }
 

@@ -104,7 +104,9 @@ export function migrate(): void {
       above_json TEXT,
       width INTEGER NOT NULL,
       height INTEGER NOT NULL,
-      actions_json TEXT
+      actions_json TEXT,
+      anchor_x REAL,
+      anchor_y REAL
     );
 
     -- Mirrors src/scene/rooms.ts's RoomSpec shape (not flattened absolute
@@ -153,6 +155,8 @@ export function migrate(): void {
     "ALTER TABLE goal_history ADD COLUMN character_id TEXT",
     "ALTER TABLE todos ADD COLUMN character_id TEXT",
     "ALTER TABLE server_config ADD COLUMN admin_secret TEXT",
+    "ALTER TABLE object_types ADD COLUMN anchor_x REAL",
+    "ALTER TABLE object_types ADD COLUMN anchor_y REAL",
   ]) {
     try {
       db.exec(stmt);
