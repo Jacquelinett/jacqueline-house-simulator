@@ -4,16 +4,20 @@
 // game's WebSocket RPC protocol — this is traditional CRUD, not real-time
 // multiplayer state.
 //
-// The room list below is editable (position/type/enabled, add/delete) via
-// plain form fields, not drag-and-drop — there's no browser available in
-// this environment to visually verify pointer-based drag math actually
-// works, so the one visual piece built is a read-only Pixi preview
+// Room editing is staged (a local draft, not written until Save) rather
+// than saving on every field change — editing a room's objects is a batch
+// of related changes, not a series of independent ones, and a mid-edit
+// network error shouldn't leave the room half-updated. The room preview
 // (AdminPreviewRenderer, reusing the exact same SceneRenderer the game and
-// viewer use) with click-to-select instead: clicking an object in the
-// preview scrolls to and highlights its row below, where the actual edit
-// happens. Real visual value without inventing an interaction this session
-// can't actually test.
+// viewer use) lives inside the edit modal, shows only that one room (no
+// panning — there's nothing else to pan to), and re-renders from the
+// in-memory draft on every field change, so what you see is always what
+// Save would actually persist. No drag-and-drop: there's no browser
+// available in this environment to visually verify pointer-based
+// placement math actually works, so the interaction stays "edit the row's
+// plain fields, watch the preview update."
 import { Application } from "pixi.js";
+import { buildModal } from "./ui/modal";
 import { preloadRoomAssets } from "./scene/renderer";
 import { AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
@@ -124,30 +128,54 @@ async function adminFetch<T>(path: string, options: RequestInit = {}): Promise<T
 
 const app = document.getElementById("admin-app")!;
 
-function section(title: string, hint?: string): { el: HTMLElement; body: HTMLElement } {
-  const el = document.createElement("div");
-  el.className = "admin-section";
-  const h2 = document.createElement("h2");
-  h2.textContent = title;
-  el.appendChild(h2);
-  if (hint) {
-    const hintEl = document.createElement("div");
-    hintEl.className = "admin-hint";
-    hintEl.textContent = hint;
-    el.appendChild(hintEl);
-  }
-  const body = document.createElement("div");
-  el.appendChild(body);
-  app.appendChild(el);
-  return { el, body };
-}
-
 function showError(err: unknown) {
   const el = document.createElement("div");
   el.className = "admin-error";
   el.textContent = err instanceof Error ? err.message : String(err);
   app.prepend(el);
   setTimeout(() => el.remove(), 6000);
+}
+
+// --- Tabs ---
+
+type TabId = "characters" | "activities" | "object-types" | "rooms";
+const TABS: { id: TabId; label: string }[] = [
+  { id: "characters", label: "Characters" },
+  { id: "activities", label: "Activities" },
+  { id: "object-types", label: "Object Types" },
+  { id: "rooms", label: "Rooms" },
+];
+
+function setupTabs(): Record<TabId, HTMLElement> {
+  const tabBar = document.createElement("div");
+  tabBar.id = "admin-tab-bar";
+  app.appendChild(tabBar);
+
+  const pages = {} as Record<TabId, HTMLElement>;
+  const buttons = {} as Record<TabId, HTMLButtonElement>;
+
+  for (const tab of TABS) {
+    const btn = document.createElement("button");
+    btn.textContent = tab.label;
+    btn.onclick = () => showTab(tab.id);
+    tabBar.appendChild(btn);
+    buttons[tab.id] = btn;
+
+    const page = document.createElement("div");
+    page.className = "admin-tab-page";
+    app.appendChild(page);
+    pages[tab.id] = page;
+  }
+
+  function showTab(id: TabId) {
+    for (const tab of TABS) {
+      pages[tab.id].classList.toggle("active", tab.id === id);
+      buttons[tab.id].classList.toggle("active", tab.id === id);
+    }
+  }
+  showTab("characters");
+
+  return pages;
 }
 
 // --- Characters ---
@@ -286,8 +314,7 @@ async function renderActivities(body: HTMLElement) {
 }
 
 // --- Object types (read-only list — creating/editing sprite layers needs
-// a texture picker, which belongs with the visual room editor, not a plain
-// form here) ---
+// a texture picker, out of scope here) ---
 
 async function renderObjectTypes(body: HTMLElement) {
   body.textContent = "";
@@ -304,40 +331,94 @@ async function renderObjectTypes(body: HTMLElement) {
   body.appendChild(table);
 }
 
-// --- Rooms + their objects (list only — no visual placement yet) ---
+// --- Rooms ---
 
-async function renderRooms(body: HTMLElement) {
-  body.textContent = "";
-  const [rooms, objectTypes] = await Promise.all([
-    adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
-    adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
-  ]);
-  const typeIds = Object.keys(objectTypes);
+function cloneObjects(objects: ObjectPlacementWire[]): ObjectPlacementWire[] {
+  return objects.map((o) => ({ ...o }));
+}
 
-  for (const room of rooms) {
-    const block = document.createElement("div");
-    block.className = "admin-room-block";
+/**
+ * Edits one room in isolation: a local draft array of its objects, a
+ * preview that re-renders from that draft on every change (never from the
+ * server), and a Save button gated on the draft actually differing from
+ * what was loaded. Cancel/closing the modal without saving discards the
+ * draft entirely — nothing reaches the server until Save.
+ */
+async function openRoomEditModal(room: RoomSpecWire, typeIds: string[], onSaved: () => void) {
+  const original = cloneObjects(room.objects);
+  const draft = cloneObjects(room.objects);
 
-    const title = document.createElement("div");
-    title.className = "admin-room-title";
-    title.textContent = `${room.name} (${room.id}) — ${room.cols}×${room.rows}, level ${room.level}`;
-    const previewBtn = document.createElement("button");
-    previewBtn.textContent = "Preview";
-    previewBtn.onclick = () => previewRenderer?.goToRoom(room.id);
-    title.appendChild(previewBtn);
-    block.appendChild(title);
+  const modal = buildModal(`Edit Room: ${room.name}`, { size: "large", resizable: true });
 
-    const table = document.createElement("table");
-    table.className = "admin-table";
+  const previewContainer = document.createElement("div");
+  previewContainer.id = "admin-preview-canvas";
+  modal.body.appendChild(previewContainer);
+
+  const hint = document.createElement("div");
+  hint.className = "admin-hint";
+  hint.textContent = "Preview reflects unsaved changes below — nothing is written until you press Save.";
+  modal.body.appendChild(hint);
+
+  const table = document.createElement("table");
+  table.className = "admin-table";
+  modal.body.appendChild(table);
+
+  const addForm = document.createElement("form");
+  addForm.className = "admin-form";
+  modal.body.appendChild(addForm);
+
+  const footer = document.createElement("div");
+  footer.className = "admin-form";
+  const saveBtn = document.createElement("button");
+  saveBtn.textContent = "Save";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Cancel";
+  footer.append(saveBtn, cancelBtn);
+  modal.body.appendChild(footer);
+
+  let currentApp: Application | null = null;
+
+  function isDirty(): boolean {
+    return JSON.stringify(original) !== JSON.stringify(draft);
+  }
+
+  function updateSaveState() {
+    saveBtn.disabled = !isDirty();
+  }
+
+  function highlightRow(_roomId: string, objectId: string) {
+    const row = document.getElementById(`modal-obj-row-${objectId}`);
+    if (!row) return;
+    row.scrollIntoView({ behavior: "smooth", block: "center" });
+    row.classList.add("admin-row-highlight");
+    setTimeout(() => row.classList.remove("admin-row-highlight"), 1500);
+  }
+
+  async function renderPreview() {
+    currentApp?.destroy();
+    previewContainer.textContent = "";
+
+    // Single-room spec, connectedTo stripped — nothing else exists to
+    // connect to, and nothing else exists to pan to, which is the point.
+    setRooms(roomSpecsFromWire([{ ...room, objects: draft }]));
+
+    currentApp = new Application();
+    await currentApp.init({ width: 420, height: 320, background: 0x222228 });
+    previewContainer.appendChild(currentApp.canvas);
+    new AdminPreviewRenderer(currentApp, () => {}, highlightRow);
+  }
+
+  function renderTable() {
     table.innerHTML = "<tr><th>Object</th><th>Type</th><th>x</th><th>y</th><th>Enabled</th><th></th></tr>";
-    for (const obj of room.objects) {
+    for (const obj of draft) {
       const row = document.createElement("tr");
-      row.id = `obj-row-${room.id}-${obj.id}`;
+      row.id = `modal-obj-row-${obj.id}`;
+
       const idCell = document.createElement("td");
       idCell.textContent = obj.id;
       row.appendChild(idCell);
 
-      const typeCell = document.createElement("td");
       const typeSelect = document.createElement("select");
       for (const typeId of typeIds) {
         const opt = document.createElement("option");
@@ -346,6 +427,7 @@ async function renderRooms(body: HTMLElement) {
         opt.selected = typeId === obj.type;
         typeSelect.appendChild(opt);
       }
+      const typeCell = document.createElement("td");
       typeCell.appendChild(typeSelect);
       row.appendChild(typeCell);
 
@@ -372,47 +454,39 @@ async function renderRooms(body: HTMLElement) {
       enabledCell.appendChild(checkbox);
       row.appendChild(enabledCell);
 
-      async function saveObject() {
-        try {
-          await adminFetch(`/api/admin/rooms/${room.id}/objects/${obj.id}`, {
-            method: "PATCH",
-            body: JSON.stringify({
-              type: typeSelect.value,
-              x: Number(xInput.value),
-              y: Number(yInput.value),
-              enabled: checkbox.checked,
-            }),
-          });
-        } catch (err) {
-          showError(err);
-        }
+      function applyFieldsToDraft() {
+        obj.type = typeSelect.value;
+        obj.x = Number(xInput.value);
+        obj.y = Number(yInput.value);
+        obj.enabled = checkbox.checked;
+        updateSaveState();
+        renderPreview();
       }
-      typeSelect.onchange = saveObject;
-      xInput.onchange = saveObject;
-      yInput.onchange = saveObject;
-      checkbox.onchange = saveObject;
+      typeSelect.onchange = applyFieldsToDraft;
+      xInput.onchange = applyFieldsToDraft;
+      yInput.onchange = applyFieldsToDraft;
+      checkbox.onchange = applyFieldsToDraft;
 
       const actionCell = document.createElement("td");
       const deleteBtn = document.createElement("button");
-      deleteBtn.textContent = "Delete";
-      deleteBtn.onclick = async () => {
-        if (!confirm(`Delete object "${obj.id}" from ${room.name}?`)) return;
-        try {
-          await adminFetch(`/api/admin/rooms/${room.id}/objects/${obj.id}`, { method: "DELETE" });
-          renderRooms(body);
-        } catch (err) {
-          showError(err);
-        }
+      deleteBtn.type = "button";
+      deleteBtn.textContent = "Remove";
+      deleteBtn.onclick = () => {
+        const idx = draft.indexOf(obj);
+        if (idx !== -1) draft.splice(idx, 1);
+        renderTable();
+        updateSaveState();
+        renderPreview();
       };
       actionCell.appendChild(deleteBtn);
       row.appendChild(actionCell);
 
       table.appendChild(row);
     }
-    block.appendChild(table);
+  }
 
-    const addObjectForm = document.createElement("form");
-    addObjectForm.className = "admin-form";
+  function renderAddForm() {
+    addForm.textContent = "";
     const newIdInput = document.createElement("input");
     newIdInput.placeholder = "object id";
     newIdInput.required = true;
@@ -433,27 +507,79 @@ async function renderRooms(body: HTMLElement) {
     newYInput.placeholder = "y";
     newYInput.value = "0";
     newYInput.style.width = "60px";
-    const addObjectBtn = document.createElement("button");
-    addObjectBtn.type = "submit";
-    addObjectBtn.textContent = "Add Object";
-    addObjectForm.append(newIdInput, newTypeSelect, newXInput, newYInput, addObjectBtn);
-    addObjectForm.onsubmit = async (e) => {
+    const addBtn = document.createElement("button");
+    addBtn.type = "submit";
+    addBtn.textContent = "Add Object";
+    addForm.append(newIdInput, newTypeSelect, newXInput, newYInput, addBtn);
+    addForm.onsubmit = (e) => {
       e.preventDefault();
-      try {
-        await adminFetch(`/api/admin/rooms/${room.id}/objects`, {
-          method: "POST",
-          body: JSON.stringify({ id: newIdInput.value, type: newTypeSelect.value, x: Number(newXInput.value), y: Number(newYInput.value) }),
-        });
-        renderRooms(body);
-      } catch (err) {
-        showError(err);
+      if (draft.some((o) => o.id === newIdInput.value)) {
+        showError(new Error(`"${newIdInput.value}" already exists in this room`));
+        return;
       }
+      draft.push({ id: newIdInput.value, type: newTypeSelect.value, x: Number(newXInput.value), y: Number(newYInput.value), enabled: true });
+      renderTable();
+      updateSaveState();
+      renderPreview();
     };
-    block.appendChild(addObjectForm);
+  }
 
-    const deleteRoomBtn = document.createElement("button");
-    deleteRoomBtn.textContent = "Delete Room";
-    deleteRoomBtn.onclick = async () => {
+  saveBtn.onclick = async () => {
+    if (!isDirty()) return;
+    try {
+      const draftIds = new Set(draft.map((o) => o.id));
+      for (const obj of draft) {
+        const orig = original.find((o) => o.id === obj.id);
+        if (!orig) {
+          await adminFetch(`/api/admin/rooms/${room.id}/objects`, { method: "POST", body: JSON.stringify(obj) });
+        } else if (JSON.stringify(orig) !== JSON.stringify(obj)) {
+          await adminFetch(`/api/admin/rooms/${room.id}/objects/${obj.id}`, { method: "PATCH", body: JSON.stringify(obj) });
+        }
+      }
+      for (const orig of original) {
+        if (!draftIds.has(orig.id)) {
+          await adminFetch(`/api/admin/rooms/${room.id}/objects/${orig.id}`, { method: "DELETE" });
+        }
+      }
+      modal.close();
+      onSaved();
+    } catch (err) {
+      showError(err);
+    }
+  };
+
+  cancelBtn.onclick = () => modal.close();
+  modal.onClose(() => currentApp?.destroy());
+
+  renderTable();
+  renderAddForm();
+  updateSaveState();
+  await renderPreview();
+  modal.open();
+}
+
+async function renderRooms(body: HTMLElement) {
+  body.textContent = "";
+  const [rooms, objectTypes] = await Promise.all([
+    adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
+    adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
+  ]);
+  const typeIds = Object.keys(objectTypes);
+
+  const table = document.createElement("table");
+  table.className = "admin-table";
+  table.innerHTML = "<tr><th>Room</th><th>Size</th><th>Level</th><th>Objects</th><th></th></tr>";
+  for (const room of rooms) {
+    const row = document.createElement("tr");
+    row.innerHTML = `<td>${room.name} (${room.id})</td><td>${room.cols}×${room.rows}</td><td>${room.level}</td><td>${room.objects.length}</td>`;
+
+    const actionCell = document.createElement("td");
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "Edit";
+    editBtn.onclick = () => openRoomEditModal(room, typeIds, () => renderRooms(body));
+    const deleteBtn = document.createElement("button");
+    deleteBtn.textContent = "Delete";
+    deleteBtn.onclick = async () => {
       if (!confirm(`Delete room "${room.name}" and all its objects?`)) return;
       try {
         await adminFetch(`/api/admin/rooms/${room.id}`, { method: "DELETE" });
@@ -462,10 +588,12 @@ async function renderRooms(body: HTMLElement) {
         showError(err);
       }
     };
-    block.appendChild(deleteRoomBtn);
+    actionCell.append(editBtn, deleteBtn);
+    row.appendChild(actionCell);
 
-    body.appendChild(block);
+    table.appendChild(row);
   }
+  body.appendChild(table);
 
   const form = document.createElement("form");
   form.className = "admin-form";
@@ -489,7 +617,7 @@ async function renderRooms(body: HTMLElement) {
   levelInput.value = "0";
   const submitBtn = document.createElement("button");
   submitBtn.type = "submit";
-  submitBtn.textContent = "Add Room (floor1/wall1, unconnected — reposition isn't editable here yet)";
+  submitBtn.textContent = "Add Room (floor1/wall1, unconnected)";
   form.append(idInput, nameInput, colsInput, rowsInput, levelInput, submitBtn);
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -514,49 +642,6 @@ async function renderRooms(body: HTMLElement) {
   body.appendChild(form);
 }
 
-let previewRenderer: AdminPreviewRenderer | null = null;
-
-/** Click an object in the preview -> scroll to and flash its row in the plain list below, where the actual edit happens. */
-function highlightObjectRow(roomId: string, objectId: string) {
-  const row = document.getElementById(`obj-row-${roomId}-${objectId}`);
-  if (!row) return;
-  row.scrollIntoView({ behavior: "smooth", block: "center" });
-  row.classList.add("admin-row-highlight");
-  setTimeout(() => row.classList.remove("admin-row-highlight"), 1500);
-}
-
-/** Fetches the same scene data the game/viewer get over WebSocket, but via the admin REST endpoints, and feeds it into the exact same setActivities/setObjectTypes/setRooms live bindings — see those files' own comments on why every consumer (SceneRenderer included) just works against whatever's currently set. */
-async function setupPreview(previewBody: HTMLElement): Promise<void> {
-  const [activities, objectTypes, roomSpecs] = await Promise.all([
-    adminFetch<ActivityDef[]>("/api/admin/activities"),
-    adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
-    adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
-  ]);
-  setActivities(activities);
-  setObjectTypes(objectTypes);
-  setRooms(roomSpecsFromWire(roomSpecs));
-
-  await preloadRoomAssets();
-
-  const canvasContainer = document.createElement("div");
-  canvasContainer.id = "admin-preview-canvas";
-  previewBody.appendChild(canvasContainer);
-
-  const roomLabel = document.createElement("div");
-  roomLabel.className = "admin-hint";
-  previewBody.appendChild(roomLabel);
-
-  const app = new Application();
-  await app.init({ width: 560, height: 360, background: 0x222228 });
-  canvasContainer.appendChild(app.canvas);
-
-  previewRenderer = new AdminPreviewRenderer(
-    app,
-    (roomName) => (roomLabel.textContent = `Viewing: ${roomName} — click a room to pan, an object to find it below`),
-    highlightObjectRow,
-  );
-}
-
 async function main() {
   secret = await getOrPromptSecret();
 
@@ -564,22 +649,26 @@ async function main() {
   header.textContent = "House Simulator Admin";
   app.appendChild(header);
 
-  const preview = section("Room Preview", "Read-only — click a room to pan the camera, an object to jump to its row below.");
-  const characters = section("Characters");
-  const activities = section("Activities");
-  const objectTypes = section(
-    "Object Types",
-    "Read-only here — creating a new type needs a texture picker, which belongs with the visual room editor.",
-  );
-  const rooms = section("Rooms & Objects", "Edit position/type/enabled directly, or add/delete rooms and objects.");
+  const pages = setupTabs();
+
+  // Activities/object types need to be set once so the single-room preview
+  // can resolve action labels and object sprite/size data regardless of
+  // which room's modal is opened later — rooms themselves are set fresh
+  // per-modal (see openRoomEditModal), scoped to just the room being edited.
+  const [activities, objectTypes] = await Promise.all([
+    adminFetch<ActivityDef[]>("/api/admin/activities"),
+    adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
+  ]);
+  setActivities(activities);
+  setObjectTypes(objectTypes);
+  await preloadRoomAssets();
 
   try {
-    await setupPreview(preview.body);
     await Promise.all([
-      renderCharacters(characters.body),
-      renderActivities(activities.body),
-      renderObjectTypes(objectTypes.body),
-      renderRooms(rooms.body),
+      renderCharacters(pages.characters),
+      renderActivities(pages.activities),
+      renderObjectTypes(pages["object-types"]),
+      renderRooms(pages.rooms),
     ]);
   } catch (err) {
     showError(err);
