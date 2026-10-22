@@ -86,16 +86,29 @@ async function main() {
   // exists anywhere in the house. See rpc.ts's own comment.
   await stopOrphanedActivities().catch((err) => console.error("[server] stopOrphanedActivities at startup failed", err));
 
-  const jacqueline = characters.find((c) => c.name === "Jacqueline");
-
   // Mock wger data (see server/workouts.ts's own comment) — only for
-  // Jacqueline, and only if today has nothing yet, so this doesn't
-  // overwrite anything on every restart.
+  // Jacqueline specifically (unrelated to val.town publishing below — a
+  // separate, not-yet-multi-character feature), and only if today has
+  // nothing yet, so this doesn't overwrite anything on every restart.
+  const jacqueline = characters.find((c) => c.name === "Jacqueline");
   if (jacqueline) seedMockWorkoutsIfEmpty(jacqueline.id, localDateString(new Date()));
 
+  // Re-queried fresh at each use (not captured once here) so an admin
+  // toggling a character's "Publish to viewer" checkbox takes effect at
+  // the next natural push point (next activity change, next hourly tick)
+  // instead of needing a full server restart.
+  function getPublishedCharacters() {
+    return listCharacters().filter((c) => c.publishToViewer);
+  }
+
   onGoalsChange(() => {
-    // val.town/the public viewer only ever show Jacqueline's goals for now.
-    if (jacqueline) pushGoals(jacqueline.id).catch((err) => console.error("[server] pushGoals after change failed", err));
+    // Doesn't know which character's goals changed (one shared in-memory
+    // store underneath — see server/goals.ts's own comment), so push
+    // every published character's, same reasoning the WS broadcast
+    // equivalent (broadcastEachClient in rpc.ts) already uses.
+    for (const character of getPublishedCharacters()) {
+      pushGoals(character.id).catch((err) => console.error(`[server] pushGoals after change failed for ${character.name}`, err));
+    }
   });
 
   // Never blocks startup — settlement is gamification bookkeeping, not
@@ -116,27 +129,30 @@ async function main() {
   // either polling or pushing after every single field change.
   pushHouseLayout().catch((err) => console.error("[server] initial pushHouseLayout failed", err));
 
-  if (jacqueline) {
+  for (const character of getPublishedCharacters()) {
     // Pushed once on startup so a viewer isn't stuck showing stale data
     // from last session; pushStatus also re-fires on every activity
     // change (see rpc.ts), pushGoals on every goal change (above).
-    pushStatus(jacqueline.id).catch((err) => console.error("[server] initial pushStatus failed", err));
-    pushGoals(jacqueline.id).catch((err) => console.error("[server] initial pushGoals failed", err));
-
-    // Stats scan much more AW history (or, for streaks, more of the
-    // history log) than pushStatus's today-only query, so they get their
-    // own slow timer — see CLAUDE.md's "Broadcasting" section for why
-    // none of these get their own separate cadence even though some are
-    // static between boundary crossings.
-    const runStatsPushes = () => {
-      pushStats(jacqueline.id).catch((err) => console.error("[server] pushStats failed", err));
-      pushPeriodStats(jacqueline.id).catch((err) => console.error("[server] pushPeriodStats failed", err));
-      pushYesterdayStats(jacqueline.id).catch((err) => console.error("[server] pushYesterdayStats failed", err));
-      pushTodayStreaks(jacqueline.id).catch((err) => console.error("[server] pushTodayStreaks failed", err));
-    };
-    runStatsPushes();
-    setInterval(runStatsPushes, STATS_PUSH_INTERVAL_MS);
+    pushStatus(character.id).catch((err) => console.error(`[server] initial pushStatus failed for ${character.name}`, err));
+    pushGoals(character.id).catch((err) => console.error(`[server] initial pushGoals failed for ${character.name}`, err));
   }
+
+  // Stats scan much more AW history (or, for streaks, more of the history
+  // log) than pushStatus's today-only query, so they get their own slow
+  // timer — see CLAUDE.md's "Broadcasting" section for why none of these
+  // get their own separate cadence even though some are static between
+  // boundary crossings. One shared timer for every published character,
+  // re-queried fresh each tick (see getPublishedCharacters's own comment).
+  const runStatsPushes = () => {
+    for (const character of getPublishedCharacters()) {
+      pushStats(character.id).catch((err) => console.error(`[server] pushStats failed for ${character.name}`, err));
+      pushPeriodStats(character.id).catch((err) => console.error(`[server] pushPeriodStats failed for ${character.name}`, err));
+      pushYesterdayStats(character.id).catch((err) => console.error(`[server] pushYesterdayStats failed for ${character.name}`, err));
+      pushTodayStreaks(character.id).catch((err) => console.error(`[server] pushTodayStreaks failed for ${character.name}`, err));
+    }
+  };
+  runStatsPushes();
+  setInterval(runStatsPushes, STATS_PUSH_INTERVAL_MS);
 
   const server = http.createServer(async (req, res) => {
     if (req.url === "/health") {

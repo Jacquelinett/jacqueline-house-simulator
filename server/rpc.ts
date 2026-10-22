@@ -167,9 +167,9 @@ async function stopIfOrphaned(character: Character): Promise<void> {
   await stopActivity(character.awBucketId);
   broadcastToCharacter(character.id, "status", currentStatus(character.awBucketId));
   broadcastAllStatuses();
-  // val.town/the public viewer only ever show Jacqueline for now — see
-  // server/broadcast.ts's own comment on why this check is here too.
-  if (character.name === "Jacqueline") {
+  // Only published characters reach val.town/the viewer — see
+  // server/characters.ts's own comment on publishToViewer.
+  if (character.publishToViewer) {
     pushStatus(character.id).catch((err) => console.error("[rpc] pushStatus after auto-stop failed", err));
   }
 }
@@ -286,9 +286,9 @@ export function setupRpc(wss: WebSocketServer): void {
           if (msg.name === "startActivity" || msg.name === "stopActivity") {
             broadcastToCharacter(character.id, "status", currentStatus(character.awBucketId));
             broadcastAllStatuses();
-            // val.town/the public viewer only ever show one character
-            // (Jacqueline) for now — see server/broadcast.ts's own comment.
-            if (character.name === "Jacqueline") {
+            // Only published characters reach val.town/the viewer — see
+            // server/characters.ts's own comment on publishToViewer.
+            if (character.publishToViewer) {
               pushStatus(character.id).catch((err) => console.error("[rpc] pushStatus after activity change failed", err));
             }
           }

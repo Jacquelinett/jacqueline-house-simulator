@@ -56,6 +56,7 @@ interface Character {
   name: string;
   secret: string;
   awBucketId: string;
+  publishToViewer: boolean;
 }
 
 interface ActivityDef {
@@ -300,6 +301,7 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
 
   let secretInput: HTMLInputElement | null = null;
   let bucketInput: HTMLInputElement | null = null;
+  let publishCheckbox: HTMLInputElement | null = null;
   if (existing) {
     secretInput = document.createElement("input");
     secretInput.value = existing.secret;
@@ -308,6 +310,13 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
     bucketInput = document.createElement("input");
     bucketInput.value = existing.awBucketId;
     form.append(document.createTextNode("AW bucket:"), bucketInput);
+
+    const publishLabel = document.createElement("label");
+    publishCheckbox = document.createElement("input");
+    publishCheckbox.type = "checkbox";
+    publishCheckbox.checked = existing.publishToViewer;
+    publishLabel.append(publishCheckbox, document.createTextNode(" Publish to viewer"));
+    form.appendChild(publishLabel);
   }
 
   const footer = document.createElement("div");
@@ -330,7 +339,12 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
       if (id) {
         await adminFetch(`/api/admin/characters/${id}`, {
           method: "PATCH",
-          body: JSON.stringify({ name, secret: secretInput!.value.trim(), awBucketId: bucketInput!.value.trim() }),
+          body: JSON.stringify({
+            name,
+            secret: secretInput!.value.trim(),
+            awBucketId: bucketInput!.value.trim(),
+            publishToViewer: publishCheckbox!.checked,
+          }),
         });
       } else {
         await adminFetch("/api/admin/characters", { method: "POST", body: JSON.stringify({ name }) });
@@ -352,10 +366,10 @@ async function renderCharacters(body: HTMLElement) {
 
   const table = document.createElement("table");
   table.className = "admin-table";
-  table.innerHTML = "<tr><th>Name</th><th>Secret</th><th>AW bucket</th><th></th></tr>";
+  table.innerHTML = "<tr><th>Name</th><th>Secret</th><th>AW bucket</th><th>Published</th><th></th></tr>";
   for (const c of characters) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td>${c.name}</td><td><code>${c.secret}</code></td><td>${c.awBucketId}</td>`;
+    row.innerHTML = `<td>${c.name}</td><td><code>${c.secret}</code></td><td>${c.awBucketId}</td><td>${c.publishToViewer ? "Yes" : "No"}</td>`;
     const actionCell = document.createElement("td");
     const editBtn = document.createElement("button");
     editBtn.textContent = "Edit";
