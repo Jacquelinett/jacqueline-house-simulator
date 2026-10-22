@@ -22,6 +22,7 @@ import { getWorkoutsForDate } from "./workouts";
 import { getActivities } from "./activities";
 import { getObjectTypes } from "./objectTypes";
 import { getRoomSpecs } from "./rooms";
+import { getFloors } from "./floors";
 
 /**
  * One WebSocket connection per client carries everything — commands
@@ -146,6 +147,7 @@ export function setupRpc(wss: WebSocketServer): void {
     ws.send(JSON.stringify({ type: "state", key: "activities", data: getActivities() }));
     ws.send(JSON.stringify({ type: "state", key: "objectTypes", data: getObjectTypes() }));
     ws.send(JSON.stringify({ type: "state", key: "roomSpecs", data: getRoomSpecs() }));
+    ws.send(JSON.stringify({ type: "state", key: "floors", data: getFloors() }));
     sendSettings(ws, deviceId);
 
     ws.on("close", () => {

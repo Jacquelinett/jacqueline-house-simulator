@@ -164,6 +164,16 @@ export function migrate(): void {
       lateral_offset INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (room_id, idx)
     );
+
+    -- A floor is a level plus its designated base room — see
+    -- src/scene/floors.ts's own comment. level is the primary key (one
+    -- floor per level), not an arbitrary id, since "which floor is this"
+    -- is inherently the level number.
+    CREATE TABLE IF NOT EXISTS floors (
+      level INTEGER PRIMARY KEY,
+      label TEXT NOT NULL,
+      base_room_id TEXT NOT NULL
+    );
   `);
 
   // ALTER TABLE for columns added to tables that may already exist on a

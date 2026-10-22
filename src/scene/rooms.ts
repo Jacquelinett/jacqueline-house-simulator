@@ -228,21 +228,28 @@ export function screenToGrid(x: number, y: number): { u: number; v: number } {
 //  - behindRight: extends from anchor's v=0 (back-right/wall) edge, -v
 //  - frontLeft:   extends from anchor's v=rows (open, left-to-front) edge, +v
 //  - frontRight:  extends from anchor's u=cols (open, right-to-front) edge, +u
-// Because it's always named for the anchor's edge (not the declaring
-// room's own edge), the same 4 values double as edge names for ANY room
-// when it's being treated as the anchor — which is what the admin tool's
-// room-connections editor leans on (see rooms.ts's getEdgeConnections).
 export type ConnectionDirection = "behindLeft" | "behindRight" | "frontLeft" | "frontRight";
 
 /**
- * Each entry pairs this (the declaring) room's edge — PAIR_DIRECTION[direction],
- * see below — against the anchor room's `direction` edge. Only entries[0] is
- * ever used to compute this room's own position (see resolveRooms); any
- * further entries are additional doorway/connection facts this room is
- * asserting about itself that don't feed back into layout math at all — not
- * cross-validated against the rest of the layout for overlap/alignment,
- * same "fully hand-coordinated, no automatic checking" spirit the whole
- * room system already has.
+ * A room can connect to several other rooms (an array) — but "each room
+ * only has to worry about what it connects to, not which room connects to
+ * it": every entry here is always THIS room's own outgoing declaration,
+ * never something read in reverse off another room's array. There's no
+ * dual-ownership question to resolve (an earlier version had one — "did
+ * this edge's fact come from my own array or the other room's?" — which
+ * is exactly what made the whole thing hard to reason about). Only
+ * entries[0] is ever used to compute this room's own position (see
+ * resolveRooms()); further entries are additional declared attachments
+ * that don't feed back into layout math.
+ *
+ * The admin tool enforces, globally across every room's entries (plus
+ * every floor's base room — floors.ts), that a given target room id is
+ * claimed by at most one entry anywhere — once SOME room connects to X, X
+ * is removed from every "pick a room to connect to" picker until that
+ * connection is removed. Not enforced by the engine itself (same
+ * "hand-coordinated, no automatic validation" spirit as the rest of this
+ * system) — resolveRooms() still only reports a cycle as an error rather
+ * than assuming one can't happen.
  */
 export interface ConnectedToEntry {
   roomId: string;
@@ -258,7 +265,8 @@ export interface ConnectedToEntry {
 // Each direction's counterpart on the OTHER side of the same physical
 // edge — e.g. a wall edge (behindLeft) only ever meets an open edge on the
 // same axis (frontRight), never the perpendicular axis's pair. Exported so
-// the admin tool can validate/label edge pairings without re-deriving them.
+// the admin tool can label which edge of the TARGET room a connection
+// actually lands on.
 export const PAIR_DIRECTION: Record<ConnectionDirection, ConnectionDirection> = {
   behindLeft: "frontRight",
   frontRight: "behindLeft",
@@ -280,9 +288,10 @@ export interface RoomSpec {
   wallOverrides?: TileOverride[];
   objects: ObjectPlacement[];
   // Placement relative to another room's edge, instead of an absolute pixel
-  // offset — stays correct if either room's size changes. A room with no
-  // entries (or none at all) sits at the grid origin, i.e. "the anchor."
-  // See ConnectedToEntry for why only the first entry affects position.
+  // offset — stays correct if either room's size changes. Unset/empty means
+  // this room sits at the grid origin, i.e. "the anchor" (typically a
+  // floor's own base room — see floors.ts). See ConnectedToEntry for why
+  // only entries[0] affects this room's own position.
   connectedTo?: ConnectedToEntry[];
 }
 
@@ -333,57 +342,14 @@ export function roomSpecsFromWire(wire: RoomSpecWire[]): RoomSpec[] {
   }));
 }
 
-export interface EdgeConnection {
-  direction: ConnectionDirection; // the viewed room's OWN edge
-  otherRoomId: string;
-  gapTiles: number;
-  lateralOffset: number;
-  // Which room's connectedTo array actually holds this entry — "this"
-  // means roomId's own array (editing it mutates roomId's record);
-  // "other" means otherRoomId's array (editing it mutates THAT room's
-  // record instead, since direction is always named for the anchor).
-  owner: "this" | "other";
-  entryIndex: number; // index within the owning room's connectedTo array
-}
-
-/**
- * Every connection touching one of `roomId`'s own 4 edges, found from
- * BOTH directions: entries roomId itself declares (its own connectedTo
- * array — roomId's own touching edge is PAIR_DIRECTION[entry.direction],
- * since `direction` always names the ANCHOR's edge, not the declaring
- * room's) and entries OTHER rooms declare that name roomId as their
- * anchor (there, `direction` already IS roomId's own edge). Lets the admin
- * tool's room-connections editor show what's attached to each of a room's
- * 4 edges regardless of which room's record actually owns that fact.
- */
-export function getEdgeConnections(allRooms: RoomSpecWire[], roomId: string): EdgeConnection[] {
-  const result: EdgeConnection[] = [];
-  const room = allRooms.find((r) => r.id === roomId);
-  (room?.connectedTo ?? []).forEach((entry, entryIndex) => {
-    result.push({
-      direction: PAIR_DIRECTION[entry.direction],
-      otherRoomId: entry.roomId,
-      gapTiles: entry.gapTiles,
-      lateralOffset: entry.lateralOffset ?? 0,
-      owner: "this",
-      entryIndex,
-    });
-  });
-  for (const other of allRooms) {
-    if (other.id === roomId) continue;
-    (other.connectedTo ?? []).forEach((entry, entryIndex) => {
-      if (entry.roomId !== roomId) return;
-      result.push({
-        direction: entry.direction,
-        otherRoomId: other.id,
-        gapTiles: entry.gapTiles,
-        lateralOffset: entry.lateralOffset ?? 0,
-        owner: "other",
-        entryIndex,
-      });
-    });
+/** Every room id already claimed as a target by SOME room's connectedTo entry (any entry, by any room), or as a floor's base room (floors.ts) — excluded from "pick a room to connect to" pickers so no two connections (from the same room or different ones) ever claim the same target. `exceptRoomId` exempts one room's OWN existing targets from its own exclusion (editing/adding another connection for a room shouldn't make its already-made choices disappear from its own picker). */
+export function getUsedRoomIds(allRooms: RoomSpecWire[], baseRoomIds: string[], exceptRoomId?: string): Set<string> {
+  const used = new Set<string>(baseRoomIds);
+  for (const r of allRooms) {
+    if (r.id === exceptRoomId) continue;
+    for (const entry of r.connectedTo ?? []) used.add(entry.roomId);
   }
-  return result;
+  return used;
 }
 
 export function resolveRooms(specs: RoomSpec[]): RoomDef[] {

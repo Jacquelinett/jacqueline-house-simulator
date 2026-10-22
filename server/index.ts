@@ -18,6 +18,7 @@ import { localDateString } from "../src/goals/recurrence";
 import { seedActivitiesIfEmpty } from "./activities";
 import { seedObjectTypesIfEmpty } from "./objectTypes";
 import { seedRoomsIfEmpty } from "./rooms";
+import { seedFloorsIfEmpty } from "./floors";
 import { handleAdminApi } from "./adminApi";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -41,6 +42,7 @@ async function main() {
   seedActivitiesIfEmpty();
   seedObjectTypesIfEmpty();
   seedRoomsIfEmpty();
+  seedFloorsIfEmpty();
 
   const characters = listCharacters();
   console.log(`[server] characters: ${characters.map((c) => c.name).join(", ")}`);

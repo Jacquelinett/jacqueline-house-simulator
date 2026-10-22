@@ -3,6 +3,7 @@ import { Todo } from "../todos/types";
 import { DEFAULT_DEVICE_SETTINGS, DeviceSettings } from "../settings/types";
 import { ActivityDef } from "../scene/activities";
 import { ObjectTypeDef, RoomSpecWire } from "../scene/rooms";
+import { Floor } from "../scene/floors";
 
 const DEVICE_ID_KEY = "houseSimulatorDeviceId";
 const SERVER_URL_KEY = "houseSimulatorServerUrl";
@@ -167,6 +168,7 @@ const characterStore = createRemoteStore<RemoteCharacter>({ id: "", name: "" });
 const activitiesStore = createRemoteStore<ActivityDef[]>([]);
 const objectTypesStore = createRemoteStore<Record<string, ObjectTypeDef>>({});
 const roomSpecsStore = createRemoteStore<RoomSpecWire[]>([]);
+const floorsStore = createRemoteStore<Floor[]>([]);
 
 export const getGoals = goalsStore.get;
 export const onGoalsChange = goalsStore.onChange;
@@ -181,6 +183,7 @@ export const onCharacterChange = characterStore.onChange;
 export const getRemoteActivities = activitiesStore.get;
 export const getRemoteObjectTypes = objectTypesStore.get;
 export const getRemoteRoomSpecs = roomSpecsStore.get;
+export const getRemoteFloors = floorsStore.get;
 
 const storesByKey: Record<string, { _set(data: unknown): void }> = {
   goals: goalsStore,
@@ -191,6 +194,7 @@ const storesByKey: Record<string, { _set(data: unknown): void }> = {
   activities: activitiesStore,
   objectTypes: objectTypesStore,
   roomSpecs: roomSpecsStore,
+  floors: floorsStore,
 };
 
 let socket: WebSocket | null = null;

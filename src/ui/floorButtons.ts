@@ -1,22 +1,18 @@
 import { rooms } from "../scene/rooms";
-
-const FLOORS: { label: string; roomId: string }[] = [
-  { label: "2F", roomId: "bedroom" },
-  { label: "1F", roomId: "office" },
-  { label: "B", roomId: "basement" },
-];
+import { FLOORS } from "../scene/floors";
 
 function levelOfRoomName(roomName: string): number {
   return rooms.find((r) => r.name === roomName)?.level ?? 0;
 }
 
 /**
- * Builds the floor-switcher buttons. "Floor" here means `RoomDef.level` —
- * several rooms can share one floor (e.g. office/entrance/living room are
- * all level 0), so the active button is whichever floor's own room shares
- * the current room's level, not whichever room is an exact id match.
- * Shared by the desktop app and the viewer (identical layout, just a
- * different goToRoom).
+ * Builds the floor-switcher buttons from the live `FLOORS` registry (see
+ * scene/floors.ts) — each floor's own `level` is its own thing (not every
+ * room has to match it exactly, several rooms can share one floor, e.g.
+ * office/entrance/living room are all level 0), so the active button is
+ * whichever floor's own level matches the current room's level, not
+ * whichever floor's base room is an exact id match. Shared by the desktop
+ * app and the viewer (identical layout, just a different goToRoom).
  *
  * `goToRoom` isn't known yet at call time — both callers construct the
  * House/HouseViewer (which needs its own onRoomChange callback already
@@ -34,12 +30,12 @@ export function setupFloorButtons(): {
 
   let goToRoom: (roomId: string) => void = () => {};
 
-  const buttons = FLOORS.map(({ label, roomId }) => {
+  const buttons = FLOORS.map(({ level, label, baseRoomId }) => {
     const btn = document.createElement("button");
     btn.textContent = label;
-    btn.onclick = () => goToRoom(roomId);
+    btn.onclick = () => goToRoom(baseRoomId);
     container.appendChild(btn);
-    return { level: rooms.find((r) => r.id === roomId)?.level ?? 0, el: btn };
+    return { level, el: btn };
   });
 
   document.body.appendChild(container);

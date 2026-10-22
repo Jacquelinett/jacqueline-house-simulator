@@ -19,9 +19,11 @@ import { DEFAULT_DEVICE_SETTINGS } from "./settings/types";
 import { applyTheme, THEME_BACKGROUND } from "./settings/themes";
 import { ACTIVITIES, setActivities, toCssColor } from "./scene/activities";
 import { roomSpecsFromWire, setObjectTypes, setRooms } from "./scene/rooms";
+import { setFloors } from "./scene/floors";
 import {
   connectRemoteState,
   getRemoteActivities,
+  getRemoteFloors,
   getRemoteObjectTypes,
   getRemoteRoomSpecs,
   getRemoteStatus,
@@ -189,6 +191,7 @@ async function main() {
   setActivities(getRemoteActivities());
   setObjectTypes(getRemoteObjectTypes());
   setRooms(roomSpecsFromWire(getRemoteRoomSpecs()));
+  setFloors(getRemoteFloors());
 
   const house = await setupHouse(app);
   // Applied once right after connecting (mirrors the old AW-resume-on-launch
