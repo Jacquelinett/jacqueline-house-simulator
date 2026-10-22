@@ -25,6 +25,42 @@ export function historyForGoal(goalId: string): GoalHistoryEntry[] {
   return getGoalHistory().filter((h) => h.goalId === goalId);
 }
 
+export interface GoalHistorySummary {
+  mostCompleted: { label: string; count: number } | null;
+  mostSkipped: { label: string; count: number } | null;
+}
+
+/**
+ * Most completed/most skipped activity across whatever slice of history is
+ * passed in — aggregated by activity label, not per-goal (a recurring
+ * goal's own history is about the activity overall, not whichever specific
+ * schedule happens to track it). Shared by the Statistic modal's All-Time
+ * tab (the full history) and its Period tab (history filtered to a week or
+ * month first) — the only difference between those two callers is which
+ * slice of `getGoalHistory()` they pass in.
+ */
+export function summarizeGoalHistory(history: GoalHistoryEntry[]): GoalHistorySummary {
+  const byLabel = new Map<string, Record<GoalHistoryEntry["outcome"], number>>();
+  for (const entry of history) {
+    const counts = byLabel.get(entry.activityLabel) ?? { completed: 0, skipped: 0, missed: 0 };
+    counts[entry.outcome]++;
+    byLabel.set(entry.activityLabel, counts);
+  }
+
+  let mostCompleted: { label: string; count: number } | null = null;
+  let mostSkipped: { label: string; count: number } | null = null;
+  for (const [label, counts] of byLabel) {
+    if (counts.completed > 0 && (!mostCompleted || counts.completed > mostCompleted.count)) {
+      mostCompleted = { label, count: counts.completed };
+    }
+    if (counts.skipped > 0 && (!mostSkipped || counts.skipped > mostSkipped.count)) {
+      mostSkipped = { label, count: counts.skipped };
+    }
+  }
+
+  return { mostCompleted, mostSkipped };
+}
+
 function lastSettledDateFor(goalId: string, history: GoalHistoryEntry[]): string | null {
   const dates = history.filter((h) => h.goalId === goalId).map((h) => h.date);
   return dates.length ? dates.reduce((max, d) => (d > max ? d : max)) : null;

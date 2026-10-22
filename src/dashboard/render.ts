@@ -9,7 +9,9 @@ import type { ActivityStat } from "./stats";
  * place instead of two copies silently drifting apart.
  */
 export function buildDashboardSections(container: HTMLElement): {
+  goalHeading: HTMLElement;
   goalList: HTMLElement;
+  activityHeading: HTMLElement;
   activityList: HTMLElement;
 } {
   const goalHeading = document.createElement("h3");
@@ -34,7 +36,7 @@ export function buildDashboardSections(container: HTMLElement): {
   activityList.className = "dashboard-list";
   container.appendChild(activityList);
 
-  return { goalList, activityList };
+  return { goalHeading, goalList, activityHeading, activityList };
 }
 
 export interface DashboardGoalEntry {
@@ -47,12 +49,12 @@ export interface DashboardGoalEntry {
   subRows: string[];
 }
 
-export function renderGoalList(container: HTMLElement, entries: DashboardGoalEntry[]): void {
+export function renderGoalList(container: HTMLElement, entries: DashboardGoalEntry[], emptyText = "No goals today"): void {
   container.textContent = "";
   if (entries.length === 0) {
     const empty = document.createElement("div");
     empty.className = "goals-empty";
-    empty.textContent = "No goals today";
+    empty.textContent = emptyText;
     container.appendChild(empty);
     return;
   }

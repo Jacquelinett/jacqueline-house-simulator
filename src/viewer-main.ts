@@ -1,6 +1,7 @@
 import { HouseViewer, preloadRoomAssets } from "./scene/viewer";
 import { Goal } from "./goals/types";
-import { describeScheduleForToday, groupTodaysGoals } from "./goals/todayGroups";
+import { describeScheduleForDate, groupGoalsForDate } from "./goals/goalGroups";
+import { localDateString } from "./goals/recurrence";
 import { formatMinutes } from "./goals/ui";
 import { buildModal } from "./ui/modal";
 import { buildFloatingPanel } from "./ui/draggablePanel";
@@ -435,7 +436,8 @@ async function main() {
   // progress need a fresh fetch to stay accurate. Shared with the desktop
   // Dashboard's rendering, just sourced from polled data instead of AW.
   function renderGoals() {
-    const groups = groupTodaysGoals(latestGoals, new Date());
+    const todayStr = localDateString(new Date());
+    const groups = groupGoalsForDate(latestGoals, new Date());
     const entries = groups.map(({ activityLabel, targetMinutes, goals }) => {
       const baselineMinutes = latestTodayMinutesByLabel[activityLabel] ?? 0;
       const liveMinutes =
@@ -445,7 +447,7 @@ async function main() {
         minutes: liveMinutes,
         targetMinutes,
         done: liveMinutes >= targetMinutes,
-        subRows: goals.map((g) => `${describeScheduleForToday(g.recurrence)} — ${formatMinutes(g.targetMinutes)}`),
+        subRows: goals.map((g) => `${describeScheduleForDate(g.recurrence, todayStr)} — ${formatMinutes(g.targetMinutes)}`),
       };
     });
     renderGoalList(goalList, entries);

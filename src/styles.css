@@ -462,6 +462,41 @@ body {
   font-size: 13px;
 }
 
+/* Dashboard's date picker and the Statistic modal's tab/period controls —
+   app-only (both need live AW range queries the viewer has no access to),
+   so these live here rather than in shared-chrome.css. */
+.dashboard-date-row {
+  margin-bottom: 8px;
+}
+
+.dashboard-date-input,
+.stat-period-controls input[type="date"] {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.stat-tabs {
+  display: flex;
+  margin-bottom: 12px;
+}
+
+.stat-period-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.stat-period-range-label {
+  font-size: 12px;
+  opacity: 0.8;
+  margin-bottom: 8px;
+}
+
 /* Mobile Pick Action list rows — app-only (the viewer never starts/stops
    activities), so this lives here rather than in shared-chrome.css. */
 .mobile-action-row {
