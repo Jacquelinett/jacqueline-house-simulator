@@ -24,10 +24,11 @@
 // verify continuous pointer-drag math well enough to trust.
 import { Application, Assets, Container, FederatedPointerEvent, Graphics, Rectangle, Texture } from "pixi.js";
 import { buildModal } from "./ui/modal";
-import { assetUrl, buildLayer, preloadRoomAssets } from "./scene/renderer";
+import { assetUrl, buildFloorAndWalls, buildLayer, preloadRoomAssets } from "./scene/renderer";
 import { AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
-import { gridToScreen, ObjectTypeDef, roomSpecsFromWire, screenToGrid, setObjectTypes, setRooms, SpriteLayer } from "./scene/rooms";
+import { gridToScreen, ObjectTypeDef, RoomDef, roomSpecsFromWire, screenToGrid, setObjectTypes, setRooms, SpriteLayer } from "./scene/rooms";
+import { floor1, wall1 } from "./scene/tileset";
 
 const ADMIN_SECRET_KEY = "houseSimulatorAdminSecret";
 
@@ -134,6 +135,11 @@ function showError(err: unknown) {
   el.textContent = err instanceof Error ? err.message : String(err);
   app.prepend(el);
   setTimeout(() => el.remove(), 6000);
+}
+
+/** 2 decimals is plenty — most positions aren't tile-aligned at all, so this is routinely a non-round fraction, not floating-point noise to hide. Shared by the room editor's tile mode and the object-type editor's anchor tile mode. */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 // --- Tabs ---
@@ -315,12 +321,18 @@ async function renderActivities(body: HTMLElement) {
 
 // --- Object types ---
 
-const TYPE_PREVIEW_WIDTH = 220;
-const TYPE_PREVIEW_HEIGHT = 200;
-// Where the room's (0,0) tile corner lands on the canvas — chosen so a few
-// tiles' worth of grid are visible around it, with room below/right for a
-// typical object's width/height to not get clipped.
-const TYPE_PREVIEW_ORIGIN = { x: 90, y: 30 };
+const TYPE_PREVIEW_WIDTH = 260;
+const TYPE_PREVIEW_HEIGHT = 240;
+// Where the room's (0,0) tile corner lands on the canvas — chosen so a
+// couple of tiles' worth of real floor/wall are visible around it, with
+// room on every side for a typical object's width/height (plus whatever an
+// anchor shifts it by) to not get clipped.
+const TYPE_PREVIEW_ORIGIN = { x: 110, y: 70 };
+// A minimal but fully real RoomDef — same floor1/wall1 tiles and the same
+// buildFloorAndWalls() the actual game renders with, just small (2x2) and
+// with no objects of its own, so the anchor can be judged against a real
+// room corner instead of a bare wireframe grid.
+const TYPE_PREVIEW_ROOM: RoomDef = { id: "preview", name: "preview", cols: 2, rows: 2, level: 0, floor: floor1, wall: wall1, objects: [], x: 0, y: 0, width: 0, height: 0 };
 
 function makeDefaultObjectType(): ObjectTypeDef {
   return { name: "", width: 32, height: 32, below: [{ color: 0x888888 }] };
@@ -403,20 +415,27 @@ async function openObjectTypeEditModal(
   const anchorHint = document.createElement("div");
   anchorHint.className = "admin-hint";
   anchorHint.textContent =
-    "Click the preview to set the anchor point — the pixel that lands on a tile's corner when placed via the room editor's tile mode. Unset defaults to the sprite's own top-left (today's behavior).";
+    "Click the preview to set the anchor point — the sprite shifts so that point lands on the room corner, same as it will when placed via the room editor's tile mode. Unset defaults to the sprite's own top-left (today's behavior).";
   modal.body.appendChild(anchorHint);
+
+  const anchorTileModeLabel = document.createElement("label");
+  anchorTileModeLabel.className = "admin-tile-mode-toggle";
+  const anchorTileModeCheckbox = document.createElement("input");
+  anchorTileModeCheckbox.type = "checkbox";
+  anchorTileModeLabel.append(anchorTileModeCheckbox, document.createTextNode(" Tile mode (snap the anchor to the diamond grid, enter as tile coordinates)"));
+  modal.body.appendChild(anchorTileModeLabel);
 
   const anchorRow = document.createElement("div");
   anchorRow.className = "admin-form";
+  const anchorXLabel = document.createTextNode("Anchor X:");
   const anchorXInput = document.createElement("input");
   anchorXInput.type = "number";
-  anchorXInput.value = String(anchorX);
   anchorXInput.style.width = "60px";
+  const anchorYLabel = document.createTextNode("Anchor Y:");
   const anchorYInput = document.createElement("input");
   anchorYInput.type = "number";
-  anchorYInput.value = String(anchorY);
   anchorYInput.style.width = "60px";
-  anchorRow.append(document.createTextNode("Anchor X:"), anchorXInput, document.createTextNode("Anchor Y:"), anchorYInput);
+  anchorRow.append(anchorXLabel, anchorXInput, anchorYLabel, anchorYInput);
   modal.body.appendChild(anchorRow);
 
   const previewContainer = document.createElement("div");
@@ -443,43 +462,49 @@ async function openObjectTypeEditModal(
   stage.position.set(TYPE_PREVIEW_ORIGIN.x, TYPE_PREVIEW_ORIGIN.y);
   app.stage.addChild(stage);
 
-  // Reference grid, drawn once — a few tile diamonds around the room's own
-  // (0,0) corner, same gridToScreen math the real renderer uses, purely so
-  // there's a "room corner" to judge the anchor point against.
-  const grid = new Graphics();
-  for (let u = 0; u < 3; u++) {
-    for (let v = 0; v < 3; v++) {
-      const back = gridToScreen(u, v);
-      const right = gridToScreen(u + 1, v);
-      const front = gridToScreen(u + 1, v + 1);
-      const left = gridToScreen(u, v + 1);
-      grid.poly([back.x, back.y, right.x, right.y, front.x, front.y, left.x, left.y]).stroke({ width: 1, color: 0x555566 });
-    }
-  }
-  stage.addChild(grid);
+  // Real floor + walls (the exact same buildFloorAndWalls() the actual
+  // game uses), not a bare wireframe grid — so the anchor is judged
+  // against what a room corner actually looks like.
+  stage.addChild(buildFloorAndWalls(TYPE_PREVIEW_ROOM));
 
   let spriteLayer = new Container();
   stage.addChild(spriteLayer);
-  const crosshair = new Graphics();
+  // Fixed, never moves — it marks the room corner (stage-local (0,0)) that
+  // the sprite's anchor point always lands on by construction (see
+  // rebuildSprite below), not the anchor's own shifting pixel location.
+  const crosshair = new Graphics()
+    .moveTo(-6, 0)
+    .lineTo(6, 0)
+    .moveTo(0, -6)
+    .lineTo(0, 6)
+    .stroke({ width: 2, color: 0xff3366 })
+    .circle(0, 0, 3)
+    .fill({ color: 0xff3366 });
   stage.addChild(crosshair);
 
   function currentPrimaryLayer(): SpriteLayer {
     return spriteSelect.value === "__color__" ? { color: parseInt(colorInput.value.slice(1), 16) } : { texture: spriteSelect.value };
   }
 
-  function drawCrosshair() {
-    crosshair
-      .clear()
-      .moveTo(anchorX - 6, anchorY)
-      .lineTo(anchorX + 6, anchorY)
-      .moveTo(anchorX, anchorY - 6)
-      .lineTo(anchorX, anchorY + 6)
-      .stroke({ width: 2, color: 0xff3366 })
-      .circle(anchorX, anchorY, 3)
-      .fill({ color: 0xff3366 });
-    app.render();
+  /** Mirrors the room editor's tile-mode display convention: shows anchorX/anchorY as raw pixels, or as the tile (u,v) they correspond to. */
+  function syncAnchorInputs() {
+    anchorXLabel.textContent = anchorTileModeCheckbox.checked ? "Anchor tile u:" : "Anchor X:";
+    anchorYLabel.textContent = anchorTileModeCheckbox.checked ? "Anchor tile v:" : "Anchor Y:";
+    if (anchorTileModeCheckbox.checked) {
+      const { u, v } = screenToGrid(anchorX, anchorY);
+      anchorXInput.value = String(round2(u));
+      anchorYInput.value = String(round2(v));
+    } else {
+      anchorXInput.value = String(anchorX);
+      anchorYInput.value = String(anchorY);
+    }
   }
 
+  // Rebuilds the sprite AND repositions it so the anchor point (anchorX,
+  // anchorY) always lands exactly at stage-local (0,0) — the pinned
+  // crosshair — instead of the sprite always sitting at (0,0) with the
+  // crosshair floating over it. This is what makes moving the anchor
+  // visibly shift the object relative to the room corner.
   function rebuildSprite() {
     stage.removeChild(spriteLayer);
     spriteLayer.destroy({ children: true });
@@ -489,17 +514,30 @@ async function openObjectTypeEditModal(
     for (const layer of [currentPrimaryLayer(), ...(draftType.above ?? [])]) {
       spriteLayer.addChild(buildLayer(layer, width, height));
     }
-    stage.addChildAt(spriteLayer, 1); // above the grid, below the crosshair
-    drawCrosshair();
+    spriteLayer.position.set(-anchorX, -anchorY);
+    stage.addChildAt(spriteLayer, 1); // above the floor/walls, below the crosshair
+    syncAnchorInputs();
+    app.render();
   }
 
   app.stage.on("pointertap", (e: FederatedPointerEvent) => {
     const local = e.getLocalPosition(stage);
-    anchorX = Math.round(local.x);
-    anchorY = Math.round(local.y);
-    anchorXInput.value = String(anchorX);
-    anchorYInput.value = String(anchorY);
-    drawCrosshair();
+    // Click position relative to the sprite's own top-left (its current
+    // position already encodes the OLD anchor) — this is "what sprite-local
+    // pixel did I click," independent of where the sprite currently sits.
+    let x = local.x - spriteLayer.position.x;
+    let y = local.y - spriteLayer.position.y;
+    if (anchorTileModeCheckbox.checked) {
+      // Snap to the nearest diamond-grid vertex instead of an arbitrary
+      // pixel — "calculated based on the diamond tile."
+      const { u, v } = screenToGrid(x, y);
+      const snapped = gridToScreen(Math.round(u), Math.round(v));
+      x = snapped.x;
+      y = snapped.y;
+    }
+    anchorX = Math.round(x);
+    anchorY = Math.round(y);
+    rebuildSprite();
   });
 
   spriteSelect.onchange = async () => {
@@ -510,14 +548,20 @@ async function openObjectTypeEditModal(
   colorInput.oninput = () => rebuildSprite();
   widthInput.onchange = () => rebuildSprite();
   heightInput.onchange = () => rebuildSprite();
-  anchorXInput.onchange = () => {
-    anchorX = Number(anchorXInput.value);
-    drawCrosshair();
-  };
-  anchorYInput.onchange = () => {
-    anchorY = Number(anchorYInput.value);
-    drawCrosshair();
-  };
+  anchorTileModeCheckbox.onchange = () => syncAnchorInputs(); // redisplay only — doesn't change the underlying anchor
+  function applyAnchorInputs() {
+    if (anchorTileModeCheckbox.checked) {
+      const screen = gridToScreen(Number(anchorXInput.value), Number(anchorYInput.value));
+      anchorX = Math.round(screen.x);
+      anchorY = Math.round(screen.y);
+    } else {
+      anchorX = Number(anchorXInput.value);
+      anchorY = Number(anchorYInput.value);
+    }
+    rebuildSprite();
+  }
+  anchorXInput.onchange = applyAnchorInputs;
+  anchorYInput.onchange = applyAnchorInputs;
 
   saveBtn.onclick = async () => {
     const name = nameInput.value.trim();
@@ -711,11 +755,6 @@ async function openRoomEditModal(room: RoomSpecWire, objectTypes: Record<string,
       console.error("[admin] renderPreview failed", err);
       showError(err);
     }
-  }
-
-  /** 2 decimals is plenty — most existing objects aren't tile-aligned at all, so this is routinely a non-round fraction, not floating-point noise to hide. */
-  function round2(n: number): number {
-    return Math.round(n * 100) / 100;
   }
 
   function renderTable() {

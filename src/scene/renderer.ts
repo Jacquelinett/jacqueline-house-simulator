@@ -101,8 +101,8 @@ function placeTileWithOverrides(
   placeTile(container, defaultTexture, defaultRect, u, v, groundOffset);
 }
 
-/** Builds the floor + back walls for a room, tiled per its chosen floor/wall variant. */
-function buildFloorAndWalls(room: RoomDef): Container {
+/** Builds the floor + back walls for a room, tiled per its chosen floor/wall variant. Exported for the admin tool's object-type preview (admin-main.ts), which renders a real tiny room corner behind the sprite instead of a bare wireframe grid. */
+export function buildFloorAndWalls(room: RoomDef): Container {
   const container = new Container();
   const { floor, wall } = room;
 
