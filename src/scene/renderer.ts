@@ -237,14 +237,17 @@ export function buildBackWalls(room: RoomDef): Container {
  * same way. Paints IN FRONT of the floor (see buildRoom) — unlike the
  * back walls above, these sit between the floor and the camera.
  *
- * Every vertex here always extends whichever front wall is present
- * through its own panel tile — never the back corner's dedicated joint
- * piece. Unlike the back corner (a true meeting of two matched edges
- * that have always coexisted), these are either just where a single
- * front wall run starts (the right/left vertices, each only ever touched
- * by one front wall) or a new, optional meeting of the two front walls
- * (the front vertex) — in neither case does reusing the back corner tile
- * make sense, so a plain panel tile is all that's ever used.
+ * The right vertex (cols,0) / left vertex (0,rows) each just extend
+ * their own front wall's panel tile one step further — never the back
+ * corner's dedicated joint piece, since each is only ever touched by a
+ * single front wall, not a true meeting of two edges. The two front
+ * walls never get a tile of their own at the shared (cols,rows) corner
+ * either: each wall's own run (vertex + panels) already covers its full
+ * edge exactly (u=0..cols-1 for bottom-left, v=0..rows-1 for
+ * bottom-right — matching the room's own column/row count 1:1), so a
+ * tile at (cols,rows) would sit one step past both already-complete
+ * spans — confirmed live, it read as the wall extending a full tile too
+ * far past the room's actual corner.
  */
 export function buildBottomWalls(room: RoomDef): Container {
   const container = new Container();
@@ -267,12 +270,14 @@ export function buildBottomWalls(room: RoomDef): Container {
   placeTileWithOverrides(container, wo, wall.texture, wall.left, room.cols, 0, groundOffset, showBottomRight);
   placeTileWithOverrides(container, wo, wall.texture, wall.right, 0, room.rows, groundOffset, showBottomLeft);
 
-  // Front (bottom) vertex (cols,rows) — where the two front walls would
-  // meet if both are on; bottom-left checked first only to pick
-  // *something* deterministic when both are (an uncommon combination the
-  // user hasn't specified a preference for either way).
-  const frontVertex = showBottomLeft ? wall.right : wall.left;
-  placeTileWithOverrides(container, wo, wall.texture, frontVertex, room.cols, room.rows, groundOffset, showBottomLeft || showBottomRight);
+  // No tile at the front (cols,rows) vertex where the two front walls
+  // would otherwise meet — each wall's own run (vertex above + panels
+  // above) already covers its full edge exactly (u=0..cols-1 for
+  // bottom-left, v=0..rows-1 for bottom-right, matching the room's own
+  // column/row count 1:1). A tile at (cols,rows) would sit one step
+  // PAST both of those already-complete spans — confirmed live, it read
+  // as the wall extending a full tile too far past the room's actual
+  // corner.
 
   return container;
 }
