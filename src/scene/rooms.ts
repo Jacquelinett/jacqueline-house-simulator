@@ -272,6 +272,9 @@ export const TILE_SIZE = 16; // base square tile, px
 export const TILE_WIDTH = TILE_SIZE * 2; // 32 — tile's iso-projected screen width
 export const TILE_HEIGHT = TILE_SIZE; // 16 — tile's iso-projected screen height (2:1 iso)
 
+/** RoomSpec.wallHeight's own default when unset — see that field's own comment and tileset.ts's WALL_PART_SIZE (16px per stacked piece, so 8 -> a 128px-tall wall). */
+export const DEFAULT_WALL_HEIGHT = 8;
+
 // Vertical stacking between floors (level: 1 = upper floor, -1 = basement,
 // etc.) is just a fixed screen-Y offset per level — unlike room-to-room
 // connections, floors don't need a chain-resolution system since they're
@@ -378,6 +381,11 @@ export interface RoomSpec {
   // renderer.ts's buildBackWalls/buildBottomWalls for the actual placement.
   showBottomLeftWall?: boolean;
   showBottomRightWall?: boolean;
+  // How many 16px autotile pieces tall a wall renders (see tileset.ts's
+  // WallPart/WALL_PART_SIZE and renderer.ts's placeWallStack) — unset
+  // means DEFAULT_WALL_HEIGHT, same "undefined means the default" contract
+  // every other optional field on this interface already uses.
+  wallHeight?: number;
   // Whether the room + everything inside it actually renders/is clickable
   // client-side — default false (unlike the wall-show flags above, which
   // default true). Deliberately NEVER read by resolveRooms() or
@@ -430,6 +438,7 @@ export interface RoomSpecWire {
   showRightWall?: boolean;
   showBottomLeftWall?: boolean;
   showBottomRightWall?: boolean;
+  wallHeight?: number;
   visible?: boolean;
   connectedTo?: ConnectedToEntry[];
   objects: ObjectPlacement[];
@@ -449,6 +458,7 @@ export function roomSpecsFromWire(wire: RoomSpecWire[]): RoomSpec[] {
     showRightWall: w.showRightWall,
     showBottomLeftWall: w.showBottomLeftWall,
     showBottomRightWall: w.showBottomRightWall,
+    wallHeight: w.wallHeight,
     visible: w.visible,
     connectedTo: w.connectedTo,
     objects: w.objects,

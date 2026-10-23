@@ -1,8 +1,8 @@
 import { AlphaFilter, Application, Assets, BlurFilter, Container, Graphics, Rectangle, Sprite, Text, Texture } from "pixi.js";
-import { gridToScreen, rooms as roomDefs, screenToGrid, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
+import { DEFAULT_WALL_HEIGHT, gridToScreen, rooms as roomDefs, screenToGrid, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
 import { findActivityById } from "./activities";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./characterSprites";
-import { TileOverride, TileRect } from "./tileset";
+import { TileOverride, TileRect, WallPart, WallVariant, WALL_PART_SIZE } from "./tileset";
 
 // Exported for AdminPreviewRenderer (adminPreview.ts), which reuses this
 // same dim level for its own whole-room dimming instead of a separately
@@ -195,6 +195,112 @@ function placeTileWithOverrides(
   placeTile(container, defaultTexture, defaultRect, u, v, groundOffset);
 }
 
+/** How tall a room's walls actually render, in pixels — `wallHeight` 16px autotile pieces stacked (see tileset.ts's WallPart/WALL_PART_SIZE), falling back to DEFAULT_WALL_HEIGHT when unset (e.g. a hand-built RoomSpec that never set it). */
+function totalWallHeight(room: RoomDef): number {
+  return (room.wallHeight ?? DEFAULT_WALL_HEIGHT) * WALL_PART_SIZE;
+}
+
+/**
+ * Places one vertical wall "stack" at grid position (u,v) — `part.top` for
+ * the topmost piece, `part.bottom` for the bottommost, `part.mid` repeated
+ * for every piece in between (a stack of exactly 1 piece uses `part.top`
+ * alone; exactly 2 uses `part.top` + `part.bottom`, no mid). This is the
+ * same reusable-middle-piece trick used widthwise along a wall run (one
+ * stack per grid step) applied heightwise instead — see WallPart's own
+ * comment. `xOffset` (default 0) shifts the whole stack sideways by that
+ * many pixels without touching its (u,v) grid position at all — used only
+ * by placeCorner below, to lay a second half-width stack immediately to
+ * the right of the first.
+ */
+function placeWallStack(
+  container: Container,
+  texturePath: string,
+  part: WallPart,
+  u: number,
+  v: number,
+  groundOffset: number,
+  wallHeightUnits: number,
+  xOffset = 0,
+) {
+  const { x, y } = gridToScreen(u, v);
+  const baseX = x - TILE_WIDTH / 2 + xOffset;
+  const baseY = y - groundOffset;
+  for (let i = 0; i < wallHeightUnits; i++) {
+    const rect = i === 0 ? part.top : i === wallHeightUnits - 1 ? part.bottom : part.mid;
+    const sprite = new Sprite(tileTexture(texturePath, rect));
+    sprite.position.set(baseX, baseY + i * rect.h);
+    container.addChild(sprite);
+  }
+}
+
+/**
+ * Like placeTileWithOverrides, but for a wall stack rather than a single
+ * tile: checks `overrides` for this exact (u,v) first (replacing the
+ * entire stack with ONE plain tile via placeTile, or a gap for `tile:
+ * null` — a per-tile wall override was never meant to represent "a whole
+ * custom stack," just a single replacement image, e.g. a doorway gap, so
+ * it bypasses the autotile stacking entirely rather than needing its own
+ * top/mid/bottom shape). Falls through to placeWallStack only when
+ * there's no override and `renderDefault` is true, same gating
+ * placeTileWithOverrides already uses for showLeftWall/showRightWall etc.
+ */
+function placeWallWithOverrides(
+  container: Container,
+  overrides: TileOverride[] | undefined,
+  texturePath: string,
+  part: WallPart,
+  u: number,
+  v: number,
+  groundOffset: number,
+  wallHeightUnits: number,
+  renderDefault = true,
+) {
+  const override = overrides?.find((o) => o.u === u && o.v === v);
+  if (override) {
+    if (override.tile) placeTile(container, override.tile.texture, override.tile, u, v, groundOffset);
+    return;
+  }
+  if (!renderDefault) return;
+  placeWallStack(container, texturePath, part, u, v, groundOffset, wallHeightUnits);
+}
+
+/**
+ * The back-vertex (0,0) joint where the left and right back walls meet —
+ * its own function since it's the one position that can draw TWO
+ * half-width stacks side by side rather than zero or one (see
+ * WallVariant's own comment on why there's no single dedicated corner
+ * tile anymore). An override here still replaces the whole joint with one
+ * plain tile (or a gap), checked once up front so the two-stack case
+ * below never needs to re-check it per half. When only one side is shown,
+ * that side's own reusable part just continues straight through the
+ * joint — same "no dedicated joint piece unless both sides are real"
+ * behavior the old single-corner-tile version had.
+ */
+function placeCorner(
+  container: Container,
+  overrides: TileOverride[] | undefined,
+  wall: WallVariant,
+  u: number,
+  v: number,
+  groundOffset: number,
+  wallHeightUnits: number,
+  showLeft: boolean,
+  showRight: boolean,
+) {
+  const override = overrides?.find((o) => o.u === u && o.v === v);
+  if (override) {
+    if (override.tile) placeTile(container, override.tile.texture, override.tile, u, v, groundOffset);
+    return;
+  }
+  if (!showLeft && !showRight) return;
+  if (showLeft && showRight) {
+    placeWallStack(container, wall.texture, wall.left, u, v, groundOffset, wallHeightUnits);
+    placeWallStack(container, wall.texture, wall.connection, u, v, groundOffset, wallHeightUnits, WALL_PART_SIZE);
+    return;
+  }
+  placeWallStack(container, wall.texture, showLeft ? wall.left : wall.right, u, v, groundOffset, wallHeightUnits);
+}
+
 /**
  * Builds just the back two walls (u=0/v=0 edges) for a room, tiled per
  * its chosen wall variant. Split out from the floor (see buildFloor
@@ -222,9 +328,11 @@ export function buildBackWalls(room: RoomDef): Container {
   // Walls sit on the same ground level as the floor, just drawn taller: their
   // canvas extends further UP from that shared level, not further down. So a
   // wall's top is offset by only its *extra* height beyond the floor's own
-  // canvas (wall.h - floor.h) — not its full height — otherwise it renders
-  // one floor-tile-height too high, floating above the floor with a gap.
-  const groundOffset = wall.left.h - floor.mid.h;
+  // canvas (wall height - floor.h) — not its full height — otherwise it
+  // renders one floor-tile-height too high, floating above the floor with a
+  // gap.
+  const wallHeightUnits = room.wallHeight ?? DEFAULT_WALL_HEIGHT;
+  const groundOffset = totalWallHeight(room) - floor.mid.h;
   // Edge caps sit one grid step further out than the last regular panel (see
   // below), which drops their natural ground level by one grid step — pull
   // them back up by that same amount so they stay flush with the run.
@@ -234,25 +342,24 @@ export function buildBackWalls(room: RoomDef): Container {
   // each back edge, capped with an edge tile at the far end.
   // showLeftWall/showRightWall (default true when unset) gate the DEFAULT
   // tile only — a wallOverrides entry on a hidden side still renders (see
-  // placeTileWithOverrides's own comment). If only one side renders, that
+  // placeWallWithOverrides's own comment). If only one side renders, that
   // side's own panel tile extends through the joint instead of the
-  // dedicated corner piece, so a single wall reads as one continuous run
-  // rather than stopping at a joint with nothing on the other side to
-  // join.
+  // two-stack corner (see placeCorner), so a single wall reads as one
+  // continuous run rather than stopping at a joint with nothing on the
+  // other side to join.
   const wo = room.wallOverrides;
   const showLeft = room.showLeftWall !== false;
   const showRight = room.showRightWall !== false;
-  const topCorner = showLeft && showRight ? wall.corner : showLeft ? wall.left : wall.right;
-  placeTileWithOverrides(container, wo, wall.texture, topCorner, 0, 0, groundOffset, showLeft || showRight);
+  placeCorner(container, wo, wall, 0, 0, groundOffset, wallHeightUnits, showLeft, showRight);
 
   for (let v = 1; v < room.rows; v++) {
-    placeTileWithOverrides(container, wo, wall.texture, wall.left, 0, v, groundOffset, showLeft);
+    placeWallWithOverrides(container, wo, wall.texture, wall.left, 0, v, groundOffset, wallHeightUnits, showLeft);
   }
-  placeTileWithOverrides(container, wo, wall.texture, wall.edgeLeft, 0, room.rows + 1, edgeGroundOffset, showLeft);
+  placeWallWithOverrides(container, wo, wall.texture, wall.edgeLeft, 0, room.rows + 1, edgeGroundOffset, wallHeightUnits, showLeft);
   for (let u = 1; u < room.cols; u++) {
-    placeTileWithOverrides(container, wo, wall.texture, wall.right, u, 0, groundOffset, showRight);
+    placeWallWithOverrides(container, wo, wall.texture, wall.right, u, 0, groundOffset, wallHeightUnits, showRight);
   }
-  placeTileWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols + 1, 0, edgeGroundOffset, showRight);
+  placeWallWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols + 1, 0, edgeGroundOffset, wallHeightUnits, showRight);
 
   return container;
 }
@@ -289,23 +396,24 @@ export function buildBottomWalls(room: RoomDef): Container {
   // camera and an object's sprite for an object placed near this edge.
   container.eventMode = "none";
   const { floor, wall } = room;
-  const groundOffset = wall.left.h - floor.mid.h;
+  const wallHeightUnits = room.wallHeight ?? DEFAULT_WALL_HEIGHT;
+  const groundOffset = totalWallHeight(room) - floor.mid.h;
 
   const wo = room.wallOverrides;
   const showBottomLeft = room.showBottomLeftWall === true;
   const showBottomRight = room.showBottomRightWall === true;
 
   for (let v = 1; v < room.rows; v++) {
-    placeTileWithOverrides(container, wo, wall.texture, wall.left, room.cols, v, groundOffset, showBottomRight);
+    placeWallWithOverrides(container, wo, wall.texture, wall.left, room.cols, v, groundOffset, wallHeightUnits, showBottomRight);
   }
   for (let u = 1; u < room.cols; u++) {
-    placeTileWithOverrides(container, wo, wall.texture, wall.right, u, room.rows, groundOffset, showBottomLeft);
+    placeWallWithOverrides(container, wo, wall.texture, wall.right, u, room.rows, groundOffset, wallHeightUnits, showBottomLeft);
   }
 
   // Right vertex (cols,0) / left vertex (0,rows) — just the first tile of
   // each front wall's own run, not a joint with anything.
-  placeTileWithOverrides(container, wo, wall.texture, wall.left, room.cols, 0, groundOffset, showBottomRight);
-  placeTileWithOverrides(container, wo, wall.texture, wall.right, 0, room.rows, groundOffset, showBottomLeft);
+  placeWallWithOverrides(container, wo, wall.texture, wall.left, room.cols, 0, groundOffset, wallHeightUnits, showBottomRight);
+  placeWallWithOverrides(container, wo, wall.texture, wall.right, 0, room.rows, groundOffset, wallHeightUnits, showBottomLeft);
 
   // No tile at the front (cols,rows) vertex where the two front walls
   // would otherwise meet — each wall's own run (vertex above + panels
@@ -952,7 +1060,7 @@ export class SceneRenderer {
       // just the floor's own box — walls add height purely above the
       // floor, so the true vertical center sits half a wall-height higher
       // than the floor's.
-      cy = room.y + front.y / 2 - room.wall.left.h / 2;
+      cy = room.y + front.y / 2 - totalWallHeight(room) / 2;
     }
 
     // world.position is in unscaled screen space, but (cx,cy) is in world's

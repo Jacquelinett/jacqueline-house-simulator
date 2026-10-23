@@ -164,6 +164,7 @@ export function migrate(): void {
       show_right_wall INTEGER NOT NULL DEFAULT 1,
       show_bottom_left_wall INTEGER NOT NULL DEFAULT 0,
       show_bottom_right_wall INTEGER NOT NULL DEFAULT 0,
+      wall_height INTEGER NOT NULL DEFAULT 8,
       visible INTEGER NOT NULL DEFAULT 0
     );
 
@@ -219,6 +220,17 @@ export function migrate(): void {
   // version of this same pattern) the no-op-once-applied guard is a try/catch.
   try {
     db.exec("ALTER TABLE characters ADD COLUMN activity_grace_period_seconds INTEGER NOT NULL DEFAULT 30");
+  } catch {
+    // already applied
+  }
+
+  // Same gotcha, same fix — wall_height added after rooms already existed
+  // on the live install (the wall autotile rework, see tileset.ts's
+  // WallPart). Every existing room gets the real default (8) here, not
+  // NULL, so already-placed rooms keep rendering at the same wall height
+  // they always have until an admin tunes it per-room.
+  try {
+    db.exec("ALTER TABLE rooms ADD COLUMN wall_height INTEGER NOT NULL DEFAULT 8");
   } catch {
     // already applied
   }

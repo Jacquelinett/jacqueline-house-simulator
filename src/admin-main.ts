@@ -104,6 +104,7 @@ interface RoomSpecWire {
   showRightWall?: boolean;
   showBottomLeftWall?: boolean;
   showBottomRightWall?: boolean;
+  wallHeight?: number;
   visible?: boolean;
   connectedTo?: ConnectedToEntry[];
   objects: ObjectPlacementWire[];
@@ -1460,6 +1461,7 @@ async function openRoomEditModal(
     showRightWall: room.showRightWall !== false,
     showBottomLeftWall: room.showBottomLeftWall === true,
     showBottomRightWall: room.showBottomRightWall === true,
+    wallHeight: room.wallHeight ?? 8,
     visible: room.visible === true,
   };
 
@@ -1513,7 +1515,19 @@ async function openRoomEditModal(
   showBottomRightWallCheckbox.type = "checkbox";
   showBottomRightWallCheckbox.checked = roomFields.showBottomRightWall;
   showBottomRightWallLabel.append(showBottomRightWallCheckbox, document.createTextNode(" Bottom-right wall"));
-  wallVisibilityForm.append(showLeftWallLabel, showRightWallLabel, showBottomLeftWallLabel, showBottomRightWallLabel);
+
+  // How many stacked 16px autotile pieces tall a wall renders (see
+  // tileset.ts's WallPart) — its own input, not a checkbox, so it lives on
+  // this same row rather than the visibility form above.
+  const wallHeightInput = document.createElement("input");
+  wallHeightInput.type = "number";
+  wallHeightInput.min = "1";
+  wallHeightInput.value = String(roomFields.wallHeight);
+  wallHeightInput.style.width = "50px";
+  const wallHeightLabel = document.createElement("label");
+  wallHeightLabel.append(document.createTextNode("Wall height (16px pieces): "), wallHeightInput);
+
+  wallVisibilityForm.append(showLeftWallLabel, showRightWallLabel, showBottomLeftWallLabel, showBottomRightWallLabel, wallHeightLabel);
 
   // Separate row/section, not crammed into the wall-visibility checkboxes
   // above — this controls whether the room (+ everything in it) renders at
@@ -1546,6 +1560,8 @@ async function openRoomEditModal(
     roomFields.showRightWall = showRightWallCheckbox.checked;
     roomFields.showBottomLeftWall = showBottomLeftWallCheckbox.checked;
     roomFields.showBottomRightWall = showBottomRightWallCheckbox.checked;
+    roomFields.wallHeight = Math.max(1, Math.round(Number(wallHeightInput.value) || 1));
+    wallHeightInput.value = String(roomFields.wallHeight);
     roomFields.visible = visibleCheckbox.checked;
     updateSaveState();
     renderPreview();
@@ -1558,6 +1574,7 @@ async function openRoomEditModal(
   showLeftWallCheckbox.onchange = applyRoomFields;
   showRightWallCheckbox.onchange = applyRoomFields;
   showBottomLeftWallCheckbox.onchange = applyRoomFields;
+  wallHeightInput.onchange = applyRoomFields;
   showBottomRightWallCheckbox.onchange = applyRoomFields;
   visibleCheckbox.onchange = applyRoomFields;
 
