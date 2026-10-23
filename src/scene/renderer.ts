@@ -17,16 +17,22 @@ export const DIM_ALPHA = 0.4;
 const FRONT_WALL_FOCUSED_ALPHA = 0.08;
 const PAN_EASE = 0.15;
 // How far (screen pixels, negative = up) the currently-viewed room lifts
-// above its normal resting position — purely a visual "this one's
-// focused" cue, eased in/out the same way the camera itself pans (see
-// ROOM_RAISE_EASE/tick), not an instant snap.
-const ROOM_RAISE_PX = -5;
-const ROOM_RAISE_EASE = 0.2;
+// above its normal resting position, and how much it grows (1 = no
+// change) — purely a visual "this one's focused" cue, eased in/out the
+// same way the camera itself pans (see ROOM_FOCUS_EASE/tick), not an
+// instant snap. Scaling happens around the container's own (0,0) — the
+// room's back/top corner, same origin gridToScreen(0,0) already uses —
+// not its visual center, so growth is slightly corner-weighted rather
+// than perfectly symmetric; at this small a scale it reads as a
+// negligible difference.
+const ROOM_RAISE_PX = -10;
+const ROOM_GROW_SCALE = 1.05;
+const ROOM_FOCUS_EASE = 0.2;
 // A soft blurred glow sitting behind the viewed room's own floor
 // silhouette (see buildRoom) — not a crisp outline, a filled-then-blurred
 // copy of the same shape, so it reads as the whole room giving off a
 // little ambient light rather than being traced by a line. The other
-// half of the "this one's focused" cue, alongside the raise above.
+// half of the "this one's focused" cue, alongside the raise/grow above.
 const GLOW_COLOR = 0xffd166;
 const GLOW_ALPHA = 0.35;
 const GLOW_BLUR_STRENGTH = 12;
@@ -393,14 +399,17 @@ export class SceneRenderer {
   protected world = new Container();
   protected roomContainers = new Map<number, Container>();
   // Each room's own resting (x,y) — captured once at construction so
-  // tick()'s per-frame raise-easing never needs to re-look the room up
-  // out of roomDefs.
+  // tick()'s per-frame raise/grow-easing never needs to re-look the room
+  // up out of roomDefs.
   private roomBasePositions = new Map<number, { x: number; y: number }>();
   // Current eased raise offset per room (0 = resting, ROOM_RAISE_PX =
-  // fully lifted) — ticks toward whichever target applyFocus set most
-  // recently (see tick()).
+  // fully lifted) and scale (1 = resting, ROOM_GROW_SCALE = fully grown)
+  // — both tick toward whichever target applyFocus set most recently
+  // (see tick()).
   private roomRaiseOffsets = new Map<number, number>();
   private roomRaiseTargets = new Map<number, number>();
+  private roomScales = new Map<number, number>();
+  private roomScaleTargets = new Map<number, number>();
   // The viewed-room ambient glow (see GLOW_COLOR/GLOW_ALPHA/
   // GLOW_BLUR_STRENGTH) — one per room, built once in buildRoom and just
   // toggled visible/invisible by applyFocus rather than rebuilt.
@@ -472,6 +481,8 @@ export class SceneRenderer {
       this.roomBasePositions.set(room.id, { x: room.x, y: room.y });
       this.roomRaiseOffsets.set(room.id, 0);
       this.roomRaiseTargets.set(room.id, 0);
+      this.roomScales.set(room.id, 1);
+      this.roomScaleTargets.set(room.id, 1);
     }
 
     this.viewedRoomId = roomDefs[0].id;
@@ -573,7 +584,7 @@ export class SceneRenderer {
    * (and therefore which override `this.method()` resolves to) is
    * already in place before the constructor body runs at all.
    */
-  protected isRoomRaiseEnabled(): boolean {
+  protected isRoomFocusEffectsEnabled(): boolean {
     return true;
   }
 
@@ -830,12 +841,14 @@ export class SceneRenderer {
         container.visible = true;
         const isViewed = id === this.viewedRoomId;
         this.applyRoomDim(id, isViewed);
-        // Raise/glow are the "this one's focused" cue — see ROOM_RAISE_PX/
-        // GLOW_COLOR's own comments. Target only set here; tick() does the
-        // actual easing toward it every frame. Gated off for
-        // AdminPreviewRenderer (see isRoomRaiseEnabled's own comment).
-        if (this.isRoomRaiseEnabled()) {
+        // Raise/grow/glow are the "this one's focused" cue — see
+        // ROOM_RAISE_PX/ROOM_GROW_SCALE/GLOW_COLOR's own comments. Targets
+        // only set here; tick() does the actual easing toward them every
+        // frame. Gated off for AdminPreviewRenderer (see
+        // isRoomFocusEffectsEnabled's own comment).
+        if (this.isRoomFocusEffectsEnabled()) {
           this.roomRaiseTargets.set(id, isViewed ? ROOM_RAISE_PX : 0);
+          this.roomScaleTargets.set(id, isViewed ? ROOM_GROW_SCALE : 1);
           this.roomGlows.get(id)!.visible = isViewed;
         }
         // Front walls dim the same amount as the back walls (DIM_ALPHA)
@@ -920,22 +933,32 @@ export class SceneRenderer {
     this.world.x += (this.cameraTarget.x - this.world.x) * PAN_EASE;
     this.world.y += (this.cameraTarget.y - this.world.y) * PAN_EASE;
 
-    // Eases every room's raise offset toward whichever target applyFocus
-    // last set (see ROOM_RAISE_PX) — skips rooms already at rest (the
-    // common case, once the animation settles) rather than re-writing an
-    // unchanged position every frame. Gated off for AdminPreviewRenderer
-    // (see roomRaiseEnabled's own comment) — its own moveRoom() drives
-    // room position directly, which this would otherwise fight/undo the
-    // moment a room's raise offset isn't exactly 0.
-    if (this.isRoomRaiseEnabled()) {
+    // Eases every room's raise offset and scale toward whichever targets
+    // applyFocus last set (see ROOM_RAISE_PX/ROOM_GROW_SCALE) — skips
+    // rooms already at rest (the common case, once the animation
+    // settles) rather than re-writing an unchanged position/scale every
+    // frame. Gated off for AdminPreviewRenderer (see
+    // isRoomFocusEffectsEnabled's own comment) — its own moveRoom()
+    // drives room position directly, which the raise half of this would
+    // otherwise fight/undo the moment a room's raise offset isn't
+    // exactly 0.
+    if (this.isRoomFocusEffectsEnabled()) {
       for (const [id, container] of this.roomContainers) {
-        const current = this.roomRaiseOffsets.get(id)!;
-        const target = this.roomRaiseTargets.get(id)!;
-        if (current === target) continue;
-        const next = Math.abs(target - current) < 0.05 ? target : current + (target - current) * ROOM_RAISE_EASE;
-        this.roomRaiseOffsets.set(id, next);
-        const base = this.roomBasePositions.get(id)!;
-        container.position.set(base.x, base.y + next);
+        const currentRaise = this.roomRaiseOffsets.get(id)!;
+        const targetRaise = this.roomRaiseTargets.get(id)!;
+        const currentScale = this.roomScales.get(id)!;
+        const targetScale = this.roomScaleTargets.get(id)!;
+        if (currentRaise !== targetRaise) {
+          const next = Math.abs(targetRaise - currentRaise) < 0.05 ? targetRaise : currentRaise + (targetRaise - currentRaise) * ROOM_FOCUS_EASE;
+          this.roomRaiseOffsets.set(id, next);
+          const base = this.roomBasePositions.get(id)!;
+          container.position.set(base.x, base.y + next);
+        }
+        if (currentScale !== targetScale) {
+          const next = Math.abs(targetScale - currentScale) < 0.001 ? targetScale : currentScale + (targetScale - currentScale) * ROOM_FOCUS_EASE;
+          this.roomScales.set(id, next);
+          container.scale.set(next);
+        }
       }
     }
 

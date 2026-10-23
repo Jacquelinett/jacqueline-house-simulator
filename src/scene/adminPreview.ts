@@ -146,8 +146,8 @@ export class AdminPreviewRenderer extends SceneRenderer {
     if (filter) filter.alpha = isViewed ? 1 : DIM_ALPHA;
   }
 
-  /** No raise/halo here — see isRoomRaiseEnabled's own comment in renderer.ts on why this would otherwise fight moveRoom()'s own direct positioning (below). */
-  protected isRoomRaiseEnabled(): boolean {
+  /** No raise/halo here — see isRoomFocusEffectsEnabled's own comment in renderer.ts on why this would otherwise fight moveRoom()'s own direct positioning (below). */
+  protected isRoomFocusEffectsEnabled(): boolean {
     return false;
   }
 
