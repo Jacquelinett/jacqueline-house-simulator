@@ -171,8 +171,15 @@ function placeTileWithOverrides(
   placeTile(container, defaultTexture, defaultRect, u, v, groundOffset);
 }
 
-/** Builds the floor + back walls for a room, tiled per its chosen floor/wall variant. Exported for the admin tool's object-type preview (admin-main.ts), which renders a real tiny room corner behind the sprite instead of a bare wireframe grid. */
-export function buildFloorAndWalls(room: RoomDef): Container {
+/**
+ * Builds just the back walls for a room, tiled per its chosen wall
+ * variant. Split out from the floor (see buildFloor below) specifically
+ * so SceneRenderer's buildRoom can give walls their own AlphaFilter,
+ * independent of the floor/objects — a same-floor room you're not
+ * currently viewing dims only its walls, not everything in it (see
+ * applyFocus's own comment on why).
+ */
+export function buildWalls(room: RoomDef): Container {
   const container = new Container();
   const { floor, wall } = room;
 
@@ -187,8 +194,8 @@ export function buildFloorAndWalls(room: RoomDef): Container {
   // them back up by that same amount so they stay flush with the run.
   const edgeGroundOffset = groundOffset + TILE_HEIGHT;
 
-  // Walls first: corner joint at the back vertex, then a run of repeating
-  // panels along each back edge, capped with an edge tile at the far end.
+  // Corner joint at the back vertex, then a run of repeating panels along
+  // each back edge, capped with an edge tile at the far end.
   // showLeftWall/showRightWall (default true when unset) gate the DEFAULT
   // tile only — a wallOverrides entry on a hidden side still renders (see
   // placeTileWithOverrides's own comment). The shared corner tile renders
@@ -206,7 +213,15 @@ export function buildFloorAndWalls(room: RoomDef): Container {
   }
   placeTileWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols + 1, 0, edgeGroundOffset, showRight);
 
-  // Floor, drawn back-to-front (painter's algorithm) so each tile's visible
+  return container;
+}
+
+/** Builds just the floor for a room, tiled per its chosen floor variant — see buildWalls's own comment on why this is split out separately. */
+export function buildFloor(room: RoomDef): Container {
+  const container = new Container();
+  const { floor } = room;
+
+  // Drawn back-to-front (painter's algorithm) so each tile's visible
   // "thickness" is correctly covered by the tile in front of it.
   const fo = room.floorOverrides;
   const cells: { u: number; v: number }[] = [];
@@ -222,6 +237,14 @@ export function buildFloorAndWalls(room: RoomDef): Container {
   return container;
 }
 
+/** Combined floor+walls in one container, walls painted first (behind) then floor — e.g. for the admin tool's object-type preview (admin-main.ts), which renders a real tiny room corner behind the sprite instead of a bare wireframe grid, and has no independent wall-dimming to care about. */
+export function buildFloorAndWalls(room: RoomDef): Container {
+  const container = new Container();
+  container.addChild(buildWalls(room));
+  container.addChild(buildFloor(room));
+  return container;
+}
+
 /**
  * Builds and renders the isometric house scene: rooms, objects, camera
  * panning, floor-dimming focus, and "currently doing X" overlay highlighting.
@@ -233,17 +256,25 @@ export function buildFloorAndWalls(room: RoomDef): Container {
 export class SceneRenderer {
   protected world = new Container();
   protected roomContainers = new Map<number, Container>();
-  // Dimming the room via per-child alpha lets overlapping/adjacent opaque
-  // tiles show through each other ("x-ray" look). AlphaFilter flattens the
-  // whole container to a texture first and applies alpha to that single
-  // result instead, so a dimmed room reads as one solid translucent room.
-  protected roomAlphaFilters = new Map<number, AlphaFilter>();
+  // Only the WALLS dim for a same-floor room you're not currently viewing
+  // — floor/objects stay fully visible, so you can still see (and click)
+  // everything in a neighboring room at a glance. Dimming via AlphaFilter
+  // (rather than per-child alpha) lets overlapping/adjacent opaque wall
+  // tiles show through each other ("x-ray" look); AlphaFilter flattens the
+  // walls container to a texture first and applies alpha to that single
+  // result instead, so dimmed walls read as one solid translucent piece.
+  // A DIFFERENT floor entirely is still fully hidden room-wide (see
+  // applyFocus) — that's a `container.visible` toggle, not this.
+  protected roomWallAlphaFilters = new Map<number, AlphaFilter>();
   // Sprites shown only while one of their object's activity labels is the
   // currently-running activity (e.g. a character sprite at the piano).
   protected activeOverlays: ActiveOverlay[] = [];
-  // Objects are only clickable (when interaction is wired up) in the room
-  // currently viewed — a dimmed neighboring room shows what's there, but you
-  // have to click into it first before you can interact with anything inside.
+  // Objects are clickable in any room on the SAME FLOOR as the one
+  // currently viewed, not just the exact viewed room — clicking one both
+  // recenters the camera on its room (see House.ts's attachObjectInteraction,
+  // which already does this unconditionally) and runs its action in one
+  // click, rather than needing a first click just to "enter" the room. A
+  // DIFFERENT floor's objects stay non-interactive (see applyFocus).
   protected interactiveObjects: { roomId: number; container: Container }[] = [];
   // Built always (not just when dev mode is on) so toggling it in Settings
   // can just flip visibility live, without rebuilding any room/object.
@@ -276,11 +307,8 @@ export class SceneRenderer {
     for (const room of depthSorted) {
       const container = this.buildRoom(room);
       container.position.set(room.x, room.y);
-      const alphaFilter = new AlphaFilter();
-      container.filters = [alphaFilter];
       this.world.addChild(container);
       this.roomContainers.set(room.id, container);
-      this.roomAlphaFilters.set(room.id, alphaFilter);
     }
 
     this.viewedRoomId = roomDefs[0].id;
@@ -297,7 +325,16 @@ export class SceneRenderer {
     const container = new Container();
     this.attachRoomInteraction(container, room);
 
-    container.addChild(buildFloorAndWalls(room));
+    // Walls get their own AlphaFilter (see roomWallAlphaFilters' own
+    // comment) — floor has none, it's always full opacity whenever the
+    // room itself is visible at all.
+    const walls = buildWalls(room);
+    const wallsFilter = new AlphaFilter();
+    walls.filters = [wallsFilter];
+    container.addChild(walls);
+    this.roomWallAlphaFilters.set(room.id, wallsFilter);
+
+    container.addChild(buildFloor(room));
 
     for (const obj of room.objects) {
       if (obj.enabled === false) continue;
@@ -560,27 +597,39 @@ export class SceneRenderer {
 
   protected applyFocus() {
     const viewedLevel = roomDefs.find((r) => r.id === this.viewedRoomId)!.level;
-    for (const [id, filter] of this.roomAlphaFilters) {
+    for (const [id, container] of this.roomContainers) {
       const room = roomDefs.find((r) => r.id === id)!;
-      const container = this.roomContainers.get(id)!;
+      const wallsFilter = this.roomWallAlphaFilters.get(id)!;
       if (room.level !== viewedLevel) {
         // A different floor entirely — hide rather than dim, since it's not
         // spatially related to what's in view the way a same-floor
-        // neighboring room is (that's still worth seeing faintly). Also
+        // neighboring room is (that's still worth seeing in full). Also
         // disable interactivity: same-footprint rooms on different levels
         // (e.g. a bedroom directly above the office) can geometrically
         // overlap on screen, and a hidden room's hitArea would otherwise
         // still intercept clicks meant for the visible one on top of it.
-        filter.alpha = 0;
+        container.visible = false;
         container.eventMode = "none";
       } else {
-        filter.alpha = id === this.viewedRoomId ? 1 : DIM_ALPHA;
+        // Same floor: the whole room is always fully visible now — only
+        // its walls dim when it isn't the one actually being viewed, so
+        // floor/objects in a neighboring room stay clearly visible (and
+        // clickable, see interactiveObjects below) at a glance.
+        container.visible = true;
+        wallsFilter.alpha = id === this.viewedRoomId ? 1 : DIM_ALPHA;
         container.eventMode = "static";
       }
     }
 
     for (const { roomId, container } of this.interactiveObjects) {
-      container.eventMode = roomId === this.viewedRoomId ? "static" : "none";
+      // Same floor as the viewed room (not just the exact viewed room
+      // itself) — a neighboring same-floor room's objects are directly
+      // clickable without first clicking into the room, since the
+      // object's own click handler already recenters the camera on its
+      // room as the first thing it does (see House.ts's
+      // attachObjectInteraction) — one click now does both.
+      const room = roomDefs.find((r) => r.id === roomId)!;
+      container.eventMode = room.level === viewedLevel ? "static" : "none";
     }
   }
 
