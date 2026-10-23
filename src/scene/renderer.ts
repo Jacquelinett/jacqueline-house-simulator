@@ -1,4 +1,4 @@
-import { AlphaFilter, Application, Assets, Container, Graphics, Rectangle, Sprite, Texture } from "pixi.js";
+import { AlphaFilter, Application, Assets, Container, Graphics, Rectangle, Sprite, Text, Texture } from "pixi.js";
 import { gridToScreen, rooms as roomDefs, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
 import { findActivityById } from "./activities";
 import { characterSpritePath } from "./characterSprites";
@@ -7,10 +7,14 @@ import { TileOverride, TileRect } from "./tileset";
 const DIM_ALPHA = 0.15;
 const PAN_EASE = 0.15;
 const DEFAULT_OVERLAY_FRAME_DURATION_MS = 150;
+const NAME_TAG_PADDING_X = 5;
+const NAME_TAG_PADDING_Y = 2;
+const NAME_TAG_GAP = 3; // above the overlay sprite's own top edge
 
-/** Who (if anyone) is driving an overlay's visibility right now — the richer replacement for updateActiveOverlays' old bare `Set<string>` of running labels, carrying enough identity to resolve a sprite-keyed layer's per-character texture (see ActiveOverlay/characterSprites.ts). */
+/** Who (if anyone) is driving an overlay's visibility right now — the richer replacement for updateActiveOverlays' old bare `Set<string>` of running labels, carrying enough identity to resolve a sprite-keyed layer's per-character texture AND label it with a name tag (see ActiveOverlay/characterSprites.ts). */
 export interface OverlayAttribution {
   characterId: string;
+  characterName: string;
   characterSpriteName: string | null;
 }
 
@@ -34,6 +38,14 @@ interface ActiveOverlay {
   frames: Texture[] | null;
   frameIndex: number;
   frameElapsedMs: number;
+  // Name tag floating above the SPRITE's own position (layer.offsetX/
+  // offsetY + its actual rendered width/height) — not the object's whole
+  // bounding box, since the sprite can sit anywhere within it (e.g. the
+  // piano's overlay is offset well into the object). nameTagText caches
+  // what it currently shows so repeated updateActiveOverlays calls with
+  // an unchanged attribution don't rebuild the Text/Graphics every time.
+  nameTag: Container;
+  nameTagText: string | null;
 }
 
 /** Slices one spritesheet texture into `frameCount` equal-width frames laid out left-to-right starting at (0,0) — same sub-rect-of-one-sheet technique tileset.ts's floor/wall variants use, just a uniform grid instead of hand-placed rects (animation frames are naturally uniform-sized, unlike tileset corners/edges). */
@@ -317,6 +329,9 @@ export class SceneRenderer {
       overlay.position.set(layer.offsetX ?? 0, layer.offsetY ?? 0);
       overlay.visible = false;
       container.addChild(overlay);
+      const nameTag = new Container();
+      nameTag.visible = false;
+      container.addChild(nameTag);
       const labels = (obj.actions ?? [])
         .filter((a) => a.kind === "activity")
         .map((a) => findActivityById(a.activityId)?.label)
@@ -330,6 +345,8 @@ export class SceneRenderer {
         frames: null,
         frameIndex: 0,
         frameElapsedMs: 0,
+        nameTag,
+        nameTagText: null,
       };
       // The shared-default texture (if any) is already preloaded — see
       // preloadRoomAssets — and needs no per-character resolution, so it's
@@ -387,8 +404,42 @@ export class SceneRenderer {
     for (const overlay of this.activeOverlays) {
       const attribution = overlay.labels.map((l) => runningByLabel.get(l)).find((a): a is OverlayAttribution => a !== undefined);
       overlay.sprite.visible = !!attribution;
-      if (attribution) this.resolveOverlayTexture(overlay, attribution.characterSpriteName);
+      overlay.nameTag.visible = !!attribution;
+      if (attribution) {
+        this.resolveOverlayTexture(overlay, attribution.characterSpriteName);
+        this.setOverlayNameTag(overlay, attribution.characterName);
+      }
     }
+  }
+
+  /** Updates (building fresh only if the name actually changed — see nameTagText's own comment) the small floating tag above an overlay sprite showing who's attributed to it. Positioned off the sprite's own offsetX/offsetY + rendered size, not the object's whole bounding box — same "label floats above the thing it's labeling, not the furniture it's sitting on" idea viewer.ts's own object-name label already uses, just anchored to the sprite instead of the object. */
+  private setOverlayNameTag(overlay: ActiveOverlay, name: string) {
+    if (overlay.nameTagText === name) return;
+    overlay.nameTagText = name;
+    overlay.nameTag.removeChildren();
+
+    const text = new Text({
+      text: name,
+      style: { fontSize: 11, fill: 0xffffff, fontFamily: "sans-serif" },
+      resolution: this.scale * (window.devicePixelRatio || 1),
+    });
+    text.anchor.set(0.5, 0.5);
+
+    const background = new Graphics()
+      .roundRect(
+        -text.width / 2 - NAME_TAG_PADDING_X,
+        -text.height / 2 - NAME_TAG_PADDING_Y,
+        text.width + NAME_TAG_PADDING_X * 2,
+        text.height + NAME_TAG_PADDING_Y * 2,
+        4,
+      )
+      .fill({ color: 0x000000, alpha: 0.6 });
+
+    overlay.nameTag.addChild(background, text);
+
+    const offsetX = overlay.layer.offsetX ?? 0;
+    const offsetY = overlay.layer.offsetY ?? 0;
+    overlay.nameTag.position.set(offsetX + overlay.sprite.width / 2, offsetY - (text.height / 2 + NAME_TAG_PADDING_Y + NAME_TAG_GAP));
   }
 
   /** Builds (and, if frameCount > 1, slices into animation frames) whichever texture an overlay should show right now — shared by the synchronous shared-default path at build time and the lazy per-character path below. */

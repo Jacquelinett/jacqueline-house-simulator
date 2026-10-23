@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { ObjectAction, ObjectTypeDef, SpriteLayer, STATIC_OBJECT_TYPES } from "../src/scene/rooms";
+import { ObjectTypeDef, SpriteLayer, STATIC_OBJECT_TYPES } from "../src/scene/rooms";
 
 interface TypeRow {
   id: number;
@@ -9,7 +9,6 @@ interface TypeRow {
   above_json: string | null;
   width: number;
   height: number;
-  actions_json: string | null;
   anchor_x: number | null;
   anchor_y: number | null;
 }
@@ -23,7 +22,6 @@ function rowToType(row: TypeRow): ObjectTypeDef {
     below: row.below_json ? (JSON.parse(row.below_json) as SpriteLayer[]) : undefined,
     overlay: row.overlay_json ? (JSON.parse(row.overlay_json) as SpriteLayer[]) : undefined,
     above: row.above_json ? (JSON.parse(row.above_json) as SpriteLayer[]) : undefined,
-    actions: row.actions_json ? (JSON.parse(row.actions_json) as ObjectAction[]) : undefined,
     anchorX: row.anchor_x ?? undefined,
     anchorY: row.anchor_y ?? undefined,
   };
@@ -42,8 +40,8 @@ export function seedObjectTypesIfEmpty(): void {
   const { n } = db.prepare("SELECT COUNT(*) as n FROM object_types").get() as { n: number };
   if (n > 0) return;
   const insert = db.prepare(`
-    INSERT INTO object_types (id, name, below_json, overlay_json, above_json, width, height, actions_json, anchor_x, anchor_y)
-    VALUES (@id, @name, @belowJson, @overlayJson, @aboveJson, @width, @height, @actionsJson, @anchorX, @anchorY)
+    INSERT INTO object_types (id, name, below_json, overlay_json, above_json, width, height, anchor_x, anchor_y)
+    VALUES (@id, @name, @belowJson, @overlayJson, @aboveJson, @width, @height, @anchorX, @anchorY)
   `);
   const tx = db.transaction(() => {
     for (const type of Object.values(STATIC_OBJECT_TYPES) as ObjectTypeDef[]) {
@@ -55,7 +53,6 @@ export function seedObjectTypesIfEmpty(): void {
         aboveJson: type.above ? JSON.stringify(type.above) : null,
         width: type.width,
         height: type.height,
-        actionsJson: type.actions ? JSON.stringify(type.actions) : null,
         anchorX: type.anchorX ?? null,
         anchorY: type.anchorY ?? null,
       });
@@ -68,8 +65,8 @@ export function seedObjectTypesIfEmpty(): void {
 export function createObjectType(def: ObjectTypeDef): number {
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO object_types (name, below_json, overlay_json, above_json, width, height, actions_json, anchor_x, anchor_y)
-     VALUES (@name, @belowJson, @overlayJson, @aboveJson, @width, @height, @actionsJson, @anchorX, @anchorY)`,
+      `INSERT INTO object_types (name, below_json, overlay_json, above_json, width, height, anchor_x, anchor_y)
+     VALUES (@name, @belowJson, @overlayJson, @aboveJson, @width, @height, @anchorX, @anchorY)`,
     )
     .run({
       name: def.name,
@@ -78,7 +75,6 @@ export function createObjectType(def: ObjectTypeDef): number {
       aboveJson: def.above ? JSON.stringify(def.above) : null,
       width: def.width,
       height: def.height,
-      actionsJson: def.actions ? JSON.stringify(def.actions) : null,
       anchorX: def.anchorX ?? null,
       anchorY: def.anchorY ?? null,
     });
@@ -88,7 +84,7 @@ export function createObjectType(def: ObjectTypeDef): number {
 export function updateObjectType(id: number, def: ObjectTypeDef): void {
   db.prepare(
     `UPDATE object_types SET name = @name, below_json = @belowJson, overlay_json = @overlayJson,
-     above_json = @aboveJson, width = @width, height = @height, actions_json = @actionsJson,
+     above_json = @aboveJson, width = @width, height = @height,
      anchor_x = @anchorX, anchor_y = @anchorY WHERE id = @id`,
   ).run({
     id,
@@ -98,7 +94,6 @@ export function updateObjectType(id: number, def: ObjectTypeDef): void {
     aboveJson: def.above ? JSON.stringify(def.above) : null,
     width: def.width,
     height: def.height,
-    actionsJson: def.actions ? JSON.stringify(def.actions) : null,
     anchorX: def.anchorX ?? null,
     anchorY: def.anchorY ?? null,
   });

@@ -1,8 +1,8 @@
 import { Application, Container, Polygon } from "pixi.js";
-import { findObjectForActivityLabel, gridToScreen, ObjectDef, rooms, RoomDef } from "./rooms";
+import { findObjectForActivityLabel, gridToScreen, ObjectAction, ObjectDef, RoomDef } from "./rooms";
 import { findActivityById } from "./activities";
 import { OverlayAttribution, SceneRenderer } from "./renderer";
-import { ActionEnvironment, describeAction, DoubleClickTracker, dispatchObjectClick, effectiveActions, runAction } from "./actionDispatch";
+import { describeAction } from "./actionDispatch";
 import { openActionPicker } from "../ui/actionPicker";
 import { AllStatusesEntry, getAllStatuses, getCharacter, getRemoteStatus, RemoteStatus, sendCommand } from "../client/remoteState";
 import { setViewingCharacter } from "../dashboard/viewingCharacter";
@@ -26,7 +26,6 @@ export class House extends SceneRenderer {
   // in-flight click's optimistic attribution isn't wiped out by the status
   // broadcast echoing its own change straight back.
   private currentActivitySource: { roomId: number; objectId: number } | null = null;
-  private objectClickTracker = new DoubleClickTracker();
 
   constructor(
     app: Application,
@@ -40,8 +39,7 @@ export class House extends SceneRenderer {
     // specifically so it still fires even when nothing in the scene was
     // actually hit. Native pointerdown fires before Pixi's own synthetic
     // pointertap, so a click that's ABOUT to set a new viewing character
-    // (see onActivity below) still ends up correct: clear, then set,
-    // within the same gesture.
+    // still ends up correct: clear, then set, within the same gesture.
     app.canvas.addEventListener("pointerdown", () => setViewingCharacter(null));
   }
 
@@ -66,8 +64,21 @@ export class House extends SceneRenderer {
     });
   }
 
+  /**
+   * Every click recenters the camera on whatever was clicked — there's no
+   * "view" action to opt into, it's just what clicking does, even for a
+   * purely decorative object with no actions at all. The one exception is
+   * a lone `goTo` action (a staircase with nothing else assigned): it
+   * navigates to the TARGET room directly, with no self-pan first — see
+   * the `pointertap` handler below. No double-click gate anymore: a
+   * single click on an unattributed/your-own activity action just runs
+   * it; if someone ELSE is currently attributed to one of this object's
+   * activity actions, the click opens a small menu with "View" (peek at
+   * their Dashboard) plus the real action(s) instead of silently running
+   * one on their behalf.
+   */
   protected attachObjectInteraction(container: Container, roomId: number, obj: ObjectDef) {
-    const actions = effectiveActions(obj.actions);
+    const actions = obj.actions ?? [];
 
     container.eventMode = "static";
     container.cursor = "pointer";
@@ -76,80 +87,60 @@ export class House extends SceneRenderer {
     // clicks where it happens to have opaque pixels — not the full box.
     container.interactiveChildren = false;
 
-    // onActivity is deliberately ungated here — the peek-before-acting
-    // check (attemptActivityPeek below) only ever runs as a pre-check in
-    // front of dispatchObjectClick, for the single-default-action click
-    // path specifically. A multi-action object's menu (left-click or
-    // right-click) always runs whatever got picked immediately — a menu
-    // selection is already a deliberate enough choice to skip the gate,
-    // same as the object's original behavior before this was shared.
-    const env: ActionEnvironment = {
-      onView: () => {
-        if (!this.isMobileLayout()) this.setViewedRoom(roomId, obj.id);
-      },
-      onGoTo: (targetRoomId) => {
-        // Mobile: nothing left to do here at all — no object is being
-        // toggled, and panning to the destination room is exactly the
-        // manual navigation mobile doesn't get.
-        if (!this.isMobileLayout()) this.setViewedRoom(targetRoomId);
-      },
-      onActivity: (activityId) => this.runActivity(roomId, obj.id, activityId),
+    const runAction = (action: ObjectAction) => {
+      if (action.kind === "goTo") {
+        if (!this.isMobileLayout()) this.setViewedRoom(action.roomId);
+      } else {
+        this.runActivity(roomId, obj.id, action.activityId);
+      }
     };
-    const openPicker = (pickFrom: typeof actions, run: (action: typeof actions[number]) => void, clientX: number, clientY: number) =>
-      openActionPicker(
-        clientX,
-        clientY,
-        pickFrom.map((action) => ({
-          label: describeAction(
-            action,
-            (id) => findActivityById(id)?.label,
-            (id) => rooms.find((r) => r.id === id)?.name,
-          ),
-          onclick: () => run(action),
-        })),
-      );
+
+    const buildMenuItems = () => {
+      const peek = this.peekAttributionFor(actions);
+      const items = actions.map((action) => ({ label: describeAction(action), onclick: () => runAction(action) }));
+      if (peek) items.unshift({ label: "View", onclick: () => setViewingCharacter(peek) });
+      return items;
+    };
 
     container.on("pointertap", (e) => {
       e.stopPropagation(); // otherwise this bubbles to the room's own click handler too
-      const native = e.nativeEvent as MouseEvent;
-      const onlyAction = actions.length === 1 ? actions[0] : null;
-      if (onlyAction?.kind === "activity" && this.attemptActivityPeek(roomId, obj.id, onlyAction.activityId)) return;
-      dispatchObjectClick(actions, env, (pickFrom, run) => openPicker(pickFrom, run, native.clientX, native.clientY));
+
+      if (actions.length === 1 && actions[0].kind === "goTo") {
+        runAction(actions[0]);
+        return;
+      }
+
+      if (!this.isMobileLayout()) this.setViewedRoom(roomId, obj.id); // unconditional recenter baseline
+      if (actions.length === 0) return;
+
+      const items = buildMenuItems();
+      if (items.length === 1) items[0].onclick();
+      else {
+        const native = e.nativeEvent as MouseEvent;
+        openActionPicker(native.clientX, native.clientY, items);
+      }
     });
-    // Right-click always shows every action, even for a single-action
-    // object — the one deliberate way to reach, say, a piano's "View"
-    // without starting/stopping tracking.
+
+    // Right-click always shows every option, even for a single action —
+    // the one deliberate way to reach "View" without it ever needing to
+    // be the default click behavior.
     container.on("rightclick", (e) => {
       e.stopPropagation();
+      if (actions.length === 0) return;
       const native = e.nativeEvent as MouseEvent;
-      openPicker(actions, (action) => runAction(action, env), native.clientX, native.clientY);
+      openActionPicker(native.clientX, native.clientY, buildMenuItems());
     });
   }
 
-  /**
-   * Pre-check in front of the plain single-click default-action path
-   * only — a multi-action object's menu (left-click or right-click)
-   * never reaches this at all, see attachObjectInteraction above. If
-   * this activity is currently attributed to someone ELSE (not me — see
-   * attributionFor), the first click just looks: peeks at their Dashboard
-   * and still pans the camera there (a deliberate click, unlike passively
-   * seeing their overlay appear — see applyAllStatuses, which never moves
-   * the camera), but doesn't touch tracking. A second click on the same
-   * object within the double-click window returns false, letting the
-   * normal runActivity proceed. Mobile skips all of this (same
-   * `isMobileLayout()` gate already used for camera panning) — it
-   * manages activities through the Pick Action wheel, not by tapping
-   * objects, and a double-tap requirement doesn't fit that model.
-   */
-  private attemptActivityPeek(roomId: number, objectId: number, activityId: number): boolean {
-    if (this.isMobileLayout()) return false;
-    const label = findActivityById(activityId)?.label;
-    const attribution = label ? this.attributionFor(label) : null;
-    if (!attribution || attribution.isMine) return false;
-    if (this.objectClickTracker.check(`${roomId}:${objectId}`)) return false; // second click — let it through to runActivity
-    setViewingCharacter({ id: attribution.characterId, name: attribution.characterName });
-    this.setViewedRoom(roomId, objectId);
-    return true;
+  /** Whoever (other than me) is currently attributed to one of `actions`' activity kinds, if anyone — the trigger for the "View" menu entry above. First match wins; two activity actions on the same object both being "in use" by different people at once isn't a case this needs to resolve precisely. */
+  private peekAttributionFor(actions: ObjectAction[]): { id: string; name: string } | null {
+    for (const action of actions) {
+      if (action.kind !== "activity") continue;
+      const label = findActivityById(action.activityId)?.label;
+      const attribution = label ? this.attributionFor(label) : null;
+      if (attribution && !attribution.isMine) return { id: attribution.characterId, name: attribution.characterName };
+    }
+    return null;
   }
 
   /** Who (if anyone) is currently running `label` right now — mine wins when both apply, since there's no separate art to otherwise break the tie with (see renderer.ts's updateActiveOverlays). */
@@ -219,12 +210,22 @@ export class House extends SceneRenderer {
    * moves the camera, unlike applyRemoteStatus above. Seeing that Kevin
    * started something should make his object light up without touching
    * where Jacqueline is currently looking; only a deliberate click does
-   * that (see attemptActivityPeek/runActivity).
+   * that (see runActivity/peekAttributionFor).
+   *
+   * If Kevin and I are both running the same label at once (two separate
+   * pianos, say), MY OWN entry always wins the overlay's art/name tag —
+   * processed last here regardless of Object.entries' own iteration
+   * order, rather than whichever happens to come last in listCharacters()
+   * order. Same "mine wins" rule attributionFor already uses for click
+   * attribution, just applied to which character's sprite actually shows.
    */
   public applyAllStatuses(allStatuses: Record<string, AllStatusesEntry>) {
+    const myId = getCharacter().id;
     const byLabel = new Map<string, OverlayAttribution>();
     for (const [characterId, entry] of Object.entries(allStatuses)) {
-      byLabel.set(entry.activityLabel, { characterId, characterSpriteName: entry.characterSpriteName });
+      const existing = byLabel.get(entry.activityLabel);
+      if (existing && existing.characterId === myId) continue; // mine already claimed this label — don't let anyone else overwrite it
+      byLabel.set(entry.activityLabel, { characterId, characterName: entry.characterName, characterSpriteName: entry.characterSpriteName });
     }
     this.updateActiveOverlays(byLabel);
   }

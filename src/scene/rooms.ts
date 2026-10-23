@@ -39,13 +39,15 @@ export interface SpriteLayer {
 // activityId (not label) so renaming an activity via the admin tool
 // cascades to every object that triggers it, instead of orphaning a
 // hardcoded label string that was only ever resolved at authoring time.
-// "view" takes no payload — recenter the camera on this object, and (see
-// actionDispatch.ts) peek at whoever's currently attributed to it, if
-// anyone. Every object gets one implicitly even with no actions of its
-// own (see renderer.ts's buildObject) — "navigate" was renamed to "goTo"
-// to match this three-kind vocabulary (view/goTo/activity) consistently.
+// There's deliberately no "view" kind — every click recenters the camera
+// on whatever was clicked unconditionally (see renderer.ts's buildObject/
+// House.ts's/viewer.ts's attachObjectInteraction), so "just look at this"
+// isn't a real assignable action, just the baseline thing clicking does.
+// The one UI-level exception is House.ts's "View" menu entry, which only
+// ever appears when another character is currently attributed to one of
+// an object's activity actions — that's constructed on the fly from the
+// attribution, not a persisted ObjectAction.
 export type ObjectAction =
-  | { kind: "view" }
   | { kind: "activity"; activityId: number }
   | { kind: "goTo"; roomId: number }; // e.g. a staircase — jumps the view to another room, no AW tracking
 
@@ -63,8 +65,10 @@ export interface ObjectDef {
   height: number;
   below?: SpriteLayer[]; // rendered first — base sprite, shadow/rug, etc.
   above?: SpriteLayer[]; // rendered last, e.g. clothing/case-color overlay
-  // actions[0] is the default (left-click). Right-click opens a menu of all of them.
-  // Omitted/empty -> pure decoration, no click handling at all.
+  // A single action runs directly on click; 2+ opens a picker (left-click
+  // or right-click, either way — see House.ts). Omitted/empty -> pure
+  // decoration: the click still recenters the camera (every click does),
+  // there's just nothing further to run.
   actions?: ObjectAction[];
   // Rendered between `below` and `above`, only while one of this object's own
   // activity actions is the currently-running one (e.g. a character sprite
@@ -98,11 +102,12 @@ export interface ObjectTypeDef {
   below?: SpriteLayer[];
   overlay?: SpriteLayer[];
   above?: SpriteLayer[];
-  // Default actions for this type. A placement can override this entirely
-  // (see ObjectPlacement.actions) — needed for things like a staircase,
-  // where every placement has its own destination and there's nothing
-  // sensible to default to.
-  actions?: ObjectAction[];
+  // Deliberately no `actions` here — what an object DOES is purely a
+  // per-placement concern now (see ObjectPlacement.actions), not
+  // something a type defaults and a placement merely overrides. Two
+  // placements of the same type (e.g. a second piano) look identical but
+  // can do completely different things, authored independently in the
+  // room editor.
   // Pixel offset from the sprite's own top-left to its "floor contact"
   // point — the spot that should land on a tile's corner when placed via
   // the admin tool's tile mode. Most sprites include padding for height/
@@ -142,8 +147,7 @@ const STATIC_OBJECT_TYPES = {
     height: 64,
     below: [{ texture: "/objects/piano_base.png" }],
     above: [{ texture: "/objects/piano_top.png" }],
-    overlay: [{ texture: "/characters/playing_piano.png", offsetX: 32, offsetY: 0 }],
-    actions: [{ kind: "activity", activityId: ACTIVITIES.practicingPiano.id }],
+    overlay: [{ texture: "/characters/playing_piano.png", offsetX: 32, offsetY: 0, spriteKey: "playPiano" }],
   },
   workLaptop: {
     id: 2,
@@ -151,7 +155,6 @@ const STATIC_OBJECT_TYPES = {
     width: 32,
     height: 32,
     below: [{ color: 0x5a5a6a }],
-    actions: [{ kind: "activity", activityId: ACTIVITIES.working.id }],
   },
   personalLaptop: {
     id: 3,
@@ -159,10 +162,6 @@ const STATIC_OBJECT_TYPES = {
     width: 32,
     height: 32,
     below: [{ color: 0x4a6a5a }],
-    actions: [
-      { kind: "activity", activityId: ACTIVITIES.programming.id },
-      { kind: "activity", activityId: ACTIVITIES.administrativeWork.id },
-    ],
   },
   pc: {
     id: 4,
@@ -170,10 +169,6 @@ const STATIC_OBJECT_TYPES = {
     width: 48,
     height: 32,
     below: [{ color: 0x4a4a4a }],
-    actions: [
-      { kind: "activity", activityId: ACTIVITIES.gaming.id },
-      { kind: "activity", activityId: ACTIVITIES.streaming.id },
-    ],
   },
   ddrCabinet: {
     id: 5,
@@ -181,7 +176,6 @@ const STATIC_OBJECT_TYPES = {
     width: 48,
     height: 64,
     below: [{ color: 0x7a2b5a }],
-    actions: [{ kind: "activity", activityId: ACTIVITIES.ddr.id }],
   },
   stairs: {
     id: 6,
@@ -212,7 +206,10 @@ export interface ObjectPlacement {
   enabled?: boolean;
   x: number;
   y: number;
-  actions?: ObjectAction[]; // overrides the type's default actions (e.g. a staircase's per-placement destination)
+  // What clicking THIS specific placement does — purely per-placement,
+  // not inherited from the type (see ObjectTypeDef's own comment on why
+  // that fallback was removed). Omitted/empty -> pure decoration.
+  actions?: ObjectAction[];
 }
 
 function resolveObjectPlacement(placement: ObjectPlacement): ObjectDef {
@@ -232,7 +229,7 @@ function resolveObjectPlacement(placement: ObjectPlacement): ObjectDef {
     below: type.below,
     overlay: type.overlay,
     above: type.above,
-    actions: placement.actions ?? type.actions,
+    actions: placement.actions,
     anchorX: type.anchorX,
     anchorY: type.anchorY,
   };
@@ -740,10 +737,37 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
     // to more than one tile once you see how it looks.
     wallOverrides: [{ u: 0, v: 5, tile: null }],
     objects: [
-      { id: 1, type: STATIC_OBJECT_TYPES.piano.id, x: 48, y: 48 },
-      { id: 2, type: STATIC_OBJECT_TYPES.workLaptop.id, enabled: false, x: 64, y: 40 },
-      { id: 3, type: STATIC_OBJECT_TYPES.personalLaptop.id, enabled: false, x: 80, y: 48 },
-      { id: 4, type: STATIC_OBJECT_TYPES.pc.id, enabled: false, x: 24, y: 56 },
+      { id: 1, type: STATIC_OBJECT_TYPES.piano.id, x: 48, y: 48, actions: [{ kind: "activity", activityId: ACTIVITIES.practicingPiano.id }] },
+      {
+        id: 2,
+        type: STATIC_OBJECT_TYPES.workLaptop.id,
+        enabled: false,
+        x: 64,
+        y: 40,
+        actions: [{ kind: "activity", activityId: ACTIVITIES.working.id }],
+      },
+      {
+        id: 3,
+        type: STATIC_OBJECT_TYPES.personalLaptop.id,
+        enabled: false,
+        x: 80,
+        y: 48,
+        actions: [
+          { kind: "activity", activityId: ACTIVITIES.programming.id },
+          { kind: "activity", activityId: ACTIVITIES.administrativeWork.id },
+        ],
+      },
+      {
+        id: 4,
+        type: STATIC_OBJECT_TYPES.pc.id,
+        enabled: false,
+        x: 24,
+        y: 56,
+        actions: [
+          { kind: "activity", activityId: ACTIVITIES.gaming.id },
+          { kind: "activity", activityId: ACTIVITIES.streaming.id },
+        ],
+      },
     ],
   },
   {
@@ -754,7 +778,7 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
     floor: floor1,
     wall: wall1,
     connectedTo: [{ roomId: 1, direction: "behindLeft", gapTiles: 1 }],
-    objects: [{ id: 5, type: STATIC_OBJECT_TYPES.ddrCabinet.id, x: 8, y: 0 }],
+    objects: [{ id: 5, type: STATIC_OBJECT_TYPES.ddrCabinet.id, x: 8, y: 0, actions: [{ kind: "activity", activityId: ACTIVITIES.ddr.id }] }],
   },
   {
     id: 3,

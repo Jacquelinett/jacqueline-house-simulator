@@ -289,6 +289,40 @@ function migrateNavigateActionKind(): void {
 }
 
 /**
+ * One-time migration: object types no longer have default actions at
+ * all (src/scene/rooms.ts's ObjectTypeDef) — what an object does is
+ * purely a per-placement concern now, no type-level fallback. Any
+ * existing placement that was relying on its type's default
+ * (action_json IS NULL, meaning "inherit") gets that default copied
+ * onto it directly, so no existing object silently loses its action
+ * the moment the type-level column goes away — then the column itself
+ * is dropped (same "don't leave a dead column around as a future
+ * landmine" stance as rooms.connected_to_* below). Gated on the column
+ * still existing, so this is a near-instant no-op on every subsequent
+ * startup once it's gone.
+ */
+function migrateTypeDefaultActionsToPlacements(): void {
+  if (!tableExists("object_types") || columnType("object_types", "actions_json") === undefined) return;
+
+  const types = db.prepare("SELECT id, actions_json FROM object_types WHERE actions_json IS NOT NULL").all() as {
+    id: number;
+    actions_json: string;
+  }[];
+  const actionsByType = new Map(types.map((t) => [t.id, t.actions_json]));
+
+  if (tableExists("objects") && actionsByType.size > 0) {
+    const placements = db.prepare("SELECT id, type_id FROM objects WHERE action_json IS NULL").all() as { id: number; type_id: number }[];
+    const update = db.prepare("UPDATE objects SET action_json = ? WHERE id = ?");
+    for (const placement of placements) {
+      const defaultActions = actionsByType.get(placement.type_id);
+      if (defaultActions) update.run(defaultActions, placement.id);
+    }
+  }
+
+  db.exec("ALTER TABLE object_types DROP COLUMN actions_json");
+}
+
+/**
  * Schema migration, run once at startup — `CREATE TABLE IF NOT EXISTS` is a
  * no-op once a table already exists, same gotcha val.town's own
  * `ensureSchema()` has (see CLAUDE.md's "Schema migration gotcha"): it
@@ -300,6 +334,7 @@ function migrateNavigateActionKind(): void {
 export function migrate(): void {
   migrateIdsToSerial();
   migrateNavigateActionKind();
+  migrateTypeDefaultActionsToPlacements();
 
   // Captured BEFORE the CREATE TABLE/ALTER TABLE below — `characters` not
   // existing at all also counts as "predates this column" (a fresh
@@ -399,7 +434,6 @@ export function migrate(): void {
       above_json TEXT,
       width INTEGER NOT NULL,
       height INTEGER NOT NULL,
-      actions_json TEXT,
       anchor_x REAL,
       anchor_y REAL
     );

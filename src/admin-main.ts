@@ -564,14 +564,7 @@ async function ensureTextureLoaded(path: string | undefined): Promise<void> {
  * be a fiddly, imprecise way to pick a specific pixel — the text inputs
  * are the only way to set it.
  */
-async function openObjectTypeEditModal(
-  id: string | null,
-  existing: ObjectTypeDef | null,
-  assetPaths: string[],
-  activities: ActivityDef[],
-  allRooms: RoomSpecWire[],
-  onSaved: () => void,
-) {
+async function openObjectTypeEditModal(id: string | null, existing: ObjectTypeDef | null, assetPaths: string[], onSaved: () => void) {
   const draftType: ObjectTypeDef = existing
     ? { ...existing, below: existing.below ? [...existing.below] : undefined }
     : makeDefaultObjectType();
@@ -626,25 +619,6 @@ async function openObjectTypeEditModal(
   colorInput.style.display = initialTexture ? "none" : "";
   form.appendChild(colorInput);
   modal.body.appendChild(form);
-
-  // Default actions for every placement of this type (a placement can
-  // still override these entirely — see the room editor's own "Override"
-  // button) — previously carried through completely unedited, the only
-  // way to set them was hand-editing the DB or STATIC_OBJECT_TYPES.
-  const actionsHeading = document.createElement("h3");
-  actionsHeading.textContent = "Default actions";
-  modal.body.appendChild(actionsHeading);
-  modal.body.appendChild(
-    buildActionsEditor(
-      () => draftType.actions ?? [],
-      (actions) => {
-        draftType.actions = actions;
-      },
-      activities,
-      allRooms,
-      () => {},
-    ),
-  );
 
   const anchorHint = document.createElement("div");
   anchorHint.className = "admin-hint";
@@ -837,11 +811,9 @@ async function openObjectTypeEditModal(
 
 async function renderObjectTypes(body: HTMLElement) {
   body.textContent = "";
-  const [types, assetPaths, activities, rooms] = await Promise.all([
+  const [types, assetPaths] = await Promise.all([
     adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
     adminFetch<string[]>("/api/admin/object-assets"),
-    adminFetch<ActivityDef[]>("/api/admin/activities"),
-    adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
   ]);
 
   const table = document.createElement("table");
@@ -854,7 +826,7 @@ async function renderObjectTypes(body: HTMLElement) {
     const actionCell = document.createElement("td");
     const editBtn = document.createElement("button");
     editBtn.textContent = "Edit";
-    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, activities, rooms, () => renderObjectTypes(body));
+    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, () => renderObjectTypes(body));
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {
@@ -875,7 +847,7 @@ async function renderObjectTypes(body: HTMLElement) {
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.textContent = "Add Object Type";
-  addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, activities, rooms, () => renderObjectTypes(body));
+  addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, () => renderObjectTypes(body));
   body.appendChild(addBtn);
 }
 
@@ -886,14 +858,12 @@ function cloneObjects(objects: ObjectPlacementWire[]): ObjectPlacementWire[] {
 }
 
 /**
- * Self-contained editor for an `ObjectAction[]` — shared by the room
- * editor's per-placement override (openRoomEditModal) and the Object
- * Types tab's per-type defaults (openObjectTypeEditModal), which is why
- * it takes `get`/`set` rather than a plain array: a placement's override
- * is optional (undefined means "inherit the type's defaults" — see
- * ObjectPlacementWire's own comment), while a type's defaults are always
- * a real (possibly empty) array, and this function doesn't need to know
- * which kind of "actions array" it's editing. `set` must always be
+ * Self-contained editor for one placement's `ObjectAction[]` — takes
+ * `get`/`set` rather than a plain array purely so the caller (the room
+ * editor's per-row actions cell, below) can decide what reading/writing
+ * "the array" means without this function needing to know. No "view"
+ * option: that's never a real assignable action (see ObjectAction's own
+ * comment in rooms.ts) — just Go To / Activity. `set` must always be
  * handed a brand-new array (never the same one mutated in place) — the
  * room editor's dirty-check (`JSON.stringify(orig) !== JSON.stringify(obj)`)
  * depends on the draft's actions array no longer being the same object
@@ -915,8 +885,7 @@ function buildActionsEditor(
 
   function defaultFor(kind: ObjectAction["kind"]): ObjectAction {
     if (kind === "goTo") return { kind: "goTo", roomId: allRooms[0]?.id ?? 0 };
-    if (kind === "activity") return { kind: "activity", activityId: activities[0]?.id ?? 0 };
-    return { kind: "view" };
+    return { kind: "activity", activityId: activities[0]?.id ?? 0 };
   }
 
   function buildRow(action: ObjectAction, index: number): HTMLElement {
@@ -925,7 +894,6 @@ function buildActionsEditor(
 
     const kindSelect = document.createElement("select");
     for (const [value, label] of [
-      ["view", "View"],
       ["goTo", "Go To"],
       ["activity", "Activity"],
     ] as const) {
@@ -1018,7 +986,7 @@ function buildActionsEditor(
     addBtn.type = "button";
     addBtn.textContent = "Add action";
     addBtn.onclick = () => {
-      set([...get(), { kind: "view" }]);
+      set([...get(), defaultFor("activity")]);
       onChange();
       render();
     };
@@ -1258,59 +1226,38 @@ async function openRoomEditModal(
    * reference — same reasoning as buildActionsEditor's own comment on why
    * `set` always needs a fresh array for the dirty-check to work).
    */
-  function buildPlacementActionsCell(obj: ObjectPlacementWire): HTMLElement {
+  function buildPlacementActionsRow(obj: ObjectPlacementWire, colspan: number): HTMLTableRowElement {
+    const row = document.createElement("tr");
+    row.className = "admin-actions-row";
     const cell = document.createElement("td");
+    cell.colSpan = colspan;
 
-    function render() {
-      cell.innerHTML = "";
-      if (!obj.actions) {
-        const note = document.createElement("span");
-        note.className = "admin-hint";
-        note.textContent = "(type default) ";
-        cell.appendChild(note);
-        const overrideBtn = document.createElement("button");
-        overrideBtn.type = "button";
-        overrideBtn.textContent = "Override";
-        overrideBtn.onclick = () => {
-          obj.actions = (objectTypes[String(obj.type)]?.actions ?? []).map((a) => ({ ...a }));
-          updateSaveState();
-          render();
-        };
-        cell.appendChild(overrideBtn);
-        return;
-      }
+    const heading = document.createElement("span");
+    heading.className = "admin-hint";
+    heading.textContent = "Actions:";
+    cell.appendChild(heading);
 
-      cell.appendChild(
-        buildActionsEditor(
-          () => obj.actions!,
-          (actions) => {
-            obj.actions = actions;
-          },
-          activities,
-          allRooms,
-          updateSaveState,
-          warnForGoTo,
-        ),
-      );
+    cell.appendChild(
+      buildActionsEditor(
+        () => obj.actions ?? [],
+        (actions) => {
+          obj.actions = actions;
+        },
+        activities,
+        allRooms,
+        updateSaveState,
+        warnForGoTo,
+      ),
+    );
 
-      const revertBtn = document.createElement("button");
-      revertBtn.type = "button";
-      revertBtn.textContent = "Use type default";
-      revertBtn.onclick = () => {
-        obj.actions = undefined;
-        updateSaveState();
-        render();
-      };
-      cell.appendChild(revertBtn);
-    }
-
-    render();
-    return cell;
+    row.appendChild(cell);
+    return row;
   }
 
   function renderTable() {
     const tileMode = tileModeCheckbox.checked;
-    table.innerHTML = `<tr><th>Type</th><th>${tileMode ? "tile u" : "x"}</th><th>${tileMode ? "tile v" : "y"}</th><th>Enabled</th><th>Actions</th><th></th><th></th></tr>`;
+    const COLUMN_COUNT = 6; // Type, x, y, Enabled, Place, Remove — kept in sync with the header row below for the actions row's colspan
+    table.innerHTML = `<tr><th>Type</th><th>${tileMode ? "tile u" : "x"}</th><th>${tileMode ? "tile v" : "y"}</th><th>Enabled</th><th></th><th></th></tr>`;
     for (const obj of draft) {
       const row = document.createElement("tr");
       // Row id still keys off the real/placeholder numeric id internally
@@ -1358,7 +1305,6 @@ async function openRoomEditModal(
       enabledCell.appendChild(checkbox);
       row.appendChild(enabledCell);
 
-      row.appendChild(buildPlacementActionsCell(obj));
 
       // x/y move the object live (AdminPreviewRenderer.moveObject) instead
       // of a full scene rebuild — this is the fix for the "blip" when
@@ -1453,6 +1399,7 @@ async function openRoomEditModal(
       row.appendChild(actionCell);
 
       table.appendChild(row);
+      table.appendChild(buildPlacementActionsRow(obj, COLUMN_COUNT));
     }
   }
 

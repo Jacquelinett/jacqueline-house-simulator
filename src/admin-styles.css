@@ -132,6 +132,15 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* The room editor's per-placement actions editor (buildPlacementActionsRow)
+   — a full-width row directly below each placement's main row, instead of
+   cramming the action list into one narrow table cell. */
+.admin-actions-row td {
+  background: var(--surface-soft);
+  padding-top: 4px;
+  padding-bottom: 8px;
+}
+
 .admin-swatch {
   display: inline-block;
   width: 12px;
