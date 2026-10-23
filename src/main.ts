@@ -118,7 +118,7 @@ function setupMobilePickAction(house: House): { open: () => void } {
       btn.appendChild(text);
 
       btn.onclick = () => {
-        house.toggleActivity(activity.label);
+        house.pickActivity(activity.label);
         modal.close();
       };
 

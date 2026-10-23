@@ -14,19 +14,23 @@ export { preloadRoomAssets } from "./renderer";
 // activity with no object of its own to focus instead.
 const FALLBACK_ROOM_ID = 1; // Jacqueline's Office
 
-/** Adds click/interaction handling on top of the shared scene renderer — the desktop app's interactive view. Starting/stopping activities is a fire-and-forget command to the Node server now; the overlay highlight and (on startup only) camera focus are driven back by its `status` broadcast via applyRemoteStatus(), not by awaiting the command itself. */
+/**
+ * Adds click/interaction handling on top of the shared scene renderer — the
+ * desktop app's interactive view. Starting activities is a fire-and-forget
+ * command to the Node server now; the overlay highlight and (on startup
+ * only) camera focus are driven back by its `status` broadcast via
+ * applyRemoteStatus(), not by awaiting the command itself.
+ *
+ * Stopping is NOT done by clicking an object/action anymore — that used to
+ * be "click the already-running one again," but that made any object with
+ * 2+ actions ambiguous (pick a different action, or stop the running one?)
+ * and meant the only way to stop was remembering which object you started
+ * from. Stopping is now exclusively the dedicated red Stop Activity control
+ * (see goals/panel.ts's setupJacquelineStatus, shown only while something
+ * is running) — see runActivity()'s own comment for what re-clicking a
+ * running action does instead.
+ */
 export class House extends SceneRenderer {
-  // Which object actually started the currently-running activity — distinct
-  // from the activity's label, since two different objects (e.g. a second
-  // piano elsewhere) can share a label. null means "unknown" (e.g. right
-  // after the server resumes an activity from before this client connected),
-  // treated as "assume it's this one" rather than refusing to stop an
-  // activity we can't otherwise attribute. Only ever set here, from this
-  // client's own clicks — never touched by applyRemoteStatus, so an
-  // in-flight click's optimistic attribution isn't wiped out by the status
-  // broadcast echoing its own change straight back.
-  private currentActivitySource: { roomId: number; objectId: number } | null = null;
-
   constructor(
     app: Application,
     onRoomChange: (roomName: string) => void,
@@ -155,32 +159,30 @@ export class House extends SceneRenderer {
     return null;
   }
 
+  /**
+   * Runs one specific action from an object's menu (or its lone action, on
+   * a direct click) — always a START now, never a stop. Stopping used to
+   * be "click the already-running object/action again," but that made any
+   * object with 2+ actions ambiguous (is this click picking a NEW action,
+   * or toggling the running one off?) and buried the only way to stop
+   * behind remembering which object you started it from. Stopping is now
+   * exclusively the dedicated red Stop Activity control (see
+   * goals/panel.ts) — re-clicking a running action just recenters the
+   * camera on it (or, for a 2+-action object, still opens the picker so you
+   * can switch to a *different* action) rather than silently stopping
+   * anything.
+   */
   private runActivity(roomId: number, objectId: number, activityId: number) {
     const activityLabel = findActivityById(activityId)?.label;
     const current = getRemoteStatus();
     const isSameLabel = current.activityLabel === activityLabel;
-    // A different object representing the same ongoing activity (e.g. a
-    // second piano elsewhere) shouldn't stop it just by being clicked —
-    // only the object that's actually running it (or an unattributed
-    // source) toggles it off; anything else just looks at it.
-    const isDifferentSource =
-      isSameLabel &&
-      this.currentActivitySource !== null &&
-      (this.currentActivitySource.roomId !== roomId || this.currentActivitySource.objectId !== objectId);
 
-    if (isDifferentSource) {
-      if (!this.isMobileLayout()) this.setViewedRoom(roomId, objectId);
-      return;
-    }
-
-    this.currentActivitySource = isSameLabel ? null : { roomId, objectId };
-    // On mobile, the click still starts/stops the activity below — it just
+    // On mobile, the click still starts the activity below — it just
     // doesn't pan on its own; applyRemoteStatus() does that once the
     // server's status broadcast confirms the change, so the camera still
     // ends up on the right object, just reactively instead of optimistically.
     if (!this.isMobileLayout()) this.setViewedRoom(roomId, objectId);
-    if (isSameLabel) sendCommand("stopActivity");
-    else if (activityLabel) sendCommand("startActivity", { label: activityLabel });
+    if (!isSameLabel && activityLabel) sendCommand("startActivity", { label: activityLabel });
   }
 
   /**
@@ -231,24 +233,20 @@ export class House extends SceneRenderer {
   }
 
   /**
-   * Start/stop an activity by label with no associated clicked object —
-   * used by the mobile Pick Action list, which picks from the flat
-   * ACTIVITIES registry rather than tapping a specific object in a
-   * specific room. Same start/stop-toggle + camera-focus as runActivity(),
-   * just always treated as an unattributed source (same "assume it's this
-   * one" rule used for an activity resumed before this client connected).
+   * Starts an activity by label with no associated clicked object — used
+   * by the mobile Pick Action list, which picks from the flat ACTIVITIES
+   * registry rather than tapping a specific object in a specific room.
+   * Renamed from the old toggleActivity() now that tapping the
+   * already-running row is a no-op (just recenters) rather than stopping
+   * it — same "stop is only the dedicated red button" change as
+   * runActivity() above, applied here so the Pick Action list's own ☑/☐
+   * checkbox styling doesn't keep implying it's still a toggle.
    */
-  public toggleActivity(label: string): void {
+  public pickActivity(label: string): void {
     const current = getRemoteStatus();
     const isSameLabel = current.activityLabel === label;
-    this.currentActivitySource = null;
 
-    if (isSameLabel) {
-      sendCommand("stopActivity");
-      return;
-    }
-
-    sendCommand("startActivity", { label });
+    if (!isSameLabel) sendCommand("startActivity", { label });
     // Always pan here, mobile or not — this is the one deliberate "picking
     // an action" entry point mobile keeps (no floor buttons, no clicking
     // around otherwise). Falls back to a fixed room when this activity has

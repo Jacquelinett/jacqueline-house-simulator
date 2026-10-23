@@ -1,6 +1,6 @@
 import { getBroadcastHealth } from "../broadcast/client";
 import { buildFloatingPanel } from "../ui/draggablePanel";
-import { getCharacter, getRemoteStatus, onRemoteStatusChange } from "../client/remoteState";
+import { getCharacter, getRemoteStatus, onRemoteStatusChange, sendCommand } from "../client/remoteState";
 import { renderCurrentActivity, renderSyncStatus } from "../status/render";
 
 const REFRESH_INTERVAL_MS = 30_000;
@@ -35,12 +35,27 @@ export function setupJacquelineStatus(container: HTMLElement, options?: { showTi
   currentEl.className = "overview-current";
   container.appendChild(currentEl);
 
+  // Desktop-app-only (this whole module is never imported by viewer-main.ts
+  // — it builds its own equivalent panel content, see that file's own
+  // comment) — the one dedicated way to stop whatever's running now that
+  // re-clicking a running object/action in the scene no longer does it
+  // (see House.ts's runActivity/pickActivity for the other half of that
+  // change). Visible only while something is actually running, toggled
+  // alongside the activity line itself rather than via a separate
+  // listener, since both only ever need to change together.
+  const stopButton = document.createElement("button");
+  stopButton.className = "stop-activity-button";
+  stopButton.textContent = "Stop Activity";
+  stopButton.onclick = () => sendCommand("stopActivity");
+  container.appendChild(stopButton);
+
   function renderCurrent() {
     const current = getRemoteStatus();
     renderCurrentActivity(currentEl, {
       label: current.activityLabel,
       startedAt: current.startedAt ? new Date(current.startedAt) : null,
     });
+    stopButton.style.display = current.activityLabel ? "" : "none";
   }
 
   const divider = document.createElement("div");

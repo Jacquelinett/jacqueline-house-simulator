@@ -297,6 +297,33 @@
   opacity: 0.6;
 }
 
+/* Desktop-app-only (goals/panel.ts's setupJacquelineStatus — never built by
+   viewer-main.ts, see that function's own comment) — the one dedicated way
+   to stop a running activity now that re-clicking a running object/action
+   no longer does it. Explicitly red regardless of theme (var(--error)) so
+   it never gets mistaken for an ordinary button, not themed via the usual
+   --chrome-bg/--border pair every other button here uses. Shown/hidden via
+   style.display, same convention as every other reactive show/hide in this
+   codebase (no .hidden utility class exists to reuse). */
+.stop-activity-button {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  margin-bottom: 8px;
+  background: var(--error);
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.stop-activity-button:hover {
+  opacity: 0.85;
+}
+
 .status-ok {
   color: var(--success);
 }
