@@ -44,7 +44,8 @@ export function migrate(): void {
       aw_bucket_id TEXT NOT NULL,
       created_at TEXT NOT NULL,
       publish_to_viewer INTEGER NOT NULL DEFAULT 0,
-      sprite_name TEXT
+      sprite_name TEXT,
+      wger_api_token TEXT
     );
 
     CREATE TABLE IF NOT EXISTS goals (
@@ -91,9 +92,12 @@ export function migrate(): void {
       broadcast_secret TEXT,
       lan_secret TEXT,
       admin_secret TEXT,
-      wger_base_url TEXT,
-      wger_api_token TEXT,
-      wger_character_id TEXT
+      -- One shared wger instance for the whole house; each character's own
+      -- account on it is characters.wger_api_token instead (see that
+      -- column's own comment) — this used to also hold one global
+      -- wger_api_token/wger_character_id before per-character accounts
+      -- were supported.
+      wger_base_url TEXT
     );
 
     CREATE TABLE IF NOT EXISTS activities (

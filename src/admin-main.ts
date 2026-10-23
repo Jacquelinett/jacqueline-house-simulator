@@ -60,6 +60,7 @@ interface Character {
   awBucketId: string;
   publishToViewer: boolean;
   spriteName: string | null;
+  wgerApiToken: string | null;
 }
 
 interface ActivityDef {
@@ -322,6 +323,7 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
   let bucketInput: HTMLInputElement | null = null;
   let publishCheckbox: HTMLInputElement | null = null;
   let spriteNameInput: HTMLInputElement | null = null;
+  let wgerApiTokenInput: HTMLInputElement | null = null;
   if (existing) {
     secretInput = document.createElement("input");
     secretInput.value = existing.secret;
@@ -346,6 +348,16 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
     spriteHint.className = "admin-hint";
     spriteHint.textContent = 'Combined with an object\'s sprite key to look up this character\'s own overlay art (e.g. "jacqueline" + "playPiano" -> jacqueline_playPiano.png). Leave blank to always use the shared default art.';
     form.appendChild(spriteHint);
+
+    wgerApiTokenInput = document.createElement("input");
+    wgerApiTokenInput.placeholder = "wger API token";
+    wgerApiTokenInput.value = existing.wgerApiToken ?? "";
+    form.append(document.createTextNode("wger API token:"), wgerApiTokenInput);
+    const wgerHint = document.createElement("div");
+    wgerHint.className = "admin-hint";
+    wgerHint.textContent =
+      "This character's own DRF API token from their wger account (generated from wger's web UI: Preferences > API key > Generate new API key), on the shared wger instance configured in server_config.wger_base_url. Leave blank for no linked wger account.";
+    form.appendChild(wgerHint);
   }
 
   const footer = document.createElement("div");
@@ -374,6 +386,7 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
             awBucketId: bucketInput!.value.trim(),
             publishToViewer: publishCheckbox!.checked,
             spriteName: spriteNameInput!.value.trim() || null,
+            wgerApiToken: wgerApiTokenInput!.value.trim() || null,
           }),
         });
       } else {

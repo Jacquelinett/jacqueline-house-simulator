@@ -7,6 +7,8 @@ export interface Character {
   awBucketId: string;
   publishToViewer: boolean;
   spriteName: string | null;
+  /** This character's own wger DRF API token, or null if they don't have a linked wger account — see server/wger.ts, which resolves this per-character now rather than through one global server_config singleton. */
+  wgerApiToken: string | null;
 }
 
 interface CharacterRow {
@@ -16,9 +18,10 @@ interface CharacterRow {
   aw_bucket_id: string;
   publish_to_viewer: number;
   sprite_name: string | null;
+  wger_api_token: string | null;
 }
 
-const SELECT_COLUMNS = "id, name, secret, aw_bucket_id, publish_to_viewer, sprite_name";
+const SELECT_COLUMNS = "id, name, secret, aw_bucket_id, publish_to_viewer, sprite_name, wger_api_token";
 
 function fromRow(row: CharacterRow): Character {
   return {
@@ -28,6 +31,7 @@ function fromRow(row: CharacterRow): Character {
     awBucketId: row.aw_bucket_id,
     publishToViewer: !!row.publish_to_viewer,
     spriteName: row.sprite_name,
+    wgerApiToken: row.wger_api_token,
   };
 }
 
@@ -63,7 +67,7 @@ export function createCharacter(name: string): Character {
   db.prepare(
     "INSERT INTO characters (id, name, secret, aw_bucket_id, created_at) VALUES (?, ?, ?, ?, ?)",
   ).run(id, name, secret, bucketId, new Date().toISOString());
-  return { id, name, secret, awBucketId: bucketId, publishToViewer: false, spriteName: null };
+  return { id, name, secret, awBucketId: bucketId, publishToViewer: false, spriteName: null, wgerApiToken: null };
 }
 
 export function renameCharacter(id: string, name: string): void {
@@ -88,6 +92,11 @@ export function updateCharacterPublishToViewer(id: string, publishToViewer: bool
 /** The "key" every sprite-keyed object overlay resolves against (src/scene/characterSprites.ts: `${spriteName}_${key}.png`) — null means "no custom sprite," falling back to that overlay's own shared default texture. An empty string from the admin form is normalized to null rather than persisted as a literal empty-string sprite name. */
 export function updateCharacterSpriteName(id: string, spriteName: string | null): void {
   db.prepare("UPDATE characters SET sprite_name = ? WHERE id = ?").run(spriteName || null, id);
+}
+
+/** This character's own wger DRF API token — see server/wger.ts's header comment on why this moved here from the old single-row server_config.wger_api_token/wger_character_id singleton: each character can now have their own wger account on the shared instance (server_config.wger_base_url), not just one account attributed to whichever one character it happened to belong to. An empty string from the admin form is normalized to null (no linked account), same convention updateCharacterSpriteName already uses. */
+export function updateCharacterWgerApiToken(id: string, wgerApiToken: string | null): void {
+  db.prepare("UPDATE characters SET wger_api_token = ? WHERE id = ?").run(wgerApiToken || null, id);
 }
 
 export function deleteCharacter(id: string): void {
