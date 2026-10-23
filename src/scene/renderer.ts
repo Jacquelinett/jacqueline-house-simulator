@@ -16,6 +16,17 @@ export const DIM_ALPHA = 0.4;
 // the wall doesn't just disappear outright.
 const FRONT_WALL_FOCUSED_ALPHA = 0.08;
 const PAN_EASE = 0.15;
+// How far (screen pixels, negative = up) the currently-viewed room lifts
+// above its normal resting position — purely a visual "this one's
+// focused" cue, eased in/out the same way the camera itself pans (see
+// ROOM_RAISE_EASE/tick), not an instant snap.
+const ROOM_RAISE_PX = -20;
+const ROOM_RAISE_EASE = 0.2;
+// A thin glowing outline traced around the viewed room's own floor
+// silhouette (see buildRoom) — the other half of the "this one's
+// focused" cue, alongside the raise above.
+const HALO_COLOR = 0xffd166;
+const HALO_WIDTH = 3;
 // Exported for the admin tool's object-type preview (admin-main.ts),
 // which simulates the overlay layer too now (defaulting to Jacqueline's
 // own art) and needs the same default-duration fallback.
@@ -378,6 +389,19 @@ function compareRoomDepth(a: RoomDef, b: RoomDef): number {
 export class SceneRenderer {
   protected world = new Container();
   protected roomContainers = new Map<number, Container>();
+  // Each room's own resting (x,y) — captured once at construction so
+  // tick()'s per-frame raise-easing never needs to re-look the room up
+  // out of roomDefs.
+  private roomBasePositions = new Map<number, { x: number; y: number }>();
+  // Current eased raise offset per room (0 = resting, ROOM_RAISE_PX =
+  // fully lifted) — ticks toward whichever target applyFocus set most
+  // recently (see tick()).
+  private roomRaiseOffsets = new Map<number, number>();
+  private roomRaiseTargets = new Map<number, number>();
+  // The viewed-room halo outline (see HALO_COLOR/HALO_WIDTH) — one per
+  // room, built once in buildRoom and just toggled visible/invisible by
+  // applyFocus rather than rebuilt.
+  private roomHalos = new Map<number, Graphics>();
   // Only the WALLS dim for a same-floor room you're not currently viewing
   // — floor/objects stay fully visible, so you can still see (and click)
   // everything in a neighboring room at a glance. Dimming via AlphaFilter
@@ -442,6 +466,9 @@ export class SceneRenderer {
       container.position.set(room.x, room.y);
       this.world.addChild(container);
       this.roomContainers.set(room.id, container);
+      this.roomBasePositions.set(room.id, { x: room.x, y: room.y });
+      this.roomRaiseOffsets.set(room.id, 0);
+      this.roomRaiseTargets.set(room.id, 0);
     }
 
     this.viewedRoomId = roomDefs[0].id;
@@ -503,12 +530,44 @@ export class SceneRenderer {
     this.devOutlines.push(outline);
     container.addChild(outline);
 
+    // Same floor silhouette as the dev outline above, just styled as a
+    // glow and toggled by applyFocus (isViewed) instead of devMode — the
+    // "this one's focused" halo, painted last so it isn't hidden under
+    // the front walls/objects it traces around.
+    const halo = new Graphics()
+      .poly([back.x, back.y + dy, right.x, right.y + dy, front.x, front.y + dy, left.x, left.y + dy])
+      .stroke({ width: HALO_WIDTH, color: HALO_COLOR });
+    halo.visible = false;
+    this.roomHalos.set(room.id, halo);
+    container.addChild(halo);
+
     this.onRoomContainerBuilt(room.id, container);
     return container;
   }
 
   /** Override point for a subclass that wants to wrap/instrument a room's whole container right after it's built — e.g. AdminPreviewRenderer attaching its own whole-room dim filter (see applyRoomDim). No-op by default. */
   protected onRoomContainerBuilt(_roomId: number, _container: Container): void {}
+
+  /**
+   * True by default (the real game/viewer); overridden by
+   * AdminPreviewRenderer to disable the viewed-room raise/halo entirely
+   * — its own moveRoom() drives a room's position directly (the
+   * connections editor's live gap/offset edits), which the raise half of
+   * this feature would otherwise fight/undo every tick once a room's
+   * raise offset isn't exactly 0 (see applyFocus/tick). A METHOD, not a
+   * field, specifically — applyFocus runs once synchronously inside this
+   * base class's own constructor (during super()), before any subclass's
+   * own field initializers would have run; a field here would silently
+   * read the base class's own default for that entire first call, the
+   * same class-field-initialization-order bug adminPreview.ts's own
+   * objectContainers/roomAlphaFilters comments already document — a
+   * method override doesn't have that problem, since the prototype chain
+   * (and therefore which override `this.method()` resolves to) is
+   * already in place before the constructor body runs at all.
+   */
+  protected isRoomRaiseEnabled(): boolean {
+    return true;
+  }
 
   protected buildObject(roomId: number, obj: ObjectDef): Container {
     const container = new Container();
@@ -763,6 +822,14 @@ export class SceneRenderer {
         container.visible = true;
         const isViewed = id === this.viewedRoomId;
         this.applyRoomDim(id, isViewed);
+        // Raise/halo are the "this one's focused" cue — see ROOM_RAISE_PX/
+        // HALO_COLOR's own comments. Target only set here; tick() does the
+        // actual easing toward it every frame. Gated off for
+        // AdminPreviewRenderer (see roomRaiseEnabled's own comment).
+        if (this.isRoomRaiseEnabled()) {
+          this.roomRaiseTargets.set(id, isViewed ? ROOM_RAISE_PX : 0);
+          this.roomHalos.get(id)!.visible = isViewed;
+        }
         // Front walls dim the same amount as the back walls (DIM_ALPHA)
         // for any room that isn't the one actually being viewed, then dim
         // further still — all the way down to FRONT_WALL_FOCUSED_ALPHA —
@@ -844,6 +911,25 @@ export class SceneRenderer {
   private tick() {
     this.world.x += (this.cameraTarget.x - this.world.x) * PAN_EASE;
     this.world.y += (this.cameraTarget.y - this.world.y) * PAN_EASE;
+
+    // Eases every room's raise offset toward whichever target applyFocus
+    // last set (see ROOM_RAISE_PX) — skips rooms already at rest (the
+    // common case, once the animation settles) rather than re-writing an
+    // unchanged position every frame. Gated off for AdminPreviewRenderer
+    // (see roomRaiseEnabled's own comment) — its own moveRoom() drives
+    // room position directly, which this would otherwise fight/undo the
+    // moment a room's raise offset isn't exactly 0.
+    if (this.isRoomRaiseEnabled()) {
+      for (const [id, container] of this.roomContainers) {
+        const current = this.roomRaiseOffsets.get(id)!;
+        const target = this.roomRaiseTargets.get(id)!;
+        if (current === target) continue;
+        const next = Math.abs(target - current) < 0.05 ? target : current + (target - current) * ROOM_RAISE_EASE;
+        this.roomRaiseOffsets.set(id, next);
+        const base = this.roomBasePositions.get(id)!;
+        container.position.set(base.x, base.y + next);
+      }
+    }
 
     // Only ever non-null once a resolved texture actually turned out to
     // have frameCount > 1 (see applyOverlayTexture) — a plain static

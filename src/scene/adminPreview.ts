@@ -146,6 +146,11 @@ export class AdminPreviewRenderer extends SceneRenderer {
     if (filter) filter.alpha = isViewed ? 1 : DIM_ALPHA;
   }
 
+  /** No raise/halo here — see isRoomRaiseEnabled's own comment in renderer.ts on why this would otherwise fight moveRoom()'s own direct positioning (below). */
+  protected isRoomRaiseEnabled(): boolean {
+    return false;
+  }
+
   /** Moves one object's own sprite directly — no scene rebuild, so this never blips. Only valid for an already-built object (same type/size as when the scene was last built). */
   public moveObject(objectId: number, x: number, y: number): void {
     const entry = objectContainersFor(this).get(objectId);
