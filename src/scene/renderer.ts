@@ -175,14 +175,16 @@ function placeTileWithOverrides(
 }
 
 /**
- * Builds just the back walls for a room, tiled per its chosen wall
- * variant. Split out from the floor (see buildFloor below) specifically
- * so SceneRenderer's buildRoom can give walls their own AlphaFilter,
- * independent of the floor/objects — a same-floor room you're not
- * currently viewing dims only its walls, not everything in it (see
- * applyFocus's own comment on why).
+ * Builds just the back two walls (u=0/v=0 edges) for a room, tiled per
+ * its chosen wall variant. Split out from the floor (see buildFloor
+ * below) specifically so SceneRenderer's buildRoom can give walls their
+ * own AlphaFilter, independent of the floor/objects — a same-floor room
+ * you're not currently viewing dims only its walls, not everything in it
+ * (see applyFocus's own comment on why). Paints BEHIND the floor (see
+ * buildRoom) — these sit at the room's back/top, so they never visually
+ * overlap it the way the front walls below do.
  */
-export function buildWalls(room: RoomDef): Container {
+export function buildBackWalls(room: RoomDef): Container {
   const container = new Container();
   const { floor, wall } = room;
 
@@ -201,27 +203,14 @@ export function buildWalls(room: RoomDef): Container {
   // each back edge, capped with an edge tile at the far end.
   // showLeftWall/showRightWall (default true when unset) gate the DEFAULT
   // tile only — a wallOverrides entry on a hidden side still renders (see
-  // placeTileWithOverrides's own comment).
+  // placeTileWithOverrides's own comment). If only one side renders, that
+  // side's own panel tile extends through the joint instead of the
+  // dedicated corner piece, so a single wall reads as one continuous run
+  // rather than stopping at a joint with nothing on the other side to
+  // join.
   const wo = room.wallOverrides;
   const showLeft = room.showLeftWall !== false;
   const showRight = room.showRightWall !== false;
-  // Opposite default (off) from the two back walls above — most rooms are
-  // meant to be looked INTO from the front, not fully enclosed. Turning
-  // one on "finishes the diamond" with a wall reusing the PARALLEL back
-  // wall's own tile style: bottom-right (u=cols edge) reuses the LEFT
-  // wall's tiles (same u-fixed, v-varying direction, just shifted from
-  // u=0 to u=cols); bottom-left (v=rows edge) reuses the RIGHT wall's
-  // tiles the same way.
-  const showBottomLeft = room.showBottomLeftWall === true;
-  const showBottomRight = room.showBottomRightWall === true;
-
-  // Every vertex where two wall runs could meet (or where a run just
-  // ends) follows the same merge rule: both sides present -> the
-  // dedicated corner piece; only one -> that side's own panel tile
-  // extends straight through, so a single wall reads as one continuous
-  // run instead of stopping at a joint with nothing on the other side to
-  // join; neither -> renderDefault below is false, so nothing draws
-  // there (an explicit wallOverrides entry still can, as always).
   const topCorner = showLeft && showRight ? wall.corner : showLeft ? wall.left : wall.right;
   placeTileWithOverrides(container, wo, wall.texture, topCorner, 0, 0, groundOffset, showLeft || showRight);
 
@@ -234,6 +223,38 @@ export function buildWalls(room: RoomDef): Container {
   }
   placeTileWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols + 1, 0, edgeGroundOffset, showRight);
 
+  return container;
+}
+
+/**
+ * Builds just the front two walls (u=cols/v=rows edges), opt-in via
+ * showBottomLeftWall/showBottomRightWall (both default off — most rooms
+ * are meant to be looked INTO from the front, not fully enclosed).
+ * Turning one on "finishes the diamond" with a wall reusing the PARALLEL
+ * back wall's own tile style: bottom-right (u=cols edge) reuses the LEFT
+ * wall's tiles (same u-fixed, v-varying direction, just shifted from u=0
+ * to u=cols); bottom-left (v=rows edge) reuses the RIGHT wall's tiles the
+ * same way. Paints IN FRONT of the floor (see buildRoom) — unlike the
+ * back walls above, these sit between the floor and the camera.
+ *
+ * Every vertex here always extends whichever front wall is present
+ * through its own panel tile — never the back corner's dedicated joint
+ * piece. Unlike the back corner (a true meeting of two matched edges
+ * that have always coexisted), these are either just where a single
+ * front wall run starts (the right/left vertices, each only ever touched
+ * by one front wall) or a new, optional meeting of the two front walls
+ * (the front vertex) — in neither case does reusing the back corner tile
+ * make sense, so a plain panel tile is all that's ever used.
+ */
+export function buildBottomWalls(room: RoomDef): Container {
+  const container = new Container();
+  const { floor, wall } = room;
+  const groundOffset = wall.left.h - floor.mid.h;
+
+  const wo = room.wallOverrides;
+  const showBottomLeft = room.showBottomLeftWall === true;
+  const showBottomRight = room.showBottomRightWall === true;
+
   for (let v = 1; v < room.rows; v++) {
     placeTileWithOverrides(container, wo, wall.texture, wall.left, room.cols, v, groundOffset, showBottomRight);
   }
@@ -241,27 +262,22 @@ export function buildWalls(room: RoomDef): Container {
     placeTileWithOverrides(container, wo, wall.texture, wall.right, u, room.rows, groundOffset, showBottomLeft);
   }
 
-  // Right vertex (cols,0) — joint between the back-right wall's far end
-  // and the new bottom-right wall's near end, same merge rule as above.
-  // Only relevant once showBottomRight actually adds a wall run there at
-  // all — nothing ever drew at this position before it existed.
-  const rightVertex = showRight && showBottomRight ? wall.corner : showBottomRight ? wall.left : wall.right;
-  placeTileWithOverrides(container, wo, wall.texture, rightVertex, room.cols, 0, groundOffset, showBottomRight);
+  // Right vertex (cols,0) / left vertex (0,rows) — just the first tile of
+  // each front wall's own run, not a joint with anything.
+  placeTileWithOverrides(container, wo, wall.texture, wall.left, room.cols, 0, groundOffset, showBottomRight);
+  placeTileWithOverrides(container, wo, wall.texture, wall.right, 0, room.rows, groundOffset, showBottomLeft);
 
-  // Left vertex (0,rows) — same idea, joint between the back-left wall's
-  // far end and the new bottom-left wall's near end.
-  const leftVertex = showLeft && showBottomLeft ? wall.corner : showBottomLeft ? wall.right : wall.left;
-  placeTileWithOverrides(container, wo, wall.texture, leftVertex, 0, room.rows, groundOffset, showBottomLeft);
-
-  // Front (bottom) vertex (cols,rows) — brand new joint where the two
-  // front walls meet each other, same merge rule as every vertex here.
-  const frontVertex = showBottomLeft && showBottomRight ? wall.corner : showBottomRight ? wall.left : wall.right;
+  // Front (bottom) vertex (cols,rows) — where the two front walls would
+  // meet if both are on; bottom-left checked first only to pick
+  // *something* deterministic when both are (an uncommon combination the
+  // user hasn't specified a preference for either way).
+  const frontVertex = showBottomLeft ? wall.right : wall.left;
   placeTileWithOverrides(container, wo, wall.texture, frontVertex, room.cols, room.rows, groundOffset, showBottomLeft || showBottomRight);
 
   return container;
 }
 
-/** Builds just the floor for a room, tiled per its chosen floor variant — see buildWalls's own comment on why this is split out separately. */
+/** Builds just the floor for a room, tiled per its chosen floor variant — see buildBackWalls's own comment on why walls are split out separately. */
 export function buildFloor(room: RoomDef): Container {
   const container = new Container();
   const { floor } = room;
@@ -282,11 +298,12 @@ export function buildFloor(room: RoomDef): Container {
   return container;
 }
 
-/** Combined floor+walls in one container, walls painted first (behind) then floor — e.g. for the admin tool's object-type preview (admin-main.ts), which renders a real tiny room corner behind the sprite instead of a bare wireframe grid, and has no independent wall-dimming to care about. */
+/** Combined back-walls+floor+front-walls in one container, in that paint order (see buildRoom's own comment on why front walls paint after the floor) — e.g. for the admin tool's object-type preview (admin-main.ts), which renders a real tiny room corner behind the sprite instead of a bare wireframe grid, and has no independent wall-dimming to care about. */
 export function buildFloorAndWalls(room: RoomDef): Container {
   const container = new Container();
-  container.addChild(buildWalls(room));
+  container.addChild(buildBackWalls(room));
   container.addChild(buildFloor(room));
+  container.addChild(buildBottomWalls(room));
   return container;
 }
 
@@ -389,14 +406,24 @@ export class SceneRenderer {
 
     // Walls get their own AlphaFilter (see roomWallAlphaFilters' own
     // comment) — floor has none, it's always full opacity whenever the
-    // room itself is visible at all.
-    const walls = buildWalls(room);
+    // room itself is visible at all. Back walls paint BEFORE the floor
+    // (they sit behind it, never visually overlapping); front walls paint
+    // AFTER (they sit between the floor and the camera, so painting them
+    // first would let the floor cover them instead of the other way
+    // around). Both share the SAME filter instance so they always dim
+    // together as "the walls," despite being split across the floor in
+    // the paint order.
     const wallsFilter = new AlphaFilter();
-    walls.filters = [wallsFilter];
-    container.addChild(walls);
+    const backWalls = buildBackWalls(room);
+    backWalls.filters = [wallsFilter];
+    container.addChild(backWalls);
     this.roomWallAlphaFilters.set(room.id, wallsFilter);
 
     container.addChild(buildFloor(room));
+
+    const bottomWalls = buildBottomWalls(room);
+    bottomWalls.filters = [wallsFilter];
+    container.addChild(bottomWalls);
 
     for (const obj of room.objects) {
       if (obj.enabled === false) continue;

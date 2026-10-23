@@ -375,7 +375,7 @@ export interface RoomSpec {
   // wall's own tile style — bottom-right (u=cols edge) reuses the left
   // wall's tiles (same u=0-edge direction, just shifted to u=cols),
   // bottom-left (v=rows edge) reuses the right wall's tiles. See
-  // renderer.ts's buildWalls for the actual placement.
+  // renderer.ts's buildBackWalls/buildBottomWalls for the actual placement.
   showBottomLeftWall?: boolean;
   showBottomRightWall?: boolean;
   objects: ObjectPlacement[];
