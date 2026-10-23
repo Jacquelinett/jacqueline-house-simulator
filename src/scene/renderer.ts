@@ -415,14 +415,18 @@ export function buildBackWalls(room: RoomDef): Container {
  * The right vertex (cols,0) / left vertex (0,rows) each just extend
  * their own front wall's panel tile one step further — never the back
  * corner's dedicated joint piece, since each is only ever touched by a
- * single front wall, not a true meeting of two edges. The two front
- * walls never get a tile of their own at the shared (cols,rows) corner
- * either: each wall's own run (vertex + panels) already covers its full
- * edge exactly (u=0..cols-1 for bottom-left, v=0..rows-1 for
- * bottom-right — matching the room's own column/row count 1:1), so a
- * tile at (cols,rows) would sit one step past both already-complete
- * spans — confirmed live, it read as the wall extending a full tile too
- * far past the room's actual corner.
+ * single front wall, not a true meeting of two edges. At the OTHER end —
+ * the room's own front (cols,rows) corner, where a front wall's run
+ * actually terminates — each wall gets its own end cap (edgeLeft for the
+ * bottom-right wall, edgeRight for the bottom-left wall, same capRise
+ * pull-up buildBackWalls' own caps use), finishing the run the same way
+ * a back wall's far end does, instead of just stopping on a flat panel.
+ * If somehow both front walls are enabled at once, both caps target this
+ * same (cols,rows) position — unlike the true back corner, there's no
+ * two-stack split for it, so whichever call runs second simply wins;
+ * not worth a dedicated joint piece for a combination this app doesn't
+ * actually use (most rooms show at most one front wall, see RoomSpec's
+ * own comment on why).
  */
 export function buildBottomWalls(room: RoomDef): Container {
   const container = new Container();
@@ -435,6 +439,7 @@ export function buildBottomWalls(room: RoomDef): Container {
   const { floor, wall } = room;
   const wallHeightUnits = room.wallHeight ?? DEFAULT_WALL_HEIGHT;
   const groundOffset = totalWallHeight(room) - floor.mid.h;
+  const capRise = TILE_HEIGHT / 2;
 
   const wo = room.wallOverrides;
   const showBottomLeft = room.showBottomLeftWall === true;
@@ -452,14 +457,11 @@ export function buildBottomWalls(room: RoomDef): Container {
   placeWallWithOverrides(container, wo, wall.texture, wall.left, room.cols, 0, groundOffset, wallHeightUnits, showBottomRight);
   placeWallWithOverrides(container, wo, wall.texture, wall.right, 0, room.rows, groundOffset, wallHeightUnits, showBottomLeft);
 
-  // No tile at the front (cols,rows) vertex where the two front walls
-  // would otherwise meet — each wall's own run (vertex above + panels
-  // above) already covers its full edge exactly (u=0..cols-1 for
-  // bottom-left, v=0..rows-1 for bottom-right, matching the room's own
-  // column/row count 1:1). A tile at (cols,rows) would sit one step
-  // PAST both of those already-complete spans — confirmed live, it read
-  // as the wall extending a full tile too far past the room's actual
-  // corner.
+  // Far end of each front wall's own run — see this function's own
+  // header comment on why (cols,rows) is safe to use now that a cap is
+  // a trimmed, capRise-adjusted piece rather than a full regular panel.
+  placeWallWithOverrides(container, wo, wall.texture, wall.edgeLeft, room.cols, room.rows, groundOffset, wallHeightUnits, showBottomRight, 0, -capRise);
+  placeWallWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols, room.rows, groundOffset, wallHeightUnits, showBottomLeft, 0, -capRise);
 
   return container;
 }
