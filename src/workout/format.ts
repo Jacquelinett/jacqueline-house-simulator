@@ -12,36 +12,47 @@ export function groupSetsByExercise(sets: WorkoutSet[]): Map<string, WorkoutSet[
 }
 
 /**
- * "22.5kg × 5 (×5), 60kg × 8 (×2), 60kg × 7" (or "8 reps" for a bodyweight
- * set with no recorded weight) — collapses consecutive-or-not sets that
- * share the exact same weight/unit/reps into one entry with a "(×N)"
+ * One line per distinct (weight, unit, reps) combo among the given sets —
+ * e.g. ["22.5kg × 5 (×5)", "25kg × 3"] for 5 sets at 22.5kg plus a single
+ * set at 25kg — sorted lightest to heaviest (bodyweight/no-recorded-weight
+ * sets sort last, since there's nothing to compare numerically) rather
+ * than left in whatever order wger happened to log them. Collapses sets
+ * that share the exact same weight/unit/reps into one entry with a "(×N)"
  * count, rather than repeating an identical line N times (the common case
  * for a real lift: 5 sets of the same weight×reps read as noise, not
- * signal, listed out individually). Grouped by exact (weight, unit, reps)
- * match regardless of position in the list — not just adjacent runs — so
- * e.g. a warm-up set repeated later still collapses into the same count.
- * A lone set (count 1) omits the "(×1)" suffix entirely, since there's
- * nothing to collapse. Defaults a missing weightUnit to "kg" (the old mock
- * mirror never set one, and always implied kg).
+ * signal, listed out individually) — matched by exact value regardless of
+ * position, not just adjacent runs, so e.g. a warm-up weight repeated
+ * later still collapses into the same count. A lone set (count 1) omits
+ * the "(×1)" suffix entirely, since there's nothing to collapse. Defaults
+ * a missing weightUnit to "kg" (the old mock mirror never set one, and
+ * always implied kg).
  */
-export function formatSetDetail(sets: WorkoutSet[]): string {
-  const order: string[] = [];
+export function formatSetDetail(sets: WorkoutSet[]): string[] {
   const counts = new Map<string, number>();
+  const weights = new Map<string, number | null>();
   const labels = new Map<string, string>();
   for (const s of sets) {
     const key = `${s.weight ?? "none"}|${s.weightUnit ?? "kg"}|${s.reps}`;
     if (!counts.has(key)) {
-      order.push(key);
+      weights.set(key, s.weight);
       labels.set(key, s.weight != null ? `${s.weight}${s.weightUnit ?? "kg"} × ${s.reps}` : `${s.reps} reps`);
     }
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  return order.map((key) => (counts.get(key)! > 1 ? `${labels.get(key)} (×${counts.get(key)})` : labels.get(key))).join(", ");
+  const keys = [...counts.keys()].sort((a, b) => {
+    const wa = weights.get(a)!;
+    const wb = weights.get(b)!;
+    if (wa == null && wb == null) return 0;
+    if (wa == null) return 1;
+    if (wb == null) return -1;
+    return wa - wb;
+  });
+  return keys.map((key) => (counts.get(key)! > 1 ? `${labels.get(key)} (×${counts.get(key)})` : labels.get(key)!));
 }
 
 export interface WorkoutTodayEntry {
   exerciseName: string;
-  detail: string;
+  details: string[];
 }
 
 /**
@@ -56,5 +67,5 @@ export interface WorkoutTodayEntry {
 export function summarizeWorkoutSessions(sessions: WorkoutSession[]): WorkoutTodayEntry[] {
   const allSets = sessions.flatMap((s) => s.sets);
   const grouped = groupSetsByExercise(allSets);
-  return [...grouped.entries()].map(([exerciseName, sets]) => ({ exerciseName, detail: formatSetDetail(sets) }));
+  return [...grouped.entries()].map(([exerciseName, sets]) => ({ exerciseName, details: formatSetDetail(sets) }));
 }

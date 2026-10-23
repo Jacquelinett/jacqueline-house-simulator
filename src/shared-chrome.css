@@ -507,6 +507,22 @@
   font-size: 12px;
 }
 
+/* Same spirit as .goal-subrow/.goal-subtext — one of these per additional
+   weight/rep group beyond the first, when a single exercise has more than
+   one (e.g. a warm-up weight followed by working sets). */
+.workout-subrow {
+  display: flex;
+  justify-content: flex-end;
+  padding-left: 18px;
+  opacity: 0.75;
+  font-size: 11px;
+}
+
+.workout-subtext {
+  flex: 1;
+  text-align: right;
+}
+
 /* Layout only — the app's Dashboard date input and the viewer's own
    Today/Yesterday toggle both sit in one of these, above the goal/activity
    sections built by buildDashboardSections(); what's actually inside it

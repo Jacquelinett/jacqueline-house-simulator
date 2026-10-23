@@ -67,12 +67,28 @@ export function setupWorkoutModal(): { open: () => void } {
         name.textContent = exerciseName;
         row.appendChild(name);
 
+        const details = formatSetDetail(sets);
         const detail = document.createElement("span");
         detail.className = "workout-sets-detail";
-        detail.textContent = formatSetDetail(sets);
+        detail.textContent = details[0] ?? "";
         row.appendChild(detail);
 
         list.appendChild(row);
+
+        // One line per additional weight/rep group beyond the first —
+        // same reasoning/markup as the Dashboard's own "Lifted Today"
+        // section (src/dashboard/render.ts's renderWorkoutToday).
+        for (const extra of details.slice(1)) {
+          const subRow = document.createElement("div");
+          subRow.className = "workout-subrow";
+
+          const subText = document.createElement("span");
+          subText.className = "workout-subtext";
+          subText.textContent = extra;
+          subRow.appendChild(subText);
+
+          list.appendChild(subRow);
+        }
       }
     }
   }

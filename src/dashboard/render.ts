@@ -146,10 +146,26 @@ export function renderWorkoutToday(section: HTMLElement, list: HTMLElement, entr
 
     const detail = document.createElement("span");
     detail.className = "workout-sets-detail";
-    detail.textContent = entry.detail;
+    detail.textContent = entry.details[0] ?? "";
     row.appendChild(detail);
 
     list.appendChild(row);
+
+    // Multiple distinct weight/rep groups (e.g. a warm-up set plus working
+    // sets) get one line each, lightest first — same goal-subrow pattern
+    // renderGoalList uses for streak text, rather than cramming every
+    // group onto the exercise's own row.
+    for (const extra of entry.details.slice(1)) {
+      const subRow = document.createElement("div");
+      subRow.className = "workout-subrow";
+
+      const subText = document.createElement("span");
+      subText.className = "workout-subtext";
+      subText.textContent = extra;
+      subRow.appendChild(subText);
+
+      list.appendChild(subRow);
+    }
   }
 }
 
