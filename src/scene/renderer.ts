@@ -333,13 +333,17 @@ export function buildBackWalls(room: RoomDef): Container {
   // gap.
   const wallHeightUnits = room.wallHeight ?? DEFAULT_WALL_HEIGHT;
   const groundOffset = totalWallHeight(room) - floor.mid.h;
-  // Edge caps sit one grid step further out than the last regular panel (see
-  // below), which drops their natural ground level by one grid step — pull
-  // them back up by that same amount so they stay flush with the run.
-  const edgeGroundOffset = groundOffset + TILE_HEIGHT;
 
   // Corner joint at the back vertex, then a run of repeating panels along
-  // each back edge, capped with an edge tile at the far end.
+  // each back edge, capped with an edge tile at the far end — the cap
+  // takes the very next grid step right after the last regular panel
+  // (room.rows/room.cols, never touched by the loops below), same
+  // groundOffset as everything else. The old 32px-wide art placed its cap
+  // a further step out still (room.rows+1/room.cols+1) with an extra
+  // +TILE_HEIGHT pulled back in — a correction that only made sense for
+  // that wider, half-blank art; these honestly-16px-wide autotile pieces
+  // don't need it and visibly gapped/floated away from the run when it
+  // was still applied (confirmed live, see commit history).
   // showLeftWall/showRightWall (default true when unset) gate the DEFAULT
   // tile only — a wallOverrides entry on a hidden side still renders (see
   // placeWallWithOverrides's own comment). If only one side renders, that
@@ -355,11 +359,11 @@ export function buildBackWalls(room: RoomDef): Container {
   for (let v = 1; v < room.rows; v++) {
     placeWallWithOverrides(container, wo, wall.texture, wall.left, 0, v, groundOffset, wallHeightUnits, showLeft);
   }
-  placeWallWithOverrides(container, wo, wall.texture, wall.edgeLeft, 0, room.rows + 1, edgeGroundOffset, wallHeightUnits, showLeft);
+  placeWallWithOverrides(container, wo, wall.texture, wall.edgeLeft, 0, room.rows, groundOffset, wallHeightUnits, showLeft);
   for (let u = 1; u < room.cols; u++) {
     placeWallWithOverrides(container, wo, wall.texture, wall.right, u, 0, groundOffset, wallHeightUnits, showRight);
   }
-  placeWallWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols + 1, 0, edgeGroundOffset, wallHeightUnits, showRight);
+  placeWallWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols, 0, groundOffset, wallHeightUnits, showRight);
 
   return container;
 }
