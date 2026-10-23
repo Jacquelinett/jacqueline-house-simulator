@@ -1,7 +1,7 @@
 import { Application, Container, Graphics, Polygon, Text } from "pixi.js";
 import { findActivityById } from "./activities";
 import { findObjectForActivityLabel, gridToScreen, ObjectDef, rooms, RoomDef } from "./rooms";
-import { SceneRenderer } from "./renderer";
+import { OverlayAttribution, SceneRenderer } from "./renderer";
 import { ActionEnvironment, describeAction, dispatchObjectClick, effectiveActions } from "./actionDispatch";
 import { openActionPicker } from "../ui/actionPicker";
 
@@ -65,8 +65,11 @@ export class HouseViewer extends SceneRenderer {
    */
   public applyAllStatuses(allStatuses: Map<string, ViewerCharacterStatus>) {
     this.allStatuses = allStatuses;
-    const labels = new Set(Array.from(allStatuses.values()).map((entry) => entry.activityLabel));
-    this.updateActiveOverlays(labels);
+    const byLabel = new Map<string, OverlayAttribution>();
+    for (const entry of allStatuses.values()) {
+      byLabel.set(entry.activityLabel, { characterId: entry.characterId, characterSpriteName: entry.characterSpriteName });
+    }
+    this.updateActiveOverlays(byLabel);
   }
 
   /** Who (if anyone) is currently running `label`, per the last applyAllStatuses — no "mine wins" tie-break needed here, unlike House.ts's own version, since the viewer has no "mine" at all. */

@@ -1,10 +1,50 @@
 import { AlphaFilter, Application, Assets, Container, Graphics, Rectangle, Sprite, Texture } from "pixi.js";
 import { gridToScreen, rooms as roomDefs, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
 import { findActivityById } from "./activities";
+import { characterSpritePath } from "./characterSprites";
 import { TileOverride, TileRect } from "./tileset";
 
 const DIM_ALPHA = 0.15;
 const PAN_EASE = 0.15;
+const DEFAULT_OVERLAY_FRAME_DURATION_MS = 150;
+
+/** Who (if anyone) is driving an overlay's visibility right now — the richer replacement for updateActiveOverlays' old bare `Set<string>` of running labels, carrying enough identity to resolve a sprite-keyed layer's per-character texture (see ActiveOverlay/characterSprites.ts). */
+export interface OverlayAttribution {
+  characterId: string;
+  characterSpriteName: string | null;
+}
+
+/**
+ * One overlay sprite's full runtime state — `layer` is kept alongside the
+ * Pixi node so updateActiveOverlays/resolveOverlayTexture can read its
+ * spriteKey/frame settings without threading them through separately.
+ * `attemptedPaths` remembers which per-character paths already 404'd
+ * this session, so a character with no art for this key doesn't get
+ * re-requested on every single status update. `frames`/`frameIndex`/
+ * `frameElapsedMs` are only populated once a resolved texture actually
+ * turns out to be a spritesheet (frameCount > 1) — tick() below only
+ * ever advances overlays that have them.
+ */
+interface ActiveOverlay {
+  labels: string[];
+  sprite: Sprite;
+  layer: SpriteLayer;
+  resolvedPath: string | null;
+  attemptedPaths: Set<string>;
+  frames: Texture[] | null;
+  frameIndex: number;
+  frameElapsedMs: number;
+}
+
+/** Slices one spritesheet texture into `frameCount` equal-width frames laid out left-to-right starting at (0,0) — same sub-rect-of-one-sheet technique tileset.ts's floor/wall variants use, just a uniform grid instead of hand-placed rects (animation frames are naturally uniform-sized, unlike tileset corners/edges). */
+function sliceFrames(base: Texture, frameWidth: number, frameHeight: number, frameCount: number): Texture[] {
+  const frames: Texture[] = [];
+  for (let i = 0; i < frameCount; i++) {
+    frames.push(new Texture({ source: base.source, frame: new Rectangle(i * frameWidth, 0, frameWidth, frameHeight) }));
+  }
+  return frames;
+}
+
 // Mirrors shared-chrome.css's own mobile breakpoint exactly — below it,
 // manual room/object panning is suppressed (see House.ts/viewer.ts): mobile
 // has no floor buttons and is meant to just auto-follow whatever's
@@ -175,7 +215,7 @@ export class SceneRenderer {
   protected roomAlphaFilters = new Map<number, AlphaFilter>();
   // Sprites shown only while one of their object's activity labels is the
   // currently-running activity (e.g. a character sprite at the piano).
-  protected activeOverlays: { labels: string[]; sprite: Sprite }[] = [];
+  protected activeOverlays: ActiveOverlay[] = [];
   // Objects are only clickable (when interaction is wired up) in the room
   // currently viewed — a dimmed neighboring room shows what's there, but you
   // have to click into it first before you can interact with anything inside.
@@ -269,7 +309,11 @@ export class SceneRenderer {
     }
 
     for (const layer of obj.overlay ?? []) {
-      const overlay = new Sprite(Assets.get<Texture>(assetUrl(layer.texture!)));
+      // No texture arg -> Pixi's own blank/empty texture — stays that way
+      // (and invisible, see below) if this layer has no `texture` fallback
+      // at all and no per-character art has resolved yet (the "else
+      // nothing" tier of the sprite-key fallback, applied per-layer).
+      const overlay = new Sprite();
       overlay.position.set(layer.offsetX ?? 0, layer.offsetY ?? 0);
       overlay.visible = false;
       container.addChild(overlay);
@@ -277,7 +321,24 @@ export class SceneRenderer {
         .filter((a) => a.kind === "activity")
         .map((a) => findActivityById(a.activityId)?.label)
         .filter((label): label is string => label !== undefined);
-      this.activeOverlays.push({ labels, sprite: overlay });
+      const activeOverlay: ActiveOverlay = {
+        labels,
+        sprite: overlay,
+        layer,
+        resolvedPath: null,
+        attemptedPaths: new Set(),
+        frames: null,
+        frameIndex: 0,
+        frameElapsedMs: 0,
+      };
+      // The shared-default texture (if any) is already preloaded — see
+      // preloadRoomAssets — and needs no per-character resolution, so it's
+      // applied synchronously here rather than waiting for the first
+      // updateActiveOverlays call. A sprite-keyed layer's own per-character
+      // art is resolved lazily instead (resolveOverlayTexture, called from
+      // updateActiveOverlays) once we actually know who's attributed to it.
+      if (layer.texture) this.applyOverlayTexture(activeOverlay, Assets.get<Texture>(assetUrl(layer.texture)));
+      this.activeOverlays.push(activeOverlay);
     }
 
     for (const layer of obj.above ?? []) {
@@ -311,11 +372,74 @@ export class SceneRenderer {
   /** Override to wire up object click-to-act — the base renderer has none (used by the read-only public viewer). */
   protected attachObjectInteraction(_container: Container, _roomId: number, _obj: ObjectDef): void {}
 
-  /** `runningLabels` is every label CURRENTLY running, across every character, not just one — an object's overlay shows as long as ANY of them matches (there's no separate "Jacqueline-shaped" vs "Kevin-shaped" sprite, just one overlay per object either way; see House.ts's applyAllStatuses). */
-  protected updateActiveOverlays(runningLabels: Set<string>) {
-    for (const { labels, sprite } of this.activeOverlays) {
-      sprite.visible = labels.some((l) => runningLabels.has(l));
+  /**
+   * `runningByLabel` carries every label CURRENTLY running, across every
+   * character, keyed by label and valued by who's attributed to it — an
+   * object's overlay shows as long as ANY of its labels has an entry
+   * (see House.ts's/viewer.ts's own applyAllStatuses for how that map
+   * gets built). If two characters happen to run the same label at once,
+   * whichever one's entry the caller put in the map wins the art — same
+   * "no separate per-character art to otherwise break the tie with"
+   * spirit this already had for pure visibility before sprite keys
+   * existed, just also deciding texture now instead of only visibility.
+   */
+  protected updateActiveOverlays(runningByLabel: Map<string, OverlayAttribution>) {
+    for (const overlay of this.activeOverlays) {
+      const attribution = overlay.labels.map((l) => runningByLabel.get(l)).find((a): a is OverlayAttribution => a !== undefined);
+      overlay.sprite.visible = !!attribution;
+      if (attribution) this.resolveOverlayTexture(overlay, attribution.characterSpriteName);
     }
+  }
+
+  /** Builds (and, if frameCount > 1, slices into animation frames) whichever texture an overlay should show right now — shared by the synchronous shared-default path at build time and the lazy per-character path below. */
+  private applyOverlayTexture(overlay: ActiveOverlay, baseTexture: Texture) {
+    const { layer } = overlay;
+    if (layer.frameCount && layer.frameCount > 1 && layer.frameWidth && layer.frameHeight) {
+      overlay.frames = sliceFrames(baseTexture, layer.frameWidth, layer.frameHeight, layer.frameCount);
+      overlay.frameIndex = 0;
+      overlay.frameElapsedMs = 0;
+      overlay.sprite.texture = overlay.frames[0];
+    } else {
+      overlay.frames = null;
+      overlay.sprite.texture = baseTexture;
+    }
+  }
+
+  /**
+   * Lazily resolves a sprite-keyed overlay's per-character texture —
+   * never blocks the (synchronous) render, just kicks off an Assets.load
+   * the first time a given character+key combo is needed and swaps the
+   * texture in once it resolves. A 404 (no art for this character+key
+   * yet) is expected, not an error: `attemptedPaths` remembers it so the
+   * same missing file isn't re-requested on every subsequent status
+   * update, and the overlay just keeps showing whatever it already had
+   * (the shared default from build time, or a previously-resolved
+   * character's art) — see characterSprites.ts's own comment on this
+   * fallback contract.
+   */
+  private resolveOverlayTexture(overlay: ActiveOverlay, characterSpriteName: string | null) {
+    const { layer } = overlay;
+    if (!layer.spriteKey || !characterSpriteName) return;
+    const path = characterSpritePath(characterSpriteName, layer.spriteKey);
+    if (overlay.resolvedPath === path) return; // already showing this
+    const url = assetUrl(path);
+    if (Assets.cache.has(url)) {
+      overlay.resolvedPath = path;
+      this.applyOverlayTexture(overlay, Assets.get<Texture>(url));
+      return;
+    }
+    if (overlay.attemptedPaths.has(path)) return; // already tried + failed this session
+    overlay.attemptedPaths.add(path);
+    Assets.load<Texture>(url)
+      .then((texture) => {
+        texture.source.scaleMode = "nearest"; // keep pixel art crisp, same as preloadRoomAssets
+        overlay.resolvedPath = path;
+        this.applyOverlayTexture(overlay, texture);
+        this.app.render(); // force an immediate repaint rather than waiting for the next ticker frame
+      })
+      .catch(() => {
+        // no art for this character+key yet — stays on whatever it already had, see this method's own comment
+      });
   }
 
   /**
@@ -433,5 +557,21 @@ export class SceneRenderer {
   private tick() {
     this.world.x += (this.cameraTarget.x - this.world.x) * PAN_EASE;
     this.world.y += (this.cameraTarget.y - this.world.y) * PAN_EASE;
+
+    // Only ever non-null once a resolved texture actually turned out to
+    // have frameCount > 1 (see applyOverlayTexture) — a plain static
+    // overlay (frames === null, the common case today) costs nothing
+    // here beyond the one visible+frames check.
+    const deltaMs = this.app.ticker.deltaMS;
+    for (const overlay of this.activeOverlays) {
+      if (!overlay.sprite.visible || !overlay.frames) continue;
+      overlay.frameElapsedMs += deltaMs;
+      const duration = overlay.layer.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS;
+      if (overlay.frameElapsedMs >= duration) {
+        overlay.frameElapsedMs -= duration;
+        overlay.frameIndex = (overlay.frameIndex + 1) % overlay.frames.length;
+        overlay.sprite.texture = overlay.frames[overlay.frameIndex];
+      }
+    }
   }
 }

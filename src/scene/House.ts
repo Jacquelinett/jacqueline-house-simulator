@@ -1,7 +1,7 @@
 import { Application, Container, Polygon } from "pixi.js";
 import { findObjectForActivityLabel, gridToScreen, ObjectDef, rooms, RoomDef } from "./rooms";
 import { findActivityById } from "./activities";
-import { SceneRenderer } from "./renderer";
+import { OverlayAttribution, SceneRenderer } from "./renderer";
 import { ActionEnvironment, describeAction, DoubleClickTracker, dispatchObjectClick, effectiveActions, runAction } from "./actionDispatch";
 import { openActionPicker } from "../ui/actionPicker";
 import { AllStatusesEntry, getAllStatuses, getCharacter, getRemoteStatus, RemoteStatus, sendCommand } from "../client/remoteState";
@@ -222,8 +222,11 @@ export class House extends SceneRenderer {
    * that (see attemptActivityPeek/runActivity).
    */
   public applyAllStatuses(allStatuses: Record<string, AllStatusesEntry>) {
-    const labels = new Set(Object.values(allStatuses).map((entry) => entry.activityLabel));
-    this.updateActiveOverlays(labels);
+    const byLabel = new Map<string, OverlayAttribution>();
+    for (const [characterId, entry] of Object.entries(allStatuses)) {
+      byLabel.set(entry.activityLabel, { characterId, characterSpriteName: entry.characterSpriteName });
+    }
+    this.updateActiveOverlays(byLabel);
   }
 
   /**

@@ -16,6 +16,24 @@ export interface SpriteLayer {
   color?: number; // placeholder fill used when texture is omitted
   offsetX?: number;
   offsetY?: number;
+  // Overlay-only in practice (see ObjectTypeDef.overlay) — when set, this
+  // layer's actual texture is resolved per-character at render time
+  // (src/scene/characterSprites.ts: "<spriteName>_<spriteKey>.png"),
+  // falling back to `texture` above (the shared default) when the
+  // attributed character has no spriteName set, or no matching file
+  // exists. `texture` is still required alongside spriteKey precisely to
+  // provide that fallback — spriteKey only ever narrows which texture
+  // gets tried first, never replaces having a default.
+  spriteKey?: string;
+  // frameCount > 1 means the resolved texture (per-character or
+  // fallback) is a single spritesheet image, sliced into this many
+  // equal-width frames laid out left-to-right starting at (0,0) and
+  // animated by swapping frames every frameDurationMs (default ~150ms).
+  // Omitted/1 is today's plain static image, unchanged.
+  frameWidth?: number;
+  frameHeight?: number;
+  frameCount?: number;
+  frameDurationMs?: number;
 }
 
 // activityId (not label) so renaming an activity via the admin tool
