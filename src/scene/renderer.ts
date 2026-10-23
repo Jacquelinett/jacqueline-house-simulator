@@ -845,6 +845,16 @@ export class SceneRenderer {
         container.visible = true;
         const isViewed = id === this.viewedRoomId;
         this.applyRoomDim(id, isViewed);
+        // Paints the viewed room above every other same-floor room,
+        // regardless of their usual depth-sorted order (see
+        // compareRoomDepth) — addChild on an already-present child just
+        // moves it to the end of world's own children, i.e. painted last,
+        // rather than adding a duplicate. Matters once the room is also
+        // raised/grown (below): without this, a neighboring room later in
+        // the static depth order could still paint over the now-larger,
+        // now-raised focused one. Only for the viewed room itself — every
+        // other room keeps its normal relative order from compareRoomDepth.
+        if (isViewed) this.world.addChild(container);
         // Raise/grow/glow are the "this one's focused" cue — see
         // ROOM_RAISE_PX/ROOM_GROW_SCALE/GLOW_COLOR's own comments. Targets
         // only set here; tick() does the actual easing toward them every
