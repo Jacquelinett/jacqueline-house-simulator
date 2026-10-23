@@ -35,6 +35,7 @@ interface ObjectRow {
   x: number;
   y: number;
   enabled: number;
+  clickable: number;
   action_json: string | null;
 }
 
@@ -46,6 +47,7 @@ function rowToPlacement(row: ObjectRow): ObjectPlacement {
     x: row.x,
     y: row.y,
     actions: row.action_json ? (JSON.parse(row.action_json) as ObjectAction[]) : undefined,
+    clickable: !!row.clickable,
   };
 }
 
@@ -119,8 +121,8 @@ export function seedRoomsIfEmpty(): void {
     VALUES (@id, @name, @cols, @rows, '/floors/floor1.png', '/walls/wall1.png', @floorOverridesJson, @wallOverridesJson, @showLeftWall, @showRightWall, @showBottomLeftWall, @showBottomRightWall, @wallHeight, @visible)
   `);
   const insertObject = db.prepare(`
-    INSERT INTO objects (id, room_id, type_id, x, y, enabled, action_json)
-    VALUES (@id, @roomId, @typeId, @x, @y, @enabled, @actionJson)
+    INSERT INTO objects (id, room_id, type_id, x, y, enabled, clickable, action_json)
+    VALUES (@id, @roomId, @typeId, @x, @y, @enabled, @clickable, @actionJson)
   `);
 
   const tx = db.transaction(() => {
@@ -151,6 +153,7 @@ export function seedRoomsIfEmpty(): void {
           x: placement.x,
           y: placement.y,
           enabled: placement.enabled === false ? 0 : 1,
+          clickable: placement.clickable === false ? 0 : 1,
           actionJson: placement.actions ? JSON.stringify(placement.actions) : null,
         });
       }
@@ -257,8 +260,8 @@ export function deleteRoom(id: number): void {
 export function createObject(roomId: number, placement: Omit<ObjectPlacement, "id">): number {
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO objects (room_id, type_id, x, y, enabled, action_json)
-     VALUES (@roomId, @typeId, @x, @y, @enabled, @actionJson)`,
+      `INSERT INTO objects (room_id, type_id, x, y, enabled, clickable, action_json)
+     VALUES (@roomId, @typeId, @x, @y, @enabled, @clickable, @actionJson)`,
     )
     .run({
       roomId,
@@ -266,6 +269,7 @@ export function createObject(roomId: number, placement: Omit<ObjectPlacement, "i
       x: placement.x,
       y: placement.y,
       enabled: placement.enabled === false ? 0 : 1,
+      clickable: placement.clickable === false ? 0 : 1,
       actionJson: placement.actions ? JSON.stringify(placement.actions) : null,
     });
   return Number(lastInsertRowid);
@@ -273,7 +277,7 @@ export function createObject(roomId: number, placement: Omit<ObjectPlacement, "i
 
 export function updateObject(roomId: number, placement: ObjectPlacement & { id: number }): void {
   db.prepare(
-    `UPDATE objects SET type_id = @typeId, x = @x, y = @y, enabled = @enabled, action_json = @actionJson
+    `UPDATE objects SET type_id = @typeId, x = @x, y = @y, enabled = @enabled, clickable = @clickable, action_json = @actionJson
      WHERE id = @id AND room_id = @roomId`,
   ).run({
     id: placement.id,
@@ -282,6 +286,7 @@ export function updateObject(roomId: number, placement: ObjectPlacement & { id: 
     x: placement.x,
     y: placement.y,
     enabled: placement.enabled === false ? 0 : 1,
+    clickable: placement.clickable === false ? 0 : 1,
     actionJson: placement.actions ? JSON.stringify(placement.actions) : null,
   });
 }

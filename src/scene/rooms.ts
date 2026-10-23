@@ -98,6 +98,15 @@ export interface ObjectDef {
   // unaffected by this.
   anchorX?: number;
   anchorY?: number;
+  // Default true. False makes this placement fully inert in the real
+  // game/viewer — no click at all, not even the baseline "recenter the
+  // camera" every other object gets regardless of actions — e.g. pure
+  // background clutter that shouldn't steal a click meant for whatever's
+  // behind/near it. Never affects the admin tool's own click-to-select,
+  // which always stays clickable for editing purposes (see House.ts's/
+  // viewer.ts's own attachObjectInteraction, and AdminPreviewRenderer's
+  // separate override, which never reads this field at all).
+  clickable?: boolean;
 }
 
 // --- Object types: what an object looks like + what it does, independent
@@ -238,6 +247,10 @@ export interface ObjectPlacement {
   // not inherited from the type (see ObjectTypeDef's own comment on why
   // that fallback was removed). Omitted/empty -> pure decoration.
   actions?: ObjectAction[];
+  // See ObjectDef's own comment — default true, per-placement (not
+  // per-type) same as actions above: two placements of the same type can
+  // differ on whether either one is clickable at all.
+  clickable?: boolean;
 }
 
 function resolveObjectPlacement(placement: ObjectPlacement): ObjectDef {
@@ -260,6 +273,7 @@ function resolveObjectPlacement(placement: ObjectPlacement): ObjectDef {
     actions: placement.actions,
     anchorX: type.anchorX,
     anchorY: type.anchorY,
+    clickable: placement.clickable,
   };
 }
 

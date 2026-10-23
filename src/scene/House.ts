@@ -82,6 +82,16 @@ export class House extends SceneRenderer {
    * one on their behalf.
    */
   protected attachObjectInteraction(container: Container, roomId: number, obj: ObjectDef) {
+    // Fully inert when explicitly marked non-clickable — not even the
+    // baseline "recenter the camera" every other object gets regardless
+    // of actions (see ObjectDef.clickable's own comment). Same
+    // non-interactive guarantee the purely-decorative room layers
+    // (walls/floor/glow) already use.
+    if (obj.clickable === false) {
+      container.eventMode = "none";
+      return;
+    }
+
     const actions = obj.actions ?? [];
 
     container.eventMode = "static";

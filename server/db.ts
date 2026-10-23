@@ -180,6 +180,7 @@ export function migrate(): void {
       x INTEGER NOT NULL,
       y INTEGER NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
+      clickable INTEGER NOT NULL DEFAULT 1,
       action_json TEXT
     );
 
@@ -231,6 +232,16 @@ export function migrate(): void {
   // they always have until an admin tunes it per-room.
   try {
     db.exec("ALTER TABLE rooms ADD COLUMN wall_height INTEGER NOT NULL DEFAULT 8");
+  } catch {
+    // already applied
+  }
+
+  // Same gotcha, same fix — clickable added after objects already existed
+  // on the live install. Every existing object gets the real default (1,
+  // i.e. clickable) here, not NULL, so nothing already placed silently
+  // goes inert.
+  try {
+    db.exec("ALTER TABLE objects ADD COLUMN clickable INTEGER NOT NULL DEFAULT 1");
   } catch {
     // already applied
   }

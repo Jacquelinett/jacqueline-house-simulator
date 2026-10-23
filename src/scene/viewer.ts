@@ -89,6 +89,12 @@ export class HouseViewer extends SceneRenderer {
   }
 
   protected attachObjectInteraction(container: Container, roomId: number, obj: ObjectDef) {
+    // See House.ts's own comment — same guarantee on the viewer's side.
+    if (obj.clickable === false) {
+      container.eventMode = "none";
+      return;
+    }
+
     const actions = obj.actions ?? [];
 
     container.eventMode = "static";

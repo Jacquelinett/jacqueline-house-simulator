@@ -91,6 +91,7 @@ interface ObjectPlacementWire {
   y: number;
   enabled: boolean;
   actions?: ObjectAction[];
+  clickable?: boolean;
 }
 
 interface RoomSpecWire {
@@ -1762,8 +1763,8 @@ async function openRoomEditModal(
 
   function renderTable() {
     const tileMode = tileModeCheckbox.checked;
-    const COLUMN_COUNT = 6; // Type, x, y, Enabled, Place, Remove — kept in sync with the header row below for the actions row's colspan
-    table.innerHTML = `<tr><th>Type</th><th>${tileMode ? "tile u" : "x"}</th><th>${tileMode ? "tile v" : "y"}</th><th>Enabled</th><th></th><th></th></tr>`;
+    const COLUMN_COUNT = 7; // Type, x, y, Enabled, Clickable, Place, Remove — kept in sync with the header row below for the actions row's colspan
+    table.innerHTML = `<tr><th>Type</th><th>${tileMode ? "tile u" : "x"}</th><th>${tileMode ? "tile v" : "y"}</th><th>Enabled</th><th>Clickable</th><th></th><th></th></tr>`;
     for (const obj of draft) {
       const row = document.createElement("tr");
       // Row id still keys off the real/placeholder numeric id internally
@@ -1811,6 +1812,17 @@ async function openRoomEditModal(
       enabledCell.appendChild(checkbox);
       row.appendChild(enabledCell);
 
+      // Default true (unset -> true) — see ObjectDef.clickable's own
+      // comment. Off makes the placement fully inert in the real game/
+      // viewer: no click at all, not even the baseline camera-recenter
+      // every other object gets.
+      const clickableCheckbox = document.createElement("input");
+      clickableCheckbox.type = "checkbox";
+      clickableCheckbox.checked = obj.clickable !== false;
+      const clickableCell = document.createElement("td");
+      clickableCell.appendChild(clickableCheckbox);
+      row.appendChild(clickableCell);
+
 
       // x/y move the object live (AdminPreviewRenderer.moveObject) instead
       // of a full scene rebuild — this is the fix for the "blip" when
@@ -1835,17 +1847,21 @@ async function openRoomEditModal(
       xInput.onchange = applyPosition;
       yInput.onchange = applyPosition;
 
-      // Type/enabled changes need a real rebuild — the object's sprite/size
-      // (or whether it renders at all) actually changes, not just its
-      // position, so there's nothing to "move" in place.
+      // Type/enabled/clickable changes need a real rebuild — unlike x/y
+      // (moved live, see applyPosition above), there's no "update
+      // interactivity in place" equivalent to moveObject(); clickable is
+      // only ever read once, when attachObjectInteraction first runs
+      // during buildObject.
       function applyTypeAndEnabled() {
         obj.type = Number(typeSelect.value);
         obj.enabled = checkbox.checked;
+        obj.clickable = clickableCheckbox.checked;
         updateSaveState();
         renderPreview();
       }
       typeSelect.onchange = applyTypeAndEnabled;
       checkbox.onchange = applyTypeAndEnabled;
+      clickableCheckbox.onchange = applyTypeAndEnabled;
 
       const placeCell = document.createElement("td");
       const placeBtn = document.createElement("button");
