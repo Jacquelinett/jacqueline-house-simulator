@@ -1,4 +1,4 @@
-import { AlphaFilter, Application, Assets, Container, Graphics, Rectangle, Sprite, Text, Texture } from "pixi.js";
+import { AlphaFilter, Application, Assets, BlurFilter, Container, Graphics, Rectangle, Sprite, Text, Texture } from "pixi.js";
 import { gridToScreen, rooms as roomDefs, screenToGrid, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
 import { findActivityById } from "./activities";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./characterSprites";
@@ -20,13 +20,16 @@ const PAN_EASE = 0.15;
 // above its normal resting position — purely a visual "this one's
 // focused" cue, eased in/out the same way the camera itself pans (see
 // ROOM_RAISE_EASE/tick), not an instant snap.
-const ROOM_RAISE_PX = -20;
+const ROOM_RAISE_PX = -5;
 const ROOM_RAISE_EASE = 0.2;
-// A thin glowing outline traced around the viewed room's own floor
-// silhouette (see buildRoom) — the other half of the "this one's
-// focused" cue, alongside the raise above.
-const HALO_COLOR = 0xffd166;
-const HALO_WIDTH = 3;
+// A soft blurred glow sitting behind the viewed room's own floor
+// silhouette (see buildRoom) — not a crisp outline, a filled-then-blurred
+// copy of the same shape, so it reads as the whole room giving off a
+// little ambient light rather than being traced by a line. The other
+// half of the "this one's focused" cue, alongside the raise above.
+const GLOW_COLOR = 0xffd166;
+const GLOW_ALPHA = 0.35;
+const GLOW_BLUR_STRENGTH = 12;
 // Exported for the admin tool's object-type preview (admin-main.ts),
 // which simulates the overlay layer too now (defaulting to Jacqueline's
 // own art) and needs the same default-duration fallback.
@@ -398,10 +401,10 @@ export class SceneRenderer {
   // recently (see tick()).
   private roomRaiseOffsets = new Map<number, number>();
   private roomRaiseTargets = new Map<number, number>();
-  // The viewed-room halo outline (see HALO_COLOR/HALO_WIDTH) — one per
-  // room, built once in buildRoom and just toggled visible/invisible by
-  // applyFocus rather than rebuilt.
-  private roomHalos = new Map<number, Graphics>();
+  // The viewed-room ambient glow (see GLOW_COLOR/GLOW_ALPHA/
+  // GLOW_BLUR_STRENGTH) — one per room, built once in buildRoom and just
+  // toggled visible/invisible by applyFocus rather than rebuilt.
+  private roomGlows = new Map<number, Graphics>();
   // Only the WALLS dim for a same-floor room you're not currently viewing
   // — floor/objects stay fully visible, so you can still see (and click)
   // everything in a neighboring room at a glance. Dimming via AlphaFilter
@@ -530,16 +533,21 @@ export class SceneRenderer {
     this.devOutlines.push(outline);
     container.addChild(outline);
 
-    // Same floor silhouette as the dev outline above, just styled as a
-    // glow and toggled by applyFocus (isViewed) instead of devMode — the
-    // "this one's focused" halo, painted last so it isn't hidden under
-    // the front walls/objects it traces around.
-    const halo = new Graphics()
+    // Same floor silhouette as the dev outline above, FILLED (not
+    // stroked) and blurred, toggled by applyFocus (isViewed) instead of
+    // devMode — the "this one's focused" ambient glow. Sits behind
+    // everything else in the room (index 0, inserted after the fact
+    // rather than built first, purely so it can reuse back/right/front/
+    // left/dy above instead of recomputing them) so it reads as light
+    // coming from underneath, not an overlay on top of the room's own
+    // content.
+    const glow = new Graphics()
       .poly([back.x, back.y + dy, right.x, right.y + dy, front.x, front.y + dy, left.x, left.y + dy])
-      .stroke({ width: HALO_WIDTH, color: HALO_COLOR });
-    halo.visible = false;
-    this.roomHalos.set(room.id, halo);
-    container.addChild(halo);
+      .fill({ color: GLOW_COLOR, alpha: GLOW_ALPHA });
+    glow.filters = [new BlurFilter({ strength: GLOW_BLUR_STRENGTH })];
+    glow.visible = false;
+    this.roomGlows.set(room.id, glow);
+    container.addChildAt(glow, 0);
 
     this.onRoomContainerBuilt(room.id, container);
     return container;
@@ -822,13 +830,13 @@ export class SceneRenderer {
         container.visible = true;
         const isViewed = id === this.viewedRoomId;
         this.applyRoomDim(id, isViewed);
-        // Raise/halo are the "this one's focused" cue — see ROOM_RAISE_PX/
-        // HALO_COLOR's own comments. Target only set here; tick() does the
+        // Raise/glow are the "this one's focused" cue — see ROOM_RAISE_PX/
+        // GLOW_COLOR's own comments. Target only set here; tick() does the
         // actual easing toward it every frame. Gated off for
-        // AdminPreviewRenderer (see roomRaiseEnabled's own comment).
+        // AdminPreviewRenderer (see isRoomRaiseEnabled's own comment).
         if (this.isRoomRaiseEnabled()) {
           this.roomRaiseTargets.set(id, isViewed ? ROOM_RAISE_PX : 0);
-          this.roomHalos.get(id)!.visible = isViewed;
+          this.roomGlows.get(id)!.visible = isViewed;
         }
         // Front walls dim the same amount as the back walls (DIM_ALPHA)
         // for any room that isn't the one actually being viewed, then dim
