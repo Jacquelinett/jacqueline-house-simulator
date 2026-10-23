@@ -1,6 +1,6 @@
 import { getServerConfig } from "./serverConfig";
 import { listCharacters } from "./characters";
-import { WorkoutSession, WorkoutSet } from "../src/workout/types";
+import { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession } from "../src/workout/types";
 
 /**
  * Read-only client for a self-hosted wger instance (https://wger.de) —
@@ -284,4 +284,103 @@ export async function getWgerWorkoutsForDate(dateStr: string): Promise<WorkoutSe
       sets,
     };
   });
+}
+
+interface WgerUserStatisticsRow {
+  total_weight_lifted: string | number;
+  total_workouts: number;
+  current_streak: number;
+  longest_streak: number;
+  last_workout_date: string | null;
+}
+
+/** wger's own computed lifetime stats — one row per account, nothing to group/paginate (`/api/v2/user-statistics/` always returns exactly the current token's own row). */
+export async function getWgerLifetimeStats(): Promise<WgerLifetimeStats | null> {
+  if (!isWgerConfigured()) return null;
+  const page = await wgerGetJson<WgerPage<WgerUserStatisticsRow>>("/api/v2/user-statistics/");
+  const row = page.results[0];
+  if (!row) return null;
+  return {
+    totalWeightLifted: toNumberOrNull(row.total_weight_lifted) ?? 0,
+    totalWeightLiftedUnit: "kg",
+    totalWorkouts: row.total_workouts,
+    currentStreak: row.current_streak,
+    longestStreak: row.longest_streak,
+    lastWorkoutDate: row.last_workout_date,
+  };
+}
+
+interface WgerUserTrophyRow {
+  trophy: { trophy_type: string };
+  context_data: {
+    date: string;
+    weight: number;
+    repetitions: number;
+    exercise_id: number;
+    weight_unit_id: number | null;
+    one_rep_max_estimate: number | null;
+  } | null;
+}
+
+const PR_TROPHY_TYPE = "pr";
+
+/**
+ * wger auto-detects a new personal record the moment a logged set beats
+ * your previous best for that exercise and awards a "pr"-type trophy for
+ * it, 1RM estimate included — this just reads those back out rather than
+ * computing anything itself. `/api/v2/user-trophy/` has no server-side
+ * filter for trophy type, so this fetches a generous page or two (ordered
+ * newest-first) and filters client-side; `context_data` is only populated
+ * for trophy types that carry per-award specifics (pr/volume do, a plain
+ * count-based trophy like "Beginner" doesn't), so those are naturally
+ * excluded by the `context_data` check alone even without the type filter.
+ */
+export async function getWgerPersonalRecords(limit = 10): Promise<PersonalRecord[]> {
+  if (!isWgerConfigured()) return [];
+
+  const rows = await wgerGetAllPages<WgerUserTrophyRow>(`/api/v2/user-trophy/?ordering=-earned_at&limit=50`);
+  const prRows = rows.filter((r) => r.trophy.trophy_type === PR_TROPHY_TYPE && r.context_data).slice(0, limit);
+
+  const exerciseIds = [...new Set(prRows.map((r) => r.context_data!.exercise_id))];
+  const namesById = new Map<number, string>();
+  await Promise.all(exerciseIds.map(async (id) => namesById.set(id, await getExerciseName(id))));
+
+  const unitIds = [...new Set(prRows.map((r) => r.context_data!.weight_unit_id).filter((u): u is number => u != null))];
+  const unitNamesById = new Map<number, string | null>();
+  await Promise.all(unitIds.map(async (id) => unitNamesById.set(id, await getWeightUnitName(id))));
+
+  return prRows.map((r) => {
+    const ctx = r.context_data!;
+    return {
+      exerciseName: namesById.get(ctx.exercise_id) ?? `Exercise #${ctx.exercise_id}`,
+      weight: ctx.weight,
+      weightUnit: ctx.weight_unit_id != null ? unitNamesById.get(ctx.weight_unit_id) ?? null : null,
+      reps: ctx.repetitions,
+      oneRepMaxEstimate: ctx.one_rep_max_estimate,
+      date: ctx.date,
+    };
+  });
+}
+
+interface WgerSessionRow {
+  id: string;
+  notes: string | null;
+  impression: "1" | "2" | "3" | null;
+  datetime_start: string;
+  datetime_end: string | null;
+}
+
+const IMPRESSION_LABEL: Record<string, "bad" | "neutral" | "good"> = { "1": "bad", "2": "neutral", "3": "good" };
+
+/** The last `limit` workout sessions (default 7), newest first — a session-level view independent of its sets, for the "Log" tab (the per-exercise breakdown lives in getWgerWorkoutsForDate/the Today tab instead). A single page, not wgerGetAllPages — "the last N" is exactly what one page of `limit=N` already gives, sorted. */
+export async function getWgerRecentSessions(limit = 7): Promise<RecentSession[]> {
+  if (!isWgerConfigured()) return [];
+  const page = await wgerGetJson<WgerPage<WgerSessionRow>>(`/api/v2/workoutsession/?ordering=-datetime_start&limit=${limit}`);
+  return page.results.map((r) => ({
+    id: r.id,
+    datetimeStart: r.datetime_start,
+    datetimeEnd: r.datetime_end,
+    impression: r.impression ? IMPRESSION_LABEL[r.impression] ?? null : null,
+    notes: r.notes || null,
+  }));
 }

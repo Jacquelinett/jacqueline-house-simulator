@@ -1,5 +1,5 @@
 import { sendQuery } from "../client/remoteState";
-import { WorkoutSession } from "./types";
+import { WorkoutSession, WgerLifetimeStats, PersonalRecord, RecentSession } from "./types";
 
 /**
  * Thin RPC wrapper around the "getWorkoutsForDate" query (server/rpc.ts) —
@@ -11,4 +11,17 @@ import { WorkoutSession } from "./types";
  */
 export async function fetchWorkoutsForDate(dateStr: string, viewingCharacterId?: string): Promise<WorkoutSession[]> {
   return sendQuery<WorkoutSession[]>("getWorkoutsForDate", { dateStr, viewingCharacterId });
+}
+
+/** Same thin-wrapper pattern as fetchWorkoutsForDate above, for the Workout modal's Lifetime Statistics/Personal Records/Log tabs — all three are wger-only (null/empty for a non-wger-linked character, see server/workouts.ts), not date-scoped. */
+export async function fetchWgerLifetimeStats(viewingCharacterId?: string): Promise<WgerLifetimeStats | null> {
+  return sendQuery<WgerLifetimeStats | null>("getWgerLifetimeStats", { viewingCharacterId });
+}
+
+export async function fetchWgerPersonalRecords(viewingCharacterId?: string): Promise<PersonalRecord[]> {
+  return sendQuery<PersonalRecord[]>("getWgerPersonalRecords", { viewingCharacterId });
+}
+
+export async function fetchWgerRecentSessions(viewingCharacterId?: string): Promise<RecentSession[]> {
+  return sendQuery<RecentSession[]>("getWgerRecentSessions", { viewingCharacterId });
 }

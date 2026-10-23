@@ -1,7 +1,7 @@
-import { WorkoutSession, WorkoutSet } from "../src/workout/types";
-import { getWgerWorkoutsForDate, isWgerLinkedCharacter } from "./wger";
+import { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession } from "../src/workout/types";
+import { getWgerWorkoutsForDate, getWgerLifetimeStats, getWgerPersonalRecords, getWgerRecentSessions, isWgerLinkedCharacter } from "./wger";
 
-export type { WorkoutSession, WorkoutSet };
+export type { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession };
 
 /**
  * One wger account backs this whole feature (see server/wger.ts's own
@@ -22,6 +22,39 @@ export async function getWorkoutsForDate(characterId: string, dateStr: string): 
     return await getWgerWorkoutsForDate(dateStr);
   } catch (err) {
     console.error("[workouts] wger fetch failed, falling back to no data for this call", err);
+    return [];
+  }
+}
+
+/** Same per-character gatekeeping as getWorkoutsForDate above — null (not an error) for anyone not wger-linked. */
+export async function getLifetimeStatsForCharacter(characterId: string): Promise<WgerLifetimeStats | null> {
+  if (!isWgerLinkedCharacter(characterId)) return null;
+  try {
+    return await getWgerLifetimeStats();
+  } catch (err) {
+    console.error("[workouts] wger lifetime-stats fetch failed", err);
+    return null;
+  }
+}
+
+/** Same per-character gatekeeping as getWorkoutsForDate above. */
+export async function getPersonalRecordsForCharacter(characterId: string): Promise<PersonalRecord[]> {
+  if (!isWgerLinkedCharacter(characterId)) return [];
+  try {
+    return await getWgerPersonalRecords();
+  } catch (err) {
+    console.error("[workouts] wger personal-records fetch failed", err);
+    return [];
+  }
+}
+
+/** Same per-character gatekeeping as getWorkoutsForDate above. */
+export async function getRecentSessionsForCharacter(characterId: string): Promise<RecentSession[]> {
+  if (!isWgerLinkedCharacter(characterId)) return [];
+  try {
+    return await getWgerRecentSessions();
+  } catch (err) {
+    console.error("[workouts] wger recent-sessions fetch failed", err);
     return [];
   }
 }

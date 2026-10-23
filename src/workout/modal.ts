@@ -1,61 +1,114 @@
 import { buildModal } from "../ui/modal";
+import { buildToggleGroup } from "../ui/toggleGroup";
 import { localDateString } from "../goals/recurrence";
-import { fetchWorkoutsForDate } from "./client";
+import { fetchWorkoutsForDate, fetchWgerLifetimeStats, fetchWgerPersonalRecords, fetchWgerRecentSessions } from "./client";
 import { WorkoutSession } from "./types";
 import { formatSetDetail, groupSetsByExercise } from "./format";
 
+function showLoading(container: HTMLElement): void {
+  container.textContent = "";
+  const loading = document.createElement("div");
+  loading.className = "goals-empty";
+  loading.textContent = "Loading...";
+  container.appendChild(loading);
+}
+
+function showEmpty(container: HTMLElement, text: string): void {
+  container.textContent = "";
+  const empty = document.createElement("div");
+  empty.className = "goals-empty";
+  empty.textContent = text;
+  container.appendChild(empty);
+}
+
 /**
- * Read-only display of today's workout data — backed by the real wger
- * instance when server_config.wger_base_url/wger_api_token are set
- * (server/wger.ts), falling back to the mock SQLite mirror otherwise (see
- * server/workouts.ts's own comment on this dispatch). Deliberately
- * independent of AW/goals entirely — just "what did I lift today," no
- * activity-tracking tie-in. See also the Dashboard's "Lifted Today"
+ * Read-only display of real wger workout data — four tabs, all backed by
+ * server_config.wger_base_url/wger_api_token (server/wger.ts); every tab
+ * is empty for a non-wger-linked character, not placeholder data (see
+ * server/workouts.ts's own comment on why the old mock mirror is gone).
+ * Deliberately independent of AW/goals entirely — just "what did I lift,"
+ * no activity-tracking tie-in. See also the Dashboard's "Lifted Today"
  * section (src/dashboard/panel.ts), which shows a coarser summary of the
- * exact same data without needing this modal open.
+ * Today tab's exact same data without needing this modal open.
  */
 export function setupWorkoutModal(): { open: () => void } {
-  const modal = buildModal("Workout");
+  const modal = buildModal("Workout", { size: "large", resizable: true });
 
-  const list = document.createElement("div");
-  list.className = "dashboard-list";
-  modal.body.appendChild(list);
+  const tabsRow = document.createElement("div");
+  tabsRow.className = "stat-tabs";
+  modal.body.appendChild(tabsRow);
 
-  async function render() {
-    list.textContent = "";
-    const loading = document.createElement("div");
-    loading.className = "goals-empty";
-    loading.textContent = "Loading...";
-    list.appendChild(loading);
+  const todaySection = document.createElement("div");
+  modal.body.appendChild(todaySection);
+
+  const lifetimeSection = document.createElement("div");
+  lifetimeSection.style.display = "none";
+  modal.body.appendChild(lifetimeSection);
+
+  const recordsSection = document.createElement("div");
+  recordsSection.style.display = "none";
+  modal.body.appendChild(recordsSection);
+
+  const logSection = document.createElement("div");
+  logSection.style.display = "none";
+  modal.body.appendChild(logSection);
+
+  type Tab = "today" | "lifetime" | "records" | "log";
+  const sections: Record<Tab, HTMLElement> = { today: todaySection, lifetime: lifetimeSection, records: recordsSection, log: logSection };
+  const renderers: Record<Tab, () => void> = {
+    today: renderToday,
+    lifetime: renderLifetime,
+    records: renderRecords,
+    log: renderLog,
+  };
+
+  tabsRow.appendChild(
+    buildToggleGroup(
+      [
+        ["today", "Today"],
+        ["lifetime", "Lifetime Stats"],
+        ["records", "Personal Records"],
+        ["log", "Log"],
+      ] as const,
+      "today",
+      (tab) => {
+        for (const [t, section] of Object.entries(sections) as [Tab, HTMLElement][]) section.style.display = t === tab ? "" : "none";
+        renderers[tab]();
+      },
+      "stat-tab",
+    ),
+  );
+
+  // --- Today ---
+
+  const todayList = document.createElement("div");
+  todayList.className = "dashboard-list";
+  todaySection.appendChild(todayList);
+
+  async function renderToday() {
+    showLoading(todayList);
 
     let sessions: WorkoutSession[];
     try {
       sessions = await fetchWorkoutsForDate(localDateString(new Date()));
     } catch (err) {
-      console.error("[workout] failed to load", err);
-      list.textContent = "";
-      const error = document.createElement("div");
-      error.className = "goals-empty";
-      error.textContent = "Failed to load workout data";
-      list.appendChild(error);
+      console.error("[workout] failed to load today's sessions", err);
+      showEmpty(todayList, "Failed to load workout data");
       return;
     }
 
-    list.textContent = "";
     if (sessions.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "goals-empty";
-      empty.textContent = "No workouts logged today";
-      list.appendChild(empty);
+      showEmpty(todayList, "No workouts logged today");
       return;
     }
 
+    todayList.textContent = "";
     for (const session of sessions) {
       if (session.notes) {
         const notes = document.createElement("div");
         notes.className = "workout-session-notes";
         notes.textContent = session.notes;
-        list.appendChild(notes);
+        todayList.appendChild(notes);
       }
 
       for (const [exerciseName, sets] of groupSetsByExercise(session.sets)) {
@@ -73,7 +126,7 @@ export function setupWorkoutModal(): { open: () => void } {
         detail.textContent = details[0] ?? "";
         row.appendChild(detail);
 
-        list.appendChild(row);
+        todayList.appendChild(row);
 
         // One line per additional weight/rep group beyond the first —
         // same reasoning/markup as the Dashboard's own "Lifted Today"
@@ -87,8 +140,171 @@ export function setupWorkoutModal(): { open: () => void } {
           subText.textContent = extra;
           subRow.appendChild(subText);
 
-          list.appendChild(subRow);
+          todayList.appendChild(subRow);
         }
+      }
+    }
+  }
+
+  // --- Lifetime Stats ---
+
+  const lifetimeList = document.createElement("div");
+  lifetimeList.className = "dashboard-list";
+  lifetimeSection.appendChild(lifetimeList);
+
+  async function renderLifetime() {
+    showLoading(lifetimeList);
+
+    const stats = await fetchWgerLifetimeStats().catch((err) => {
+      console.error("[workout] failed to load lifetime stats", err);
+      return null;
+    });
+
+    if (!stats) {
+      showEmpty(lifetimeList, "No wger account linked");
+      return;
+    }
+
+    lifetimeList.textContent = "";
+    const rows: [string, string][] = [
+      ["Total weight lifted", `${stats.totalWeightLifted.toLocaleString()}${stats.totalWeightLiftedUnit}`],
+      ["Total workouts", String(stats.totalWorkouts)],
+      ["Current streak", `${stats.currentStreak} day${stats.currentStreak === 1 ? "" : "s"}`],
+      ["Longest streak", `${stats.longestStreak} day${stats.longestStreak === 1 ? "" : "s"}`],
+      ["Last workout", stats.lastWorkoutDate ? new Date(stats.lastWorkoutDate).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"],
+    ];
+    for (const [label, value] of rows) {
+      const row = document.createElement("div");
+      row.className = "dashboard-row workout-row";
+
+      const name = document.createElement("span");
+      name.className = "dashboard-text";
+      name.textContent = label;
+      row.appendChild(name);
+
+      const detail = document.createElement("span");
+      detail.className = "workout-sets-detail";
+      detail.textContent = value;
+      row.appendChild(detail);
+
+      lifetimeList.appendChild(row);
+    }
+  }
+
+  // --- Personal Records ---
+
+  const recordsList = document.createElement("div");
+  recordsList.className = "dashboard-list";
+  recordsSection.appendChild(recordsList);
+
+  async function renderRecords() {
+    showLoading(recordsList);
+
+    const records = await fetchWgerPersonalRecords().catch((err) => {
+      console.error("[workout] failed to load personal records", err);
+      return null;
+    });
+
+    if (records === null) {
+      showEmpty(recordsList, "Failed to load personal records");
+      return;
+    }
+    if (records.length === 0) {
+      showEmpty(recordsList, "No personal records yet");
+      return;
+    }
+
+    recordsList.textContent = "";
+    for (const record of records) {
+      const row = document.createElement("div");
+      row.className = "dashboard-row workout-row";
+
+      const name = document.createElement("span");
+      name.className = "dashboard-text";
+      name.textContent = record.exerciseName;
+      row.appendChild(name);
+
+      const detail = document.createElement("span");
+      detail.className = "workout-sets-detail";
+      const weightPart = `${record.weight}${record.weightUnit ?? "kg"} × ${record.reps}`;
+      const oneRm = record.oneRepMaxEstimate != null ? ` (1RM ~${record.oneRepMaxEstimate}${record.weightUnit ?? "kg"})` : "";
+      detail.textContent = `${weightPart}${oneRm}`;
+      row.appendChild(detail);
+
+      recordsList.appendChild(row);
+
+      const subRow = document.createElement("div");
+      subRow.className = "workout-subrow";
+      const subText = document.createElement("span");
+      subText.className = "workout-subtext";
+      subText.textContent = new Date(record.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+      subRow.appendChild(subText);
+      recordsList.appendChild(subRow);
+    }
+  }
+
+  // --- Log (last 7 sessions) ---
+
+  const logList = document.createElement("div");
+  logList.className = "dashboard-list";
+  logSection.appendChild(logList);
+
+  const IMPRESSION_TEXT: Record<"bad" | "neutral" | "good", string> = { bad: "Bad", neutral: "Neutral", good: "Good" };
+
+  async function renderLog() {
+    showLoading(logList);
+
+    const sessions = await fetchWgerRecentSessions().catch((err) => {
+      console.error("[workout] failed to load recent sessions", err);
+      return null;
+    });
+
+    if (sessions === null) {
+      showEmpty(logList, "Failed to load log");
+      return;
+    }
+    if (sessions.length === 0) {
+      showEmpty(logList, "No sessions logged yet");
+      return;
+    }
+
+    logList.textContent = "";
+    for (const session of sessions) {
+      const start = new Date(session.datetimeStart);
+      const end = session.datetimeEnd ? new Date(session.datetimeEnd) : null;
+      const dateLabel = start.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+      const timeLabel = `${start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} – ${end ? end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "ongoing"}`;
+
+      const row = document.createElement("div");
+      row.className = "dashboard-row workout-row";
+
+      const name = document.createElement("span");
+      name.className = "dashboard-text";
+      name.textContent = dateLabel;
+      row.appendChild(name);
+
+      const detail = document.createElement("span");
+      detail.className = "workout-sets-detail";
+      detail.textContent = timeLabel;
+      row.appendChild(detail);
+
+      logList.appendChild(row);
+
+      if (session.impression) {
+        const subRow = document.createElement("div");
+        subRow.className = "workout-subrow";
+        const subText = document.createElement("span");
+        subText.className = "workout-subtext";
+        subText.textContent = `Impression: ${IMPRESSION_TEXT[session.impression]}`;
+        subRow.appendChild(subText);
+        logList.appendChild(subRow);
+      }
+
+      if (session.notes) {
+        const notes = document.createElement("div");
+        notes.className = "workout-session-notes";
+        notes.textContent = session.notes;
+        logList.appendChild(notes);
       }
     }
   }
@@ -96,7 +312,7 @@ export function setupWorkoutModal(): { open: () => void } {
   return {
     open() {
       modal.open();
-      render();
+      renderToday();
     },
   };
 }

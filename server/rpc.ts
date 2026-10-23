@@ -19,7 +19,7 @@ import { deleteMessage, fetchMessages, getBroadcastHealthInfo, pushStatus } from
 import { getDeviceSettings, updateDeviceSettings } from "./deviceSettings";
 import { Character, getCharacterBySecret, listCharacters } from "./characters";
 import { activityLabelHasLiveObject } from "./activityGuard";
-import { getWorkoutsForDate } from "./workouts";
+import { getWorkoutsForDate, getLifetimeStatsForCharacter, getPersonalRecordsForCharacter, getRecentSessionsForCharacter } from "./workouts";
 import { getActivities } from "./activities";
 import { getObjectTypes } from "./objectTypes";
 import { getRoomSpecs } from "./rooms";
@@ -72,6 +72,9 @@ const queries: Record<string, (characterId: string, args: any) => Promise<unknow
   getGoalHistory: async (characterId, { viewingCharacterId }) => getAllHistory(viewingCharacterId ?? characterId),
   historyForGoal: async (characterId, { goalId }) => historyForGoal(characterId, goalId),
   getWorkoutsForDate: async (characterId, { dateStr, viewingCharacterId }) => getWorkoutsForDate(viewingCharacterId ?? characterId, dateStr),
+  getWgerLifetimeStats: async (characterId, { viewingCharacterId } = {}) => getLifetimeStatsForCharacter(viewingCharacterId ?? characterId),
+  getWgerPersonalRecords: async (characterId, { viewingCharacterId } = {}) => getPersonalRecordsForCharacter(viewingCharacterId ?? characterId),
+  getWgerRecentSessions: async (characterId, { viewingCharacterId } = {}) => getRecentSessionsForCharacter(viewingCharacterId ?? characterId),
   fetchMessages: () => fetchMessages(),
   getBroadcastHealth: async () => getBroadcastHealthInfo(),
 };
