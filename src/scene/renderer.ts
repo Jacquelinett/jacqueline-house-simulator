@@ -563,6 +563,24 @@ export function buildBottomWalls(room: RoomDef): Container {
   return container;
 }
 
+/**
+ * An object's depth for the room-build's own painter's-algorithm sort
+ * (see buildRoom's object loop) — the (u,v) grid cell its floor-contact
+ * point falls in, summed into one scalar the same way buildFloor's own
+ * cells.sort(u+v) already orders floor tiles. `obj.x`/`obj.y` is always
+ * the sprite's raw top-left (never grid-snapped, see ObjectDef's own
+ * comment), which can include arbitrary padding unrelated to where the
+ * object actually "stands" — anchorX/anchorY (defaulting to 0,0 — see
+ * ObjectTypeDef's own comment) is the offset from that top-left to the
+ * spot that should land on a tile corner, so adding it in before
+ * converting back to grid space is what actually gives the object's real
+ * footprint position, not just wherever its canvas happens to start.
+ */
+function objectDepth(obj: ObjectDef): number {
+  const { u, v } = screenToGrid(obj.x + (obj.anchorX ?? 0), obj.y + (obj.anchorY ?? 0));
+  return u + v;
+}
+
 /** Builds just the floor for a room, tiled per its chosen floor variant — see buildBackWalls's own comment on why walls are split out separately. */
 export function buildFloor(room: RoomDef): Container {
   const container = new Container();
@@ -798,8 +816,20 @@ export class SceneRenderer {
 
     container.addChild(buildFloor(room));
 
-    for (const obj of room.objects) {
-      if (obj.enabled === false) continue;
+    // Painter's algorithm, same spirit as buildFloor's own cells.sort(u+v)
+    // a few lines up — an object nearer the room's own front vertex
+    // (bigger u+v) needs to paint OVER one nearer the back, or the
+    // farther object's sprite would wrongly cover the nearer one's own
+    // base/legs. objectDepth() uses the object's floor-CONTACT point
+    // (x+anchorX, y+anchorY), not its raw top-left (x,y) — the same
+    // adjustment the admin tool's tile-mode display already makes (see
+    // admin-main.ts's anchorFor()/screenToTileLabel()) — since x/y is
+    // just wherever the sprite's own canvas happens to start, which can
+    // include arbitrary padding unrelated to where the object actually
+    // "stands." Array.prototype.sort is stable, so two objects landing on
+    // the exact same depth keep their original (insertion) order rather
+    // than flickering between runs.
+    for (const obj of [...room.objects].filter((o) => o.enabled !== false).sort((a, b) => objectDepth(a) - objectDepth(b))) {
       container.addChild(this.buildObject(room.id, obj));
     }
 
