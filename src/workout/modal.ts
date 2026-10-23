@@ -4,6 +4,7 @@ import { localDateString } from "../goals/recurrence";
 import { fetchWorkoutsForDate, fetchWgerLifetimeStats, fetchWgerPersonalRecords, fetchWgerRecentSessions } from "./client";
 import { WorkoutSession } from "./types";
 import { formatSetDetail, groupSetsByExercise } from "./format";
+import { buildWorkoutRow, buildWorkoutSubRow } from "./render";
 
 function showLoading(container: HTMLElement): void {
   container.textContent = "";
@@ -120,35 +121,14 @@ export function setupWorkoutContent(container: HTMLElement): { refresh(): void }
       }
 
       for (const [exerciseName, sets] of groupSetsByExercise(session.sets)) {
-        const row = document.createElement("div");
-        row.className = "dashboard-row workout-row";
-
-        const name = document.createElement("span");
-        name.className = "dashboard-text";
-        name.textContent = exerciseName;
-        row.appendChild(name);
-
         const details = formatSetDetail(sets);
-        const detail = document.createElement("span");
-        detail.className = "workout-sets-detail";
-        detail.textContent = details[0] ?? "";
-        row.appendChild(detail);
-
-        todayList.appendChild(row);
+        todayList.appendChild(buildWorkoutRow(exerciseName, details[0] ?? ""));
 
         // One line per additional weight/rep group beyond the first —
         // same reasoning/markup as the Dashboard's own "Lifted Today"
         // section (src/dashboard/render.ts's renderWorkoutToday).
         for (const extra of details.slice(1)) {
-          const subRow = document.createElement("div");
-          subRow.className = "workout-subrow";
-
-          const subText = document.createElement("span");
-          subText.className = "workout-subtext";
-          subText.textContent = extra;
-          subRow.appendChild(subText);
-
-          todayList.appendChild(subRow);
+          todayList.appendChild(buildWorkoutSubRow(extra));
         }
       }
     }
@@ -182,20 +162,7 @@ export function setupWorkoutContent(container: HTMLElement): { refresh(): void }
       ["Last workout", stats.lastWorkoutDate ? new Date(stats.lastWorkoutDate).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"],
     ];
     for (const [label, value] of rows) {
-      const row = document.createElement("div");
-      row.className = "dashboard-row workout-row";
-
-      const name = document.createElement("span");
-      name.className = "dashboard-text";
-      name.textContent = label;
-      row.appendChild(name);
-
-      const detail = document.createElement("span");
-      detail.className = "workout-sets-detail";
-      detail.textContent = value;
-      row.appendChild(detail);
-
-      lifetimeList.appendChild(row);
+      lifetimeList.appendChild(buildWorkoutRow(label, value));
     }
   }
 
@@ -224,30 +191,10 @@ export function setupWorkoutContent(container: HTMLElement): { refresh(): void }
 
     recordsList.textContent = "";
     for (const record of records) {
-      const row = document.createElement("div");
-      row.className = "dashboard-row workout-row";
-
-      const name = document.createElement("span");
-      name.className = "dashboard-text";
-      name.textContent = record.exerciseName;
-      row.appendChild(name);
-
-      const detail = document.createElement("span");
-      detail.className = "workout-sets-detail";
       const weightPart = `${record.weight}${record.weightUnit ?? "kg"} × ${record.reps}`;
       const oneRm = record.oneRepMaxEstimate != null ? ` (1RM ~${record.oneRepMaxEstimate}${record.weightUnit ?? "kg"})` : "";
-      detail.textContent = `${weightPart}${oneRm}`;
-      row.appendChild(detail);
-
-      recordsList.appendChild(row);
-
-      const subRow = document.createElement("div");
-      subRow.className = "workout-subrow";
-      const subText = document.createElement("span");
-      subText.className = "workout-subtext";
-      subText.textContent = new Date(record.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-      subRow.appendChild(subText);
-      recordsList.appendChild(subRow);
+      recordsList.appendChild(buildWorkoutRow(record.exerciseName, `${weightPart}${oneRm}`));
+      recordsList.appendChild(buildWorkoutSubRow(new Date(record.date).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })));
     }
   }
 
@@ -283,29 +230,10 @@ export function setupWorkoutContent(container: HTMLElement): { refresh(): void }
       const dateLabel = start.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
       const timeLabel = `${start.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} – ${end ? end.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "ongoing"}`;
 
-      const row = document.createElement("div");
-      row.className = "dashboard-row workout-row";
-
-      const name = document.createElement("span");
-      name.className = "dashboard-text";
-      name.textContent = dateLabel;
-      row.appendChild(name);
-
-      const detail = document.createElement("span");
-      detail.className = "workout-sets-detail";
-      detail.textContent = timeLabel;
-      row.appendChild(detail);
-
-      logList.appendChild(row);
+      logList.appendChild(buildWorkoutRow(dateLabel, timeLabel));
 
       if (session.impression) {
-        const subRow = document.createElement("div");
-        subRow.className = "workout-subrow";
-        const subText = document.createElement("span");
-        subText.className = "workout-subtext";
-        subText.textContent = `Impression: ${IMPRESSION_TEXT[session.impression]}`;
-        subRow.appendChild(subText);
-        logList.appendChild(subRow);
+        logList.appendChild(buildWorkoutSubRow(`Impression: ${IMPRESSION_TEXT[session.impression]}`));
       }
 
       if (session.notes) {
