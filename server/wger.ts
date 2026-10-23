@@ -196,15 +196,33 @@ function toNumberOrNull(value: string | number | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** `dateStr` ("YYYY-MM-DD") plus one calendar day, same format — plain string arithmetic via Date, no timezone library needed for a whole-day increment. */
+function nextDateStr(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 /**
  * Today's (or any given date's) logged sets from the real wger instance,
  * reshaped into the same WorkoutSession/WorkoutSet shape the mock mirror
  * already used — one synthetic session per distinct wger session id
  * referenced by that day's logs (notes carried over from wger's own
  * workoutsession.notes), sets grouped under whichever session they
- * belong to. wger's own `date` filter on /api/v2/workoutlog/ does the
- * actual date scoping — confirmed against a live instance to filter
- * correctly by exact match (see this module's own header comment).
+ * belong to.
+ *
+ * `/api/v2/workoutlog/`'s `date` field is a full `datetime` (confirmed
+ * live: `01a16916-...` logs carry `"date": "2026-10-23T10:03:32.978000-04:00"`,
+ * a real timestamp, not a bare date) — so a plain `?date=2026-10-23` filter
+ * requires an EXACT datetime match and silently returns zero results for
+ * every real log (this was an actual bug: a log existed, the query just
+ * could never match it). `date__gte`/`date__lt` are DRF's range lookups on
+ * that same field and DO filter correctly by day — confirmed live
+ * (`date__gte=2026-10-23&date__lte=2026-10-24` returned the real count);
+ * using `__lt` the day after instead of `__lte` the same day is the
+ * cleaner half-open range (today 00:00 up to but not including tomorrow
+ * 00:00), rather than relying on `__lte` against a bare date happening to
+ * mean "midnight that day" in this DRF version too.
  *
  * Returns [] if wger isn't configured, the request fails, or there's
  * genuinely nothing logged that day — callers can't distinguish those from
@@ -217,7 +235,7 @@ function toNumberOrNull(value: string | number | null): number | null {
 export async function getWgerWorkoutsForDate(dateStr: string): Promise<WorkoutSession[]> {
   if (!isWgerConfigured()) return [];
 
-  const logs = await wgerGetAllPages<WgerLog>(`/api/v2/workoutlog/?date=${dateStr}&limit=100`);
+  const logs = await wgerGetAllPages<WgerLog>(`/api/v2/workoutlog/?date__gte=${dateStr}&date__lt=${nextDateStr(dateStr)}&limit=100`);
   if (logs.length === 0) return [];
 
   const exerciseIds = [...new Set(logs.map((l) => l.exercise))];
