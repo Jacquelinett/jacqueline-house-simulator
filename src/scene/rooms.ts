@@ -100,7 +100,15 @@ export interface ObjectTypeDef {
   width: number;
   height: number;
   below?: SpriteLayer[];
+  // Always derived/read-only — resolved server-side (server/objectTypes.ts)
+  // by joining whichever sprite_overlays row overlayId points at, never
+  // written back directly. overlayId is the actual foreign key: both read
+  // (which overlay this type currently has, if any) and write (set this on
+  // create/update) go through it, so multiple types can reference the same
+  // named overlay instead of each embedding an identical inline blob — see
+  // server/spriteOverlays.ts and admin-main.ts's Sprite Overlays tab.
   overlay?: SpriteLayer[];
+  overlayId?: number | null;
   above?: SpriteLayer[];
   // Deliberately no `actions` here — what an object DOES is purely a
   // per-placement concern now (see ObjectPlacement.actions), not

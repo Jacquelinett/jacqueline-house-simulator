@@ -12,6 +12,7 @@ import {
   getObjectTypes,
   updateObjectType,
 } from "./objectTypes";
+import { createSpriteOverlay, deleteSpriteOverlay, getSpriteOverlays, updateSpriteOverlay } from "./spriteOverlays";
 import { createObject, createRoom, deleteObject, deleteRoom, getRoomSpecs, updateObject, updateRoom, updateRoomConnections } from "./rooms";
 import { ObjectPlacement } from "../src/scene/rooms";
 import { createFloor, deleteFloor, getFloors, updateFloor } from "./floors";
@@ -126,6 +127,25 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
       }
       if (parts.length === 4 && method === "DELETE") {
         deleteObjectType(Number(parts[3]));
+        return sendJson(res, 200, { ok: true }), true;
+      }
+    }
+
+    // /api/admin/sprite-overlays[/:id] — named, reusable overlay sprites
+    // (see server/spriteOverlays.ts); object_types reference one by id.
+    if (parts[2] === "sprite-overlays") {
+      if (parts.length === 3 && method === "GET") return sendJson(res, 200, getSpriteOverlays()), true;
+      if (parts.length === 3 && method === "POST") {
+        const layer = await readJsonBody(req);
+        return sendJson(res, 200, { id: createSpriteOverlay(layer) }), true;
+      }
+      if (parts.length === 4 && method === "PATCH") {
+        const layer = await readJsonBody(req);
+        updateSpriteOverlay(Number(parts[3]), layer);
+        return sendJson(res, 200, { ok: true }), true;
+      }
+      if (parts.length === 4 && method === "DELETE") {
+        deleteSpriteOverlay(Number(parts[3]));
         return sendJson(res, 200, { ok: true }), true;
       }
     }

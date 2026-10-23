@@ -328,6 +328,68 @@ function migrateTypeDefaultActionsToPlacements(): void {
 }
 
 /**
+ * One-time migration: object_types.overlay (a single SpriteLayer embedded
+ * inline as JSON) moves to its own sprite_overlays table, referenced by
+ * overlay_id — so distinct object types can reference the same named
+ * overlay instead of each hand-duplicating an identical inline blob, and
+ * the admin tool can show/pick overlays by their spriteKey instead of
+ * editing raw layer JSON per type (see admin-main.ts's Sprite Overlays
+ * tab). Must run AFTER the CREATE TABLE/ALTER block below — it needs
+ * sprite_overlays and object_types.overlay_id to already exist — unlike
+ * migrateNavigateActionKind/migrateTypeDefaultActionsToPlacements above,
+ * which only ever touch columns that already exist going in. Gated on
+ * overlay_json still existing, same idiom as those two: drops that column
+ * once done, so this is a near-instant no-op on every later startup.
+ */
+function migrateOverlayJsonToSpriteOverlays(): void {
+  if (!tableExists("object_types") || columnType("object_types", "overlay_json") === undefined) return;
+
+  const rows = db.prepare("SELECT id, overlay_json FROM object_types WHERE overlay_json IS NOT NULL").all() as {
+    id: number;
+    overlay_json: string;
+  }[];
+
+  const insert = db.prepare(`
+    INSERT INTO sprite_overlays (sprite_key, texture, offset_x, offset_y, frame_width, frame_height, frame_count, frame_duration_ms)
+    VALUES (@spriteKey, @texture, @offsetX, @offsetY, @frameWidth, @frameHeight, @frameCount, @frameDurationMs)
+  `);
+  const setOverlayId = db.prepare("UPDATE object_types SET overlay_id = ? WHERE id = ?");
+
+  for (const row of rows) {
+    const layers = JSON.parse(row.overlay_json) as {
+      texture?: string;
+      offsetX?: number;
+      offsetY?: number;
+      spriteKey?: string;
+      frameWidth?: number;
+      frameHeight?: number;
+      frameCount?: number;
+      frameDurationMs?: number;
+    }[];
+    const layer = layers[0];
+    if (!layer) continue;
+    // Every real overlay authored so far has a spriteKey (it's what makes
+    // per-character resolution possible at all) — this fallback only
+    // exists so a hypothetical keyless overlay doesn't violate
+    // sprite_key's NOT NULL/UNIQUE constraint, not because real data needs it.
+    const spriteKey = layer.spriteKey?.trim() || `type${row.id}`;
+    const { lastInsertRowid } = insert.run({
+      spriteKey,
+      texture: layer.texture ?? null,
+      offsetX: layer.offsetX ?? null,
+      offsetY: layer.offsetY ?? null,
+      frameWidth: layer.frameWidth ?? null,
+      frameHeight: layer.frameHeight ?? null,
+      frameCount: layer.frameCount ?? null,
+      frameDurationMs: layer.frameDurationMs ?? null,
+    });
+    setOverlayId.run(Number(lastInsertRowid), row.id);
+  }
+
+  db.exec("ALTER TABLE object_types DROP COLUMN overlay_json");
+}
+
+/**
  * Schema migration, run once at startup — `CREATE TABLE IF NOT EXISTS` is a
  * no-op once a table already exists, same gotcha val.town's own
  * `ensureSchema()` has (see CLAUDE.md's "Schema migration gotcha"): it
@@ -431,16 +493,33 @@ export function migrate(): void {
       color INTEGER NOT NULL
     );
 
+    -- One row per named overlay (spriteKey + shared-default texture +
+    -- optional frame-animation fields) — object_types.overlay_id
+    -- references this by id, so multiple types can share one overlay
+    -- definition instead of each embedding an identical inline blob (see
+    -- server/spriteOverlays.ts, admin-main.ts's Sprite Overlays tab).
+    CREATE TABLE IF NOT EXISTS sprite_overlays (
+      id INTEGER PRIMARY KEY,
+      sprite_key TEXT NOT NULL UNIQUE,
+      texture TEXT,
+      offset_x REAL,
+      offset_y REAL,
+      frame_width INTEGER,
+      frame_height INTEGER,
+      frame_count INTEGER,
+      frame_duration_ms INTEGER
+    );
+
     CREATE TABLE IF NOT EXISTS object_types (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
       below_json TEXT,
-      overlay_json TEXT,
       above_json TEXT,
       width INTEGER NOT NULL,
       height INTEGER NOT NULL,
       anchor_x REAL,
-      anchor_y REAL
+      anchor_y REAL,
+      overlay_id INTEGER
     );
 
     -- Mirrors src/scene/rooms.ts's RoomSpec shape (not flattened absolute
@@ -517,6 +596,7 @@ export function migrate(): void {
     "ALTER TABLE server_config ADD COLUMN admin_secret TEXT",
     "ALTER TABLE object_types ADD COLUMN anchor_x REAL",
     "ALTER TABLE object_types ADD COLUMN anchor_y REAL",
+    "ALTER TABLE object_types ADD COLUMN overlay_id INTEGER",
     "ALTER TABLE rooms ADD COLUMN show_left_wall INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE rooms ADD COLUMN show_right_wall INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE characters ADD COLUMN publish_to_viewer INTEGER NOT NULL DEFAULT 0",
@@ -555,6 +635,8 @@ export function migrate(): void {
       // column already dropped
     }
   }
+
+  migrateOverlayJsonToSpriteOverlays();
 
   seedJacquelineCharacter();
   backfillCharacterId();

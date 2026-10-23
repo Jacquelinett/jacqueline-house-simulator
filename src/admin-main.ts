@@ -68,6 +68,13 @@ interface ActivityDef {
   color: number;
 }
 
+/** Mirrors server/spriteOverlays.ts's SpriteOverlayDef — a named, reusable overlay (spriteKey + optional frame-animation fields) object types reference by id instead of embedding inline. */
+interface SpriteOverlayDef {
+  id: number;
+  spriteKey: string;
+  layer: SpriteLayer;
+}
+
 // id is omitted for a not-yet-saved placement (the room editor's draft for
 // a brand-new object the admin just added) — same "global objects.id,
 // absent until persisted" contract as ObjectPlacement itself (rooms.ts).
@@ -244,11 +251,12 @@ function setupSyncButton(): void {
 
 // --- Tabs ---
 
-type TabId = "characters" | "activities" | "object-types" | "rooms";
+type TabId = "characters" | "activities" | "object-types" | "sprite-overlays" | "rooms";
 const TABS: { id: TabId; label: string }[] = [
   { id: "characters", label: "Characters" },
   { id: "activities", label: "Activities" },
   { id: "object-types", label: "Object Types" },
+  { id: "sprite-overlays", label: "Sprite Overlays" },
   { id: "rooms", label: "Rooms" },
 ];
 
@@ -519,6 +527,91 @@ async function renderActivities(body: HTMLElement) {
   body.appendChild(addBtn);
 }
 
+// --- Sprite overlays ---
+
+/** Edits (or creates, when `id` is null) one named overlay — reuses buildLayerSection's spriteKeyFields editor verbatim (same texture/offset/spriteKey/frame fields an object type's overlay used to edit inline), just standalone with no live preview of its own; the Object Types tab's own preview shows whichever overlay a type picks. */
+function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDef | null, characterAssetPaths: string[], onSaved: () => void): void {
+  const modal = buildModal(id ? `Edit Sprite Overlay: ${existing!.spriteKey}` : "Add Sprite Overlay", {});
+
+  const layerSection = buildLayerSection("Overlay", existing?.layer, characterAssetPaths, true, () => {});
+  modal.body.appendChild(layerSection.element);
+
+  const footer = document.createElement("div");
+  footer.className = "admin-form";
+  const saveBtn = document.createElement("button");
+  saveBtn.textContent = "Save";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.textContent = "Cancel";
+  footer.append(saveBtn, cancelBtn);
+  modal.body.appendChild(footer);
+
+  saveBtn.onclick = async () => {
+    const layer = layerSection.getLayer();
+    if (!layer?.spriteKey?.trim()) {
+      showError(new Error("Sprite key is required"));
+      return;
+    }
+    try {
+      if (id) {
+        await adminFetch(`/api/admin/sprite-overlays/${id}`, { method: "PATCH", body: JSON.stringify(layer) });
+      } else {
+        await adminFetch("/api/admin/sprite-overlays", { method: "POST", body: JSON.stringify(layer) });
+      }
+      modal.close();
+      onSaved();
+    } catch (err) {
+      showError(err);
+    }
+  };
+  cancelBtn.onclick = () => modal.close();
+
+  modal.open();
+}
+
+async function renderSpriteOverlays(body: HTMLElement) {
+  body.textContent = "";
+  const [overlays, characterAssetPaths] = await Promise.all([
+    adminFetch<SpriteOverlayDef[]>("/api/admin/sprite-overlays"),
+    adminFetch<string[]>("/api/admin/character-assets"),
+  ]);
+
+  const table = document.createElement("table");
+  table.className = "admin-table";
+  table.innerHTML = "<tr><th>Sprite key</th><th>Texture</th><th>Frames</th><th></th></tr>";
+  for (const o of overlays) {
+    const row = document.createElement("tr");
+    const framesText = o.layer.frameCount && o.layer.frameCount > 1 ? `${o.layer.frameCount} @ ${o.layer.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS}ms` : "static";
+    row.innerHTML = `<td>${o.spriteKey}</td><td>${o.layer.texture ? o.layer.texture.replace(/^\/characters\//, "") : "(none)"}</td><td>${framesText}</td>`;
+
+    const actionCell = document.createElement("td");
+    const editBtn = document.createElement("button");
+    editBtn.textContent = "Edit";
+    editBtn.onclick = () => openSpriteOverlayEditModal(o.id, o, characterAssetPaths, () => renderSpriteOverlays(body));
+    const deleteBtn = document.createElement("button");
+    deleteBtn.textContent = "Delete";
+    deleteBtn.onclick = async () => {
+      if (!confirm(`Delete sprite overlay "${o.spriteKey}"? Any object type still referencing it loses its overlay.`)) return;
+      try {
+        await adminFetch(`/api/admin/sprite-overlays/${o.id}`, { method: "DELETE" });
+        renderSpriteOverlays(body);
+      } catch (err) {
+        showError(err);
+      }
+    };
+    actionCell.append(editBtn, deleteBtn);
+    row.appendChild(actionCell);
+    table.appendChild(row);
+  }
+  body.appendChild(table);
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.textContent = "Add Sprite Overlay";
+  addBtn.onclick = () => openSpriteOverlayEditModal(null, null, characterAssetPaths, () => renderSpriteOverlays(body));
+  body.appendChild(addBtn);
+}
+
 // --- Object types ---
 
 const TYPE_PREVIEW_WIDTH = 260;
@@ -737,6 +830,7 @@ async function openObjectTypeEditModal(
   existing: ObjectTypeDef | null,
   assetPaths: string[],
   characterAssetPaths: string[],
+  overlays: SpriteOverlayDef[],
   onSaved: () => void,
 ) {
   const draftType: ObjectTypeDef = existing
@@ -773,13 +867,44 @@ async function openObjectTypeEditModal(
 
   modal.body.appendChild(form);
 
-  // Three independent layer sections — below/above affect the live
-  // preview below (rebuildSprite, wired via onChange); overlay doesn't,
-  // see this function's own doc comment on why.
+  // Below/above are still edited inline (buildLayerSection); overlay is
+  // now a reference to a named row managed on the Sprite Overlays tab
+  // (see rooms.ts's ObjectTypeDef.overlayId) — a plain dropdown showing
+  // each one's spriteKey, not the raw id, per CLAUDE.md's "never show a
+  // raw id to the admin" convention.
   const belowSection = buildLayerSection("Below (base sprite)", draftType.below?.[0], assetPaths, false, () => rebuildSprite());
   modal.body.appendChild(belowSection.element);
-  const overlaySection = buildLayerSection("Overlay (shown while in use)", draftType.overlay?.[0], characterAssetPaths, true, () => rebuildSprite());
-  modal.body.appendChild(overlaySection.element);
+
+  const overlayWrap = document.createElement("div");
+  const overlayHeading = document.createElement("h3");
+  overlayHeading.textContent = "Overlay (shown while in use)";
+  overlayWrap.appendChild(overlayHeading);
+  const overlayRow = document.createElement("div");
+  overlayRow.className = "admin-form";
+  const overlaySelect = document.createElement("select");
+  const overlayNoneOpt = document.createElement("option");
+  overlayNoneOpt.value = "";
+  overlayNoneOpt.textContent = "(none)";
+  overlaySelect.appendChild(overlayNoneOpt);
+  for (const o of overlays) {
+    const opt = document.createElement("option");
+    opt.value = String(o.id);
+    opt.textContent = o.spriteKey;
+    overlaySelect.appendChild(opt);
+  }
+  overlaySelect.value = draftType.overlayId ? String(draftType.overlayId) : "";
+  overlayRow.append(document.createTextNode("Overlay:"), overlaySelect);
+  overlayWrap.appendChild(overlayRow);
+  const overlayHint = document.createElement("div");
+  overlayHint.className = "admin-hint";
+  overlayHint.textContent = "Managed on the Sprite Overlays tab — pick which one (if any) this type shows while in use.";
+  overlayWrap.appendChild(overlayHint);
+  modal.body.appendChild(overlayWrap);
+  overlaySelect.onchange = () => rebuildSprite();
+  function getSelectedOverlay(): SpriteOverlayDef | undefined {
+    return overlays.find((o) => String(o.id) === overlaySelect.value);
+  }
+
   const aboveSection = buildLayerSection("Above (rendered on top)", draftType.above?.[0], assetPaths, false, () => rebuildSprite());
   modal.body.appendChild(aboveSection.element);
 
@@ -897,7 +1022,7 @@ async function openObjectTypeEditModal(
   app.ticker.add((ticker) => {
     if (!overlaySprite || !overlayFrames) return;
     overlayFrameElapsedMs += ticker.deltaMS;
-    const duration = overlaySection.getLayer()?.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS;
+    const duration = getSelectedOverlay()?.layer.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS;
     if (overlayFrameElapsedMs >= duration) {
       overlayFrameElapsedMs -= duration;
       overlayFrameIndex = (overlayFrameIndex + 1) % overlayFrames.length;
@@ -942,7 +1067,7 @@ async function openObjectTypeEditModal(
     // what this mirrors instead.
     overlaySprite = null;
     overlayFrames = null;
-    const overlayLayer = overlaySection.getLayer();
+    const overlayLayer = getSelectedOverlay()?.layer;
     if (overlayLayer) {
       const texturePath = await resolveOverlayPreviewTexture(overlayLayer);
       if (texturePath) {
@@ -1003,7 +1128,6 @@ async function openObjectTypeEditModal(
       return;
     }
     const below = belowSection.getLayer();
-    const overlay = overlaySection.getLayer();
     const above = aboveSection.getLayer();
     const payload: ObjectTypeDef = {
       ...draftType,
@@ -1011,7 +1135,8 @@ async function openObjectTypeEditModal(
       width: Number(widthInput.value),
       height: Number(heightInput.value),
       below: below ? [below] : undefined,
-      overlay: overlay ? [overlay] : undefined,
+      overlay: undefined, // derived/read-only, see ObjectTypeDef's own comment — overlayId below is what's actually persisted
+      overlayId: overlaySelect.value ? Number(overlaySelect.value) : null,
       above: above ? [above] : undefined,
       anchorX,
       anchorY,
@@ -1038,23 +1163,26 @@ async function openObjectTypeEditModal(
 
 async function renderObjectTypes(body: HTMLElement) {
   body.textContent = "";
-  const [types, assetPaths, characterAssetPaths] = await Promise.all([
+  const [types, assetPaths, characterAssetPaths, overlays] = await Promise.all([
     adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
     adminFetch<string[]>("/api/admin/object-assets"),
     adminFetch<string[]>("/api/admin/character-assets"),
+    adminFetch<SpriteOverlayDef[]>("/api/admin/sprite-overlays"),
   ]);
+  const overlaysById = new Map(overlays.map((o) => [o.id, o]));
 
   const table = document.createElement("table");
   table.className = "admin-table";
-  table.innerHTML = "<tr><th>Name</th><th>Size</th><th>Anchor</th><th></th></tr>";
+  table.innerHTML = "<tr><th>Name</th><th>Size</th><th>Anchor</th><th>Overlay</th><th></th></tr>";
   for (const [id, type] of Object.entries(types)) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td>${type.name}</td><td>${type.width}×${type.height}</td><td>${type.anchorX ?? 0}, ${type.anchorY ?? 0}</td>`;
+    const overlaySpriteKey = type.overlayId ? overlaysById.get(type.overlayId)?.spriteKey ?? "?" : "—";
+    row.innerHTML = `<td>${type.name}</td><td>${type.width}×${type.height}</td><td>${type.anchorX ?? 0}, ${type.anchorY ?? 0}</td><td>${overlaySpriteKey}</td>`;
 
     const actionCell = document.createElement("td");
     const editBtn = document.createElement("button");
     editBtn.textContent = "Edit";
-    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, characterAssetPaths, () => renderObjectTypes(body));
+    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, characterAssetPaths, overlays, () => renderObjectTypes(body));
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {
@@ -1075,7 +1203,7 @@ async function renderObjectTypes(body: HTMLElement) {
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.textContent = "Add Object Type";
-  addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, characterAssetPaths, () => renderObjectTypes(body));
+  addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, characterAssetPaths, overlays, () => renderObjectTypes(body));
   body.appendChild(addBtn);
 }
 
@@ -2485,6 +2613,7 @@ async function main() {
       renderCharacters(pages.characters),
       renderActivities(pages.activities),
       renderObjectTypes(pages["object-types"]),
+      renderSpriteOverlays(pages["sprite-overlays"]),
       renderRooms(pages.rooms),
     ]);
   } catch (err) {
