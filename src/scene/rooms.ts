@@ -368,6 +368,16 @@ export interface RoomSpec {
   // placeTileWithOverrides in renderer.ts).
   showLeftWall?: boolean;
   showRightWall?: boolean;
+  // The front two edges (u=cols / v=rows) — opposite default from the back
+  // walls above: unset/false means "don't render it," since most rooms are
+  // meant to be looked INTO from the front, not fully enclosed. Turning
+  // one on "finishes the diamond" with a wall reusing the PARALLEL back
+  // wall's own tile style — bottom-right (u=cols edge) reuses the left
+  // wall's tiles (same u=0-edge direction, just shifted to u=cols),
+  // bottom-left (v=rows edge) reuses the right wall's tiles. See
+  // renderer.ts's buildWalls for the actual placement.
+  showBottomLeftWall?: boolean;
+  showBottomRightWall?: boolean;
   objects: ObjectPlacement[];
   // Placement relative to another room's edge, instead of an absolute pixel
   // offset — stays correct if either room's size changes. Unset/empty means
@@ -409,6 +419,8 @@ export interface RoomSpecWire {
   wallOverrides?: TileOverride[];
   showLeftWall?: boolean;
   showRightWall?: boolean;
+  showBottomLeftWall?: boolean;
+  showBottomRightWall?: boolean;
   connectedTo?: ConnectedToEntry[];
   objects: ObjectPlacement[];
 }
@@ -425,6 +437,8 @@ export function roomSpecsFromWire(wire: RoomSpecWire[]): RoomSpec[] {
     wallOverrides: w.wallOverrides,
     showLeftWall: w.showLeftWall,
     showRightWall: w.showRightWall,
+    showBottomLeftWall: w.showBottomLeftWall,
+    showBottomRightWall: w.showBottomRightWall,
     connectedTo: w.connectedTo,
     objects: w.objects,
   }));

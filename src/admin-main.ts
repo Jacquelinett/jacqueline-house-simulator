@@ -100,6 +100,8 @@ interface RoomSpecWire {
   wallVariant: string;
   showLeftWall?: boolean;
   showRightWall?: boolean;
+  showBottomLeftWall?: boolean;
+  showBottomRightWall?: boolean;
   connectedTo?: ConnectedToEntry[];
   objects: ObjectPlacementWire[];
 }
@@ -1405,7 +1407,15 @@ async function openRoomEditModal(
   // object positions when shrinking — objects simply aren't clamped to the
   // room's own footprint anywhere else in this engine, so resizing smaller
   // than where an object sits is allowed (same "not our problem" stance).
-  const roomFields = { name: room.name, cols: room.cols, rows: room.rows, showLeftWall: room.showLeftWall !== false, showRightWall: room.showRightWall !== false };
+  const roomFields = {
+    name: room.name,
+    cols: room.cols,
+    rows: room.rows,
+    showLeftWall: room.showLeftWall !== false,
+    showRightWall: room.showRightWall !== false,
+    showBottomLeftWall: room.showBottomLeftWall === true,
+    showBottomRightWall: room.showBottomRightWall === true,
+  };
 
   const roomPropsForm = document.createElement("div");
   roomPropsForm.className = "admin-form";
@@ -1443,7 +1453,17 @@ async function openRoomEditModal(
   showRightWallCheckbox.type = "checkbox";
   showRightWallCheckbox.checked = roomFields.showRightWall;
   showRightWallLabel.append(showRightWallCheckbox, document.createTextNode(" Top-right wall"));
-  wallVisibilityForm.append(showLeftWallLabel, showRightWallLabel);
+  const showBottomLeftWallLabel = document.createElement("label");
+  const showBottomLeftWallCheckbox = document.createElement("input");
+  showBottomLeftWallCheckbox.type = "checkbox";
+  showBottomLeftWallCheckbox.checked = roomFields.showBottomLeftWall;
+  showBottomLeftWallLabel.append(showBottomLeftWallCheckbox, document.createTextNode(" Bottom-left wall"));
+  const showBottomRightWallLabel = document.createElement("label");
+  const showBottomRightWallCheckbox = document.createElement("input");
+  showBottomRightWallCheckbox.type = "checkbox";
+  showBottomRightWallCheckbox.checked = roomFields.showBottomRightWall;
+  showBottomRightWallLabel.append(showBottomRightWallCheckbox, document.createTextNode(" Bottom-right wall"));
+  wallVisibilityForm.append(showLeftWallLabel, showRightWallLabel, showBottomLeftWallLabel, showBottomRightWallLabel);
 
   function applyRoomFields() {
     roomFields.name = nameInput.value;
@@ -1456,6 +1476,8 @@ async function openRoomEditModal(
     rowsInput.value = String(roomFields.rows);
     roomFields.showLeftWall = showLeftWallCheckbox.checked;
     roomFields.showRightWall = showRightWallCheckbox.checked;
+    roomFields.showBottomLeftWall = showBottomLeftWallCheckbox.checked;
+    roomFields.showBottomRightWall = showBottomRightWallCheckbox.checked;
     updateSaveState();
     renderPreview();
   }
@@ -1464,6 +1486,8 @@ async function openRoomEditModal(
   rowsInput.onchange = applyRoomFields;
   showLeftWallCheckbox.onchange = applyRoomFields;
   showRightWallCheckbox.onchange = applyRoomFields;
+  showBottomLeftWallCheckbox.onchange = applyRoomFields;
+  showBottomRightWallCheckbox.onchange = applyRoomFields;
 
   const tileModeLabel = document.createElement("label");
   tileModeLabel.className = "admin-tile-mode-toggle";

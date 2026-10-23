@@ -575,7 +575,9 @@ export function migrate(): void {
       floor_overrides_json TEXT,
       wall_overrides_json TEXT,
       show_left_wall INTEGER NOT NULL DEFAULT 1,
-      show_right_wall INTEGER NOT NULL DEFAULT 1
+      show_right_wall INTEGER NOT NULL DEFAULT 1,
+      show_bottom_left_wall INTEGER NOT NULL DEFAULT 0,
+      show_bottom_right_wall INTEGER NOT NULL DEFAULT 0
     );
 
     -- Mirrors ObjectPlacement: type_id + position + optional per-placement
@@ -637,6 +639,8 @@ export function migrate(): void {
     "ALTER TABLE object_types ADD COLUMN overlay_offset_y REAL",
     "ALTER TABLE rooms ADD COLUMN show_left_wall INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE rooms ADD COLUMN show_right_wall INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE rooms ADD COLUMN show_bottom_left_wall INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE rooms ADD COLUMN show_bottom_right_wall INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE characters ADD COLUMN publish_to_viewer INTEGER NOT NULL DEFAULT 0",
     // Nullable, no backfill needed (unlike publish_to_viewer's meaningful
     // default) — null just means "no custom sprite, use the shared

@@ -201,12 +201,30 @@ export function buildWalls(room: RoomDef): Container {
   // each back edge, capped with an edge tile at the far end.
   // showLeftWall/showRightWall (default true when unset) gate the DEFAULT
   // tile only — a wallOverrides entry on a hidden side still renders (see
-  // placeTileWithOverrides's own comment). The shared corner tile renders
-  // as long as either side does, since it's the joint between them.
+  // placeTileWithOverrides's own comment).
   const wo = room.wallOverrides;
   const showLeft = room.showLeftWall !== false;
   const showRight = room.showRightWall !== false;
-  placeTileWithOverrides(container, wo, wall.texture, wall.corner, 0, 0, groundOffset, showLeft || showRight);
+  // Opposite default (off) from the two back walls above — most rooms are
+  // meant to be looked INTO from the front, not fully enclosed. Turning
+  // one on "finishes the diamond" with a wall reusing the PARALLEL back
+  // wall's own tile style: bottom-right (u=cols edge) reuses the LEFT
+  // wall's tiles (same u-fixed, v-varying direction, just shifted from
+  // u=0 to u=cols); bottom-left (v=rows edge) reuses the RIGHT wall's
+  // tiles the same way.
+  const showBottomLeft = room.showBottomLeftWall === true;
+  const showBottomRight = room.showBottomRightWall === true;
+
+  // Every vertex where two wall runs could meet (or where a run just
+  // ends) follows the same merge rule: both sides present -> the
+  // dedicated corner piece; only one -> that side's own panel tile
+  // extends straight through, so a single wall reads as one continuous
+  // run instead of stopping at a joint with nothing on the other side to
+  // join; neither -> renderDefault below is false, so nothing draws
+  // there (an explicit wallOverrides entry still can, as always).
+  const topCorner = showLeft && showRight ? wall.corner : showLeft ? wall.left : wall.right;
+  placeTileWithOverrides(container, wo, wall.texture, topCorner, 0, 0, groundOffset, showLeft || showRight);
+
   for (let v = 1; v < room.rows; v++) {
     placeTileWithOverrides(container, wo, wall.texture, wall.left, 0, v, groundOffset, showLeft);
   }
@@ -215,6 +233,30 @@ export function buildWalls(room: RoomDef): Container {
     placeTileWithOverrides(container, wo, wall.texture, wall.right, u, 0, groundOffset, showRight);
   }
   placeTileWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols + 1, 0, edgeGroundOffset, showRight);
+
+  for (let v = 1; v < room.rows; v++) {
+    placeTileWithOverrides(container, wo, wall.texture, wall.left, room.cols, v, groundOffset, showBottomRight);
+  }
+  for (let u = 1; u < room.cols; u++) {
+    placeTileWithOverrides(container, wo, wall.texture, wall.right, u, room.rows, groundOffset, showBottomLeft);
+  }
+
+  // Right vertex (cols,0) — joint between the back-right wall's far end
+  // and the new bottom-right wall's near end, same merge rule as above.
+  // Only relevant once showBottomRight actually adds a wall run there at
+  // all — nothing ever drew at this position before it existed.
+  const rightVertex = showRight && showBottomRight ? wall.corner : showBottomRight ? wall.left : wall.right;
+  placeTileWithOverrides(container, wo, wall.texture, rightVertex, room.cols, 0, groundOffset, showBottomRight);
+
+  // Left vertex (0,rows) — same idea, joint between the back-left wall's
+  // far end and the new bottom-left wall's near end.
+  const leftVertex = showLeft && showBottomLeft ? wall.corner : showBottomLeft ? wall.right : wall.left;
+  placeTileWithOverrides(container, wo, wall.texture, leftVertex, 0, room.rows, groundOffset, showBottomLeft);
+
+  // Front (bottom) vertex (cols,rows) — brand new joint where the two
+  // front walls meet each other, same merge rule as every vertex here.
+  const frontVertex = showBottomLeft && showBottomRight ? wall.corner : showBottomRight ? wall.left : wall.right;
+  placeTileWithOverrides(container, wo, wall.texture, frontVertex, room.cols, room.rows, groundOffset, showBottomLeft || showBottomRight);
 
   return container;
 }
