@@ -2031,8 +2031,8 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     await renderPreview();
   }
 
-  async function updateConnection(entryIndex: number, gapTiles: number, lateralOffset: number) {
-    const newConnectedTo = (room.connectedTo ?? []).map((entry, i) => (i === entryIndex ? { ...entry, gapTiles, lateralOffset } : entry));
+  async function updateConnection(entryIndex: number, direction: ConnectionDirection, gapTiles: number, lateralOffset: number) {
+    const newConnectedTo = (room.connectedTo ?? []).map((entry, i) => (i === entryIndex ? { ...entry, direction, gapTiles, lateralOffset } : entry));
     try {
       assertNoCycle(newConnectedTo);
     } catch (err) {
@@ -2150,8 +2150,16 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     roomCell.textContent = target ? target.name : `(missing: ${entry.roomId})`;
     row.appendChild(roomCell);
 
+    const directionSelect = document.createElement("select");
+    for (const d of EDGE_ORDER) {
+      const opt = document.createElement("option");
+      opt.value = d;
+      opt.textContent = EDGE_LABELS[d];
+      directionSelect.appendChild(opt);
+    }
+    directionSelect.value = entry.direction;
     const edgeCell = document.createElement("td");
-    edgeCell.textContent = EDGE_LABELS[entry.direction];
+    edgeCell.appendChild(directionSelect);
     row.appendChild(edgeCell);
 
     const gapInput = document.createElement("input");
@@ -2171,8 +2179,9 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     row.appendChild(offsetCell);
 
     function applyEdit() {
-      updateConnection(entryIndex, Number(gapInput.value), Number(offsetInput.value));
+      updateConnection(entryIndex, directionSelect.value as ConnectionDirection, Number(gapInput.value), Number(offsetInput.value));
     }
+    directionSelect.onchange = applyEdit;
     gapInput.onchange = applyEdit;
     offsetInput.onchange = applyEdit;
 
