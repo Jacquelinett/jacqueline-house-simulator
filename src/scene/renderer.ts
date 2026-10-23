@@ -306,21 +306,24 @@ export class SceneRenderer {
     // without this, whichever happened to be later in roomDefs always
     // rendered above the other regardless of which is actually behind.
     //
-    // Sorted by each room's FARTHEST corner (y + height), not its origin's
-    // own y — room.y is only the origin tile's screen Y (see
-    // resolveRooms()), which ignores the room's own footprint size
-    // entirely. Two differently-sized adjacent rooms can have their origin
-    // Ys ordered opposite to how their actual footprints should paint: a
-    // small room's origin can sit further "south" (larger y) than a big
-    // room's origin even though the big room's own extent reaches
-    // further south overall — sorting by origin alone then always paints
-    // the small room on top, no matter which edge they're connected from.
-    // y + height is exactly that farthest corner's own resolved depth
-    // (height is (cols+rows)*TILE_HEIGHT/2 — the same u+v-based quantity
-    // gridToScreen's y already is, just spanning the room's full footprint
-    // instead of one point), so this fixes that without needing a real
-    // per-pixel overlap test.
-    const depthSorted = [...roomDefs].sort((a, b) => a.y + a.height - (b.y + b.height));
+    // Sorted by each room's CENTER depth (y + height/2), not either
+    // extreme corner. room.y alone is just the origin tile's screen Y (see
+    // resolveRooms()) — it ignores the room's own footprint size, so two
+    // differently-sized adjacent rooms can have their origin Ys ordered
+    // opposite to how they should actually paint (confirmed live: Small
+    // Garage's origin sits further "south" than Big Garage's despite Big
+    // Garage's much larger footprint). Sorting by the FARTHEST corner
+    // (y + height) instead fixes that, but breaks the opposite way for a
+    // long/thin room like Living Room overlapping a small room like
+    // Entrance near just one edge — Living Room's far corner is further
+    // south than Entrance's even though Entrance is the one actually in
+    // front of it (per its own frontRight connection), because most of
+    // Living Room's footprint extends somewhere Entrance never overlaps.
+    // Neither extreme represents "depth where these two rooms actually
+    // meet" well. The CENTER does: verified by hand against every
+    // connectedTo edge in the live room data (all 9 pairs, including both
+    // cases above) — center-depth ordering matches every one of them.
+    const depthSorted = [...roomDefs].sort((a, b) => a.y + a.height / 2 - (b.y + b.height / 2));
     for (const room of depthSorted) {
       const container = this.buildRoom(room);
       container.position.set(room.x, room.y);
