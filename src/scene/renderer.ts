@@ -8,6 +8,12 @@ import { TileOverride, TileRect } from "./tileset";
 // same dim level for its own whole-room dimming instead of a separately
 // hand-picked value.
 export const DIM_ALPHA = 0.4;
+// How transparent a room's front (bottom) walls go once that room is the
+// one actually being viewed — they paint above objects/overlays (see
+// buildRoom), so without this the wall would block your own view of the
+// room you're looking at. Kept barely visible rather than fully
+// invisible so the wall doesn't just disappear outright.
+const FRONT_WALL_FOCUSED_ALPHA = 0.08;
 const PAN_EASE = 0.15;
 // Exported for the admin tool's object-type preview (admin-main.ts),
 // which simulates the overlay layer too now (defaulting to Jacqueline's
@@ -333,6 +339,17 @@ export class SceneRenderer {
   // A DIFFERENT floor entirely is still fully hidden room-wide (see
   // applyFocus) — that's a `container.visible` toggle, not this.
   protected roomWallAlphaFilters = new Map<number, AlphaFilter>();
+  // Front (bottom) walls paint ABOVE objects/overlays (see buildRoom) —
+  // unlike the back walls, they sit between the floor/objects and the
+  // camera, so a real wall there would actually occlude whatever's behind
+  // it. That only looks right for a room you're NOT currently focused
+  // on, though — for the room you ARE viewing, a solid front wall would
+  // block your own view of the very objects you're looking at, so it
+  // fades to FRONT_WALL_FOCUSED_ALPHA instead (see applyFocus). Separate
+  // from roomWallAlphaFilters above since the two need opposite-ish rules
+  // (back walls dim moderately when NOT viewed; front walls stay opaque
+  // except when they ARE viewed) rather than sharing one filter/value.
+  protected roomFrontWallAlphaFilters = new Map<number, AlphaFilter>();
   // Sprites shown only while one of their object's activity labels is the
   // currently-running activity (e.g. a character sprite at the piano).
   protected activeOverlays: ActiveOverlay[] = [];
@@ -409,15 +426,10 @@ export class SceneRenderer {
     const container = new Container();
     this.attachRoomInteraction(container, room);
 
-    // Walls get their own AlphaFilter (see roomWallAlphaFilters' own
+    // Back walls get their own AlphaFilter (see roomWallAlphaFilters' own
     // comment) — floor has none, it's always full opacity whenever the
     // room itself is visible at all. Back walls paint BEFORE the floor
-    // (they sit behind it, never visually overlapping); front walls paint
-    // AFTER (they sit between the floor and the camera, so painting them
-    // first would let the floor cover them instead of the other way
-    // around). Both share the SAME filter instance so they always dim
-    // together as "the walls," despite being split across the floor in
-    // the paint order.
+    // (they sit behind it, never visually overlapping).
     const wallsFilter = new AlphaFilter();
     const backWalls = buildBackWalls(room);
     backWalls.filters = [wallsFilter];
@@ -426,14 +438,22 @@ export class SceneRenderer {
 
     container.addChild(buildFloor(room));
 
-    const bottomWalls = buildBottomWalls(room);
-    bottomWalls.filters = [wallsFilter];
-    container.addChild(bottomWalls);
-
     for (const obj of room.objects) {
       if (obj.enabled === false) continue;
       container.addChild(this.buildObject(room.id, obj));
     }
+
+    // Front (bottom) walls paint LAST — above objects/overlays, not just
+    // the floor — since they sit between the room's interior and the
+    // camera; a real wall there would occlude whatever's behind it. Own
+    // filter (not wallsFilter above) since the alpha RULE differs too —
+    // see roomFrontWallAlphaFilters'/FRONT_WALL_FOCUSED_ALPHA's own
+    // comments and applyFocus below.
+    const frontWallsFilter = new AlphaFilter();
+    const bottomWalls = buildBottomWalls(room);
+    bottomWalls.filters = [frontWallsFilter];
+    container.addChild(bottomWalls);
+    this.roomFrontWallAlphaFilters.set(room.id, frontWallsFilter);
 
     // Floor tiles are top-aligned at their grid point and extend DOWN by
     // their own canvas height (diamond + visible "thickness" below it), so
@@ -709,7 +729,15 @@ export class SceneRenderer {
         container.eventMode = "none";
       } else {
         container.visible = true;
-        this.applyRoomDim(id, id === this.viewedRoomId);
+        const isViewed = id === this.viewedRoomId;
+        this.applyRoomDim(id, isViewed);
+        // Front walls always stay opaque except for the room actually
+        // being viewed — opposite-ish rule from applyRoomDim's back-wall
+        // dimming, not routed through that override (AdminPreviewRenderer
+        // included — its own whole-room filter wraps this one too, so a
+        // non-focal room there still ends up uniformly dimmed overall; see
+        // FRONT_WALL_FOCUSED_ALPHA's own comment).
+        this.roomFrontWallAlphaFilters.get(id)!.alpha = isViewed ? FRONT_WALL_FOCUSED_ALPHA : 1;
         container.eventMode = "static";
       }
     }
