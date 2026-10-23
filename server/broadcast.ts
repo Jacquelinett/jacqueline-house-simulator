@@ -242,9 +242,10 @@ export async function fetchMessages(characterId: string): Promise<InboxMessage[]
   return (await res.json()) as InboxMessage[];
 }
 
-export async function deleteMessage(id: number): Promise<void> {
+/** `characterId` is forwarded as the same `?character=` query param fetchMessages/the GET endpoint already use, so val.town's own handleDeleteMessage can scope the delete to that character's own inbox — without it, any connected device could delete another character's message just by knowing/guessing its id (ids are small sequential ints). See that function's own comment. */
+export async function deleteMessage(characterId: string, id: number): Promise<void> {
   const { broadcastUrl } = getServerConfig();
   if (!broadcastUrl) return;
-  const res = await fetch(`${broadcastUrl}/api/messages/${id}`, { method: "DELETE", headers: authHeaders() });
+  const res = await fetch(`${broadcastUrl}/api/messages/${id}?character=${encodeURIComponent(characterId)}`, { method: "DELETE", headers: authHeaders() });
   if (!res.ok) throw new Error(`failed to delete message (${res.status})`);
 }
