@@ -11,7 +11,7 @@ import { getActivities } from "./activities";
 import { getObjectTypes } from "./objectTypes";
 import { getRoomSpecs } from "./rooms";
 import { getFloors } from "./floors";
-import { getWorkoutsForDate, getLifetimeStatsForCharacter, getPersonalRecordsForCharacter } from "./workouts";
+import { getWorkoutsForDate, getLifetimeStatsForCharacter, getPersonalRecordsForCharacter, getRecentDaySummariesForCharacter } from "./workouts";
 
 /**
  * Server-side home for src/broadcast/client.ts's push functions — same
@@ -186,18 +186,24 @@ export async function pushWorkoutToday(characterId: string): Promise<void> {
 }
 
 /**
- * Lifetime Stats + Personal Records (the Workout modal's own two
- * "pride"-worthy tabs — see CLAUDE.md's wger section) combined into one
+ * Lifetime Stats + Personal Records + a recent-days log — the Workout
+ * modal's own tabs (see CLAUDE.md's wger section) — combined into one
  * blob, same reasoning periodStats bundles its four windows together
- * rather than four separate pushes. Deliberately excludes the Log tab —
- * start/end times and session notes read as personal logistics, not
- * something-to-brag-about, the same "pride glance, not a full log" stance
- * pushWorkoutToday's own Today-only scope already takes. Empty/null for
- * anyone not wger-linked, same as every other wger-backed push.
+ * rather than several separate pushes. The recent-days piece is
+ * DaySummary[] (getRecentDaySummariesForCharacter), not RecentSession[] —
+ * exact start/end times and free-text notes read as personal logistics,
+ * not something-to-brag-about, so the public-facing version is just "what
+ * I did + how it felt" per day, the same "pride glance, not a full log"
+ * stance pushWorkoutToday's own Today-only scope already takes. Empty/
+ * null for anyone not wger-linked, same as every other wger-backed push.
  */
 export async function pushWgerSummary(characterId: string): Promise<void> {
-  const [lifetimeStats, personalRecords] = await Promise.all([getLifetimeStatsForCharacter(characterId), getPersonalRecordsForCharacter(characterId)]);
-  await pushWithHealth("/api/wger-summary", { ...characterFields(characterId), lifetimeStats, personalRecords }, "wger summary");
+  const [lifetimeStats, personalRecords, recentDays] = await Promise.all([
+    getLifetimeStatsForCharacter(characterId),
+    getPersonalRecordsForCharacter(characterId),
+    getRecentDaySummariesForCharacter(characterId),
+  ]);
+  await pushWithHealth("/api/wger-summary", { ...characterFields(characterId), lifetimeStats, personalRecords, recentDays }, "wger summary");
 }
 
 /**
@@ -218,11 +224,20 @@ export interface InboxMessage {
   created_at: string;
 }
 
-/** Proxies the in-app inbox through the server, same reason pushing moved here — the client no longer has broadcastUrl/broadcastSecret locally to call val.town directly. */
-export async function fetchMessages(): Promise<InboxMessage[]> {
+/**
+ * Proxies the in-app inbox through the server, same reason pushing moved
+ * here — the client no longer has broadcastUrl/broadcastSecret locally to
+ * call val.town directly. Scoped to `characterId` (the connecting
+ * client's own character — rpc.ts's queries dispatch table already
+ * supplies this as every query's first argument) — a note left for
+ * Kevin shows up in Kevin's inbox only, never Jacqueline's, matching how
+ * the viewer now attaches the character it was viewing when the note was
+ * sent (see src/viewer-main.ts's sendMessage).
+ */
+export async function fetchMessages(characterId: string): Promise<InboxMessage[]> {
   const { broadcastUrl } = getServerConfig();
   if (!broadcastUrl) return [];
-  const res = await fetch(`${broadcastUrl}/api/messages`, { headers: authHeaders() });
+  const res = await fetch(`${broadcastUrl}/api/messages?character=${encodeURIComponent(characterId)}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`failed to fetch messages (${res.status})`);
   return (await res.json()) as InboxMessage[];
 }

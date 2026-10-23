@@ -91,9 +91,12 @@ export class House extends SceneRenderer {
     // clicks where it happens to have opaque pixels — not the full box.
     container.interactiveChildren = false;
 
+    // Only ever reached from the pointertap/rightclick handlers below,
+    // both of which already return early on mobile — no mobile guard
+    // needed here too.
     const runAction = (action: ObjectAction) => {
       if (action.kind === "goTo") {
-        if (!this.isMobileLayout()) this.setViewedRoom(action.roomId);
+        this.setViewedRoom(action.roomId);
       } else {
         this.runActivity(roomId, obj.id, action.activityId);
       }
@@ -108,13 +111,19 @@ export class House extends SceneRenderer {
 
     container.on("pointertap", (e) => {
       e.stopPropagation(); // otherwise this bubbles to the room's own click handler too
+      // Mobile has no object interaction at all — the only ways to act are
+      // the Home tab's name-tap (switch character) and Pick Action FAB
+      // (see main.ts's setupMobilePickAction). Checked live, not cached at
+      // attach time, same as the room's own pointertap guard above — a
+      // window resized across the breakpoint picks this up immediately.
+      if (this.isMobileLayout()) return;
 
       if (actions.length === 1 && actions[0].kind === "goTo") {
         runAction(actions[0]);
         return;
       }
 
-      if (!this.isMobileLayout()) this.setViewedRoom(roomId, obj.id); // unconditional recenter baseline
+      this.setViewedRoom(roomId, obj.id); // unconditional recenter baseline
       if (actions.length === 0) return;
 
       const items = buildMenuItems();
@@ -127,9 +136,12 @@ export class House extends SceneRenderer {
 
     // Right-click always shows every option, even for a single action —
     // the one deliberate way to reach "View" without it ever needing to
-    // be the default click behavior.
+    // be the default click behavior. (Mobile has no right-click gesture
+    // anyway, but the same guard keeps this consistent with pointertap
+    // above rather than relying on that incidentally.)
     container.on("rightclick", (e) => {
       e.stopPropagation();
+      if (this.isMobileLayout()) return;
       if (actions.length === 0) return;
       const native = e.nativeEvent as MouseEvent;
       openActionPicker(native.clientX, native.clientY, buildMenuItems());

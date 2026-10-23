@@ -60,15 +60,20 @@
  *                        /api/stats (hourly) — unlike /api/yesterday or /api/streaks it never self-skips
  *                        once already pushed "for today," since a workout can still be logged later the
  *                        same day
- *   GET  /api/wger-summary?character=<id> -> public JSON: { lifetimeStats, personalRecords } — wger's own
- *                        computed lifetime totals/streaks and auto-detected personal records (1RM estimate
- *                        included), for the wger-linked character; null/[] for everyone else. Deliberately
- *                        excludes session-log detail (start/end times, notes) — see House Simulator's
- *                        pushWgerSummary comment on why that stays desktop-only.
+ *   GET  /api/wger-summary?character=<id> -> public JSON: { lifetimeStats, personalRecords, recentDays } —
+ *                        wger's own computed lifetime totals/streaks and auto-detected personal records (1RM
+ *                        estimate included), plus the last 7 days' exercise summary + mood (DaySummary[], not
+ *                        the exact-times/notes RecentSession shape — see House Simulator's pushWgerSummary
+ *                        comment on why that precision stays desktop-only), for the wger-linked character;
+ *                        null/[] for everyone else.
  *   PUT  /api/wger-summary -> (secret required) House Simulator pushes this on the same cadence as
  *                        /api/stats (hourly)
- *   GET  /api/messages  -> (secret required) your in-app inbox reads these
- *   POST /api/messages  -> public: a viewer leaves you a note
+ *   GET  /api/messages?character=<id> -> (secret required) that character's own inbox only — House
+ *                        Simulator's WS connection supplies its own characterId server-side, same as
+ *                        every per-character query
+ *   POST /api/messages  -> public: a viewer leaves a note for whichever character they were viewing
+ *                        (`characterId` in the body) — a note left while viewing Kevin shows up in
+ *                        Kevin's inbox only, never Jacqueline's
  *   DELETE /api/messages/:id -> (secret required) dismiss a message from your inbox
  *   GET  /api/house-layout -> public JSON: {activities, objectTypes, rooms, floors} — the same four things
  *                             House Simulator's own WebSocket protocol sends a connected game client once on
@@ -199,6 +204,7 @@ async function ensureSchema() {
       character_name text not null,
       lifetime_stats_json text,
       personal_records_json text not null,
+      recent_days_json text not null default '[]',
       updated_at text not null
     )`,
   );
@@ -206,8 +212,15 @@ async function ensureSchema() {
     id integer primary key autoincrement,
     author text,
     text text not null,
+    character_id text,
     created_at text not null
   )`);
+  // Added after some deployments already had this table — CREATE TABLE IF
+  // NOT EXISTS above is a no-op for those, same gotcha documented at the
+  // top of this file. Existing rows keep character_id null (visible to no
+  // one specifically now that the inbox is per-character — see
+  // handleGetMessages), rather than being retroactively guessed at.
+  await sqlite.execute("alter table messages add column character_id text").catch(() => {});
   await sqlite.execute(`create table if not exists house_layout_blob (
     id integer primary key check (id = 1),
     layout_json text not null,
@@ -248,7 +261,7 @@ async function handleGetAll(): Promise<Response> {
     sqlite.execute("select character_id, minutes_json from yesterday_blob"),
     sqlite.execute("select character_id, streaks_json from streaks_blob"),
     sqlite.execute("select character_id, sessions_json from workout_today_blob"),
-    sqlite.execute("select character_id, lifetime_stats_json, personal_records_json from wger_summary_blob"),
+    sqlite.execute("select character_id, lifetime_stats_json, personal_records_json, recent_days_json from wger_summary_blob"),
   ]);
 
   const characters: { id: string; name: string; spriteName: string | null }[] = [];
@@ -281,11 +294,12 @@ async function handleGetAll(): Promise<Response> {
   const workoutToday: Record<string, unknown> = {};
   for (const r of workoutTodayRows.rows as any[]) workoutToday[r.character_id] = JSON.parse(r.sessions_json);
 
-  const wgerSummary: Record<string, { lifetimeStats: unknown; personalRecords: unknown }> = {};
+  const wgerSummary: Record<string, { lifetimeStats: unknown; personalRecords: unknown; recentDays: unknown }> = {};
   for (const r of wgerSummaryRows.rows as any[]) {
     wgerSummary[r.character_id] = {
       lifetimeStats: r.lifetime_stats_json ? JSON.parse(r.lifetime_stats_json) : null,
       personalRecords: JSON.parse(r.personal_records_json),
+      recentDays: JSON.parse(r.recent_days_json),
     };
   }
 
@@ -544,37 +558,40 @@ async function handlePutWorkoutToday(req: Request): Promise<Response> {
 async function handleGetWgerSummary(characterId: string | null): Promise<Response> {
   const result = characterId
     ? await sqlite.execute({
-        sql: "select lifetime_stats_json, personal_records_json from wger_summary_blob where character_id = :characterId",
+        sql: "select lifetime_stats_json, personal_records_json, recent_days_json from wger_summary_blob where character_id = :characterId",
         args: { characterId },
       })
     : { rows: [] };
-  const row = result.rows[0] as { lifetime_stats_json: string | null; personal_records_json: string } | undefined;
-  if (!row) return Response.json({ lifetimeStats: null, personalRecords: [] });
+  const row = result.rows[0] as { lifetime_stats_json: string | null; personal_records_json: string; recent_days_json: string } | undefined;
+  if (!row) return Response.json({ lifetimeStats: null, personalRecords: [], recentDays: [] });
   return Response.json({
     lifetimeStats: row.lifetime_stats_json ? JSON.parse(row.lifetime_stats_json) : null,
     personalRecords: JSON.parse(row.personal_records_json),
+    recentDays: JSON.parse(row.recent_days_json),
   });
 }
 
 async function handlePutWgerSummary(req: Request): Promise<Response> {
   const body = await req.json().catch(() => null);
-  if (!body?.characterId || !body?.characterName || !Array.isArray(body.personalRecords)) {
-    return Response.json({ error: "expected { characterId, characterName, lifetimeStats, personalRecords: [...] }" }, { status: 400 });
+  if (!body?.characterId || !body?.characterName || !Array.isArray(body.personalRecords) || !Array.isArray(body.recentDays)) {
+    return Response.json({ error: "expected { characterId, characterName, lifetimeStats, personalRecords: [...], recentDays: [...] }" }, { status: 400 });
   }
 
   await sqlite.execute({
-    sql: `insert into wger_summary_blob (character_id, character_name, lifetime_stats_json, personal_records_json, updated_at)
-          values (:characterId, :characterName, :lifetimeStatsJson, :personalRecordsJson, :updatedAt)
+    sql: `insert into wger_summary_blob (character_id, character_name, lifetime_stats_json, personal_records_json, recent_days_json, updated_at)
+          values (:characterId, :characterName, :lifetimeStatsJson, :personalRecordsJson, :recentDaysJson, :updatedAt)
           on conflict(character_id) do update set
             character_name = excluded.character_name,
             lifetime_stats_json = excluded.lifetime_stats_json,
             personal_records_json = excluded.personal_records_json,
+            recent_days_json = excluded.recent_days_json,
             updated_at = excluded.updated_at`,
     args: {
       characterId: body.characterId,
       characterName: body.characterName,
       lifetimeStatsJson: body.lifetimeStats ? JSON.stringify(body.lifetimeStats) : null,
       personalRecordsJson: JSON.stringify(body.personalRecords),
+      recentDaysJson: JSON.stringify(body.recentDays),
       updatedAt: new Date().toISOString(),
     },
   });
@@ -582,8 +599,11 @@ async function handlePutWgerSummary(req: Request): Promise<Response> {
   return Response.json({ ok: true });
 }
 
-async function handleGetMessages(): Promise<Response> {
-  const result = await sqlite.execute("select * from messages order by id desc limit 200");
+/** `characterId` scopes the inbox to whichever character the requesting device authenticated as (see server/broadcast.ts's fetchMessages) — a note left for Kevin only ever shows up here when fetched with `?character=<kevin's id>`, never in Jacqueline's own inbox fetch. A message with no character_id (pre-scoping rows, or anything posted without one) matches nobody's filtered fetch — not retroactively shown to everyone. */
+async function handleGetMessages(characterId: string | null): Promise<Response> {
+  const result = characterId
+    ? await sqlite.execute({ sql: "select * from messages where character_id = :characterId order by id desc limit 200", args: { characterId } })
+    : { rows: [] };
   return Response.json(result.rows);
 }
 
@@ -591,6 +611,7 @@ async function handlePostMessage(req: Request): Promise<Response> {
   const body = await req.json().catch(() => null);
   const text = typeof body?.text === "string" ? body.text.trim() : "";
   const author = typeof body?.author === "string" ? body.author.trim() : "";
+  const characterId = typeof body?.characterId === "string" ? body.characterId : null;
 
   if (!text) return Response.json({ error: "message text is required" }, { status: 400 });
   if (text.length > MAX_MESSAGE_LENGTH) {
@@ -601,8 +622,8 @@ async function handlePostMessage(req: Request): Promise<Response> {
   }
 
   await sqlite.execute({
-    sql: "insert into messages (author, text, created_at) values (:author, :text, :createdAt)",
-    args: { author: author || null, text, createdAt: new Date().toISOString() },
+    sql: "insert into messages (author, text, character_id, created_at) values (:author, :text, :characterId, :createdAt)",
+    args: { author: author || null, text, characterId, createdAt: new Date().toISOString() },
   });
 
   return Response.json({ ok: true });
@@ -729,7 +750,7 @@ export default async function (req: Request): Promise<Response> {
 
   if (method === "GET" && pathname === "/api/messages") {
     if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
-    return handleGetMessages();
+    return handleGetMessages(characterId);
   }
 
   if (method === "POST" && pathname === "/api/messages") {

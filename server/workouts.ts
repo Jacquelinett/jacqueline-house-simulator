@@ -1,7 +1,7 @@
-import { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession } from "../src/workout/types";
-import { getWgerWorkoutsForDate, getWgerLifetimeStats, getWgerPersonalRecords, getWgerRecentSessions, isWgerLinkedCharacter } from "./wger";
+import { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession, DaySummary } from "../src/workout/types";
+import { getWgerWorkoutsForDate, getWgerLifetimeStats, getWgerPersonalRecords, getWgerRecentSessions, getWgerRecentDaySummaries, isWgerLinkedCharacter } from "./wger";
 
-export type { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession };
+export type { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession, DaySummary };
 
 /**
  * One wger account backs this whole feature (see server/wger.ts's own
@@ -55,6 +55,17 @@ export async function getRecentSessionsForCharacter(characterId: string): Promis
     return await getWgerRecentSessions();
   } catch (err) {
     console.error("[workouts] wger recent-sessions fetch failed", err);
+    return [];
+  }
+}
+
+/** Same per-character gatekeeping as getWorkoutsForDate above — the public-facing (no exact times/notes) equivalent of getRecentSessionsForCharacter, see DaySummary's own comment. */
+export async function getRecentDaySummariesForCharacter(characterId: string): Promise<DaySummary[]> {
+  if (!isWgerLinkedCharacter(characterId)) return [];
+  try {
+    return await getWgerRecentDaySummaries();
+  } catch (err) {
+    console.error("[workouts] wger recent-day-summaries fetch failed", err);
     return [];
   }
 }

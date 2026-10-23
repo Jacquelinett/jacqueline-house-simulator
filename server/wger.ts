@@ -1,6 +1,7 @@
 import { getServerConfig } from "./serverConfig";
 import { listCharacters } from "./characters";
-import { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession } from "../src/workout/types";
+import { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession, DaySummary } from "../src/workout/types";
+import { groupSetsByExercise, formatSetDetail } from "../src/workout/format";
 
 /**
  * Read-only client for a self-hosted wger instance (https://wger.de) —
@@ -383,4 +384,36 @@ export async function getWgerRecentSessions(limit = 7): Promise<RecentSession[]>
     impression: r.impression ? IMPRESSION_LABEL[r.impression] ?? null : null,
     notes: r.notes || null,
   }));
+}
+
+/**
+ * The public-facing equivalent of getWgerRecentSessions above — same last
+ * `limit` sessions (newest first), but each reshaped into that day's
+ * exercise summary (reusing getWgerWorkoutsForDate + the same
+ * groupSetsByExercise/formatSetDetail the Today tab/Dashboard already use
+ * — one exercise-grouping implementation, not a second one for this
+ * coarser view) plus mood, dropping exact start/end timestamps and
+ * free-text notes entirely (see DaySummary's own comment in
+ * src/workout/types.ts for why). One getWgerWorkoutsForDate call per
+ * session rather than per distinct date — if two real sessions happen to
+ * land on the same calendar day, this harmlessly fetches that day's logs
+ * twice; not worth deduping for a bounded `limit` this small.
+ */
+export async function getWgerRecentDaySummaries(limit = 7): Promise<DaySummary[]> {
+  if (!isWgerConfigured()) return [];
+  const page = await wgerGetJson<WgerPage<WgerSessionRow>>(`/api/v2/workoutsession/?ordering=-datetime_start&limit=${limit}`);
+  return Promise.all(
+    page.results.map(async (r) => {
+      const dateStr = r.datetime_start.slice(0, 10);
+      const sessions = await getWgerWorkoutsForDate(dateStr);
+      const allSets = sessions.flatMap((s) => s.sets);
+      const grouped = groupSetsByExercise(allSets);
+      const exercises = [...grouped.entries()].map(([exerciseName, sets]) => ({ exerciseName, details: formatSetDetail(sets) }));
+      return {
+        date: dateStr,
+        exercises,
+        impression: r.impression ? IMPRESSION_LABEL[r.impression] ?? null : null,
+      };
+    }),
+  );
 }

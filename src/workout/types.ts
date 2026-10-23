@@ -53,3 +53,18 @@ export interface RecentSession {
   impression: "bad" | "neutral" | "good" | null;
   notes: string | null;
 }
+
+/**
+ * The coarser, public-facing equivalent of RecentSession — a day's
+ * exercise summary (same grouped/sorted shape the Today tab and
+ * Dashboard's "Lifted Today" already use) plus mood, with no exact
+ * start/end timestamps or free-text notes. That precision/personal detail
+ * doesn't matter for "did I work out, what did I do, how did it feel" —
+ * see server/broadcast.ts's pushWgerSummary for why this is what reaches
+ * the viewer instead of RecentSession itself.
+ */
+export interface DaySummary {
+  date: string;
+  exercises: { exerciseName: string; details: string[] }[];
+  impression: "bad" | "neutral" | "good" | null;
+}

@@ -75,7 +75,7 @@ const queries: Record<string, (characterId: string, args: any) => Promise<unknow
   getWgerLifetimeStats: async (characterId, { viewingCharacterId } = {}) => getLifetimeStatsForCharacter(viewingCharacterId ?? characterId),
   getWgerPersonalRecords: async (characterId, { viewingCharacterId } = {}) => getPersonalRecordsForCharacter(viewingCharacterId ?? characterId),
   getWgerRecentSessions: async (characterId, { viewingCharacterId } = {}) => getRecentSessionsForCharacter(viewingCharacterId ?? characterId),
-  fetchMessages: () => fetchMessages(),
+  fetchMessages: (characterId) => fetchMessages(characterId),
   getBroadcastHealth: async () => getBroadcastHealthInfo(),
 };
 

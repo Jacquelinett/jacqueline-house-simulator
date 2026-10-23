@@ -17,7 +17,7 @@ import {
   renderGoalOutcomes,
   renderWorkoutToday,
 } from "./dashboard/render";
-import { WorkoutSession, WgerLifetimeStats, PersonalRecord } from "./workout/types";
+import { WorkoutSession, WgerLifetimeStats, PersonalRecord, DaySummary } from "./workout/types";
 import { summarizeWorkoutSessions } from "./workout/format";
 import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "./status/render";
 import type { ActivityStat } from "./dashboard/stats";
@@ -99,7 +99,7 @@ interface AllDataResponse {
   /** Absent on a val.town deployment not yet re-pasted with /api/workout-today support — see loadHouseLayout's own "fall back, don't break the page" reasoning. Missing or empty for a character just means "nothing to show," same contract the Dashboard's wger section has everywhere else (see dashboard/render.ts's renderWorkoutToday). */
   workoutToday?: Record<string, WorkoutSession[]>;
   /** Same "absent means not yet re-pasted" contract as workoutToday above — Lifetime Stats + Personal Records only, see server/broadcast.ts's pushWgerSummary on why the Log tab's session detail is deliberately excluded. */
-  wgerSummary?: Record<string, { lifetimeStats: WgerLifetimeStats | null; personalRecords: PersonalRecord[] }>;
+  wgerSummary?: Record<string, { lifetimeStats: WgerLifetimeStats | null; personalRecords: PersonalRecord[]; recentDays: DaySummary[] }>;
 }
 
 const SELECTED_CHARACTER_KEY = "houseSimulatorViewerCharacterId";
@@ -302,10 +302,12 @@ function buildDashboardBlock(container: HTMLElement): { render(input: DashboardR
  * Statistic modal's own Period tab. Shared by the desktop-viewport
  * Statistic modal and the mobile Statistic tab.
  */
+const IMPRESSION_TEXT: Record<"bad" | "neutral" | "good", string> = { bad: "Bad", neutral: "Neutral", good: "Good" };
+
 function buildStatisticBlock(container: HTMLElement): {
   renderAllTime(stats: ActivityStat[]): void;
   renderPeriod(periods: FixedPeriodStats[]): void;
-  renderWgerSummary(lifetimeStats: WgerLifetimeStats | null, personalRecords: PersonalRecord[]): void;
+  renderWgerSummary(lifetimeStats: WgerLifetimeStats | null, personalRecords: PersonalRecord[], recentDays: DaySummary[]): void;
 } {
   let latestPeriods: FixedPeriodStats[] = [];
   let selectedKey: FixedPeriodKey = "thisWeek";
@@ -376,6 +378,15 @@ function buildStatisticBlock(container: HTMLElement): {
   const recordsList = document.createElement("div");
   recordsList.className = "dashboard-list";
   allTimeSection.appendChild(recordsList);
+
+  const recentDaysHeading = document.createElement("h3");
+  recentDaysHeading.className = "panel-section-heading";
+  recentDaysHeading.textContent = "Recent Days";
+  allTimeSection.appendChild(recentDaysHeading);
+
+  const recentDaysList = document.createElement("div");
+  recentDaysList.className = "dashboard-list";
+  allTimeSection.appendChild(recentDaysList);
 
   // --- Period: fixed buckets only, no date picker (see function comment). ---
 
@@ -452,12 +463,14 @@ function buildStatisticBlock(container: HTMLElement): {
       latestPeriods = periods;
       renderSelectedPeriod();
     },
-    renderWgerSummary(lifetimeStats, personalRecords) {
-      const hasAny = lifetimeStats != null || personalRecords.length > 0;
+    renderWgerSummary(lifetimeStats, personalRecords, recentDays) {
+      const hasAny = lifetimeStats != null || personalRecords.length > 0 || recentDays.length > 0;
       lifetimeHeading.style.display = hasAny ? "" : "none";
       lifetimeList.style.display = hasAny ? "" : "none";
       recordsHeading.style.display = hasAny ? "" : "none";
       recordsList.style.display = hasAny ? "" : "none";
+      recentDaysHeading.style.display = hasAny ? "" : "none";
+      recentDaysList.style.display = hasAny ? "" : "none";
       if (!hasAny) return;
 
       lifetimeList.textContent = "";
@@ -499,16 +512,50 @@ function buildStatisticBlock(container: HTMLElement): {
         row.appendChild(detail);
         recordsList.appendChild(row);
       }
+
+      recentDaysList.textContent = "";
+      for (const day of recentDays) {
+        const row = document.createElement("div");
+        row.className = "dashboard-row workout-row";
+        const name = document.createElement("span");
+        name.className = "dashboard-text";
+        name.textContent = new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        row.appendChild(name);
+        const detail = document.createElement("span");
+        detail.className = "workout-sets-detail";
+        detail.textContent = day.impression ? IMPRESSION_TEXT[day.impression] : "";
+        row.appendChild(detail);
+        recentDaysList.appendChild(row);
+
+        for (const exercise of day.exercises) {
+          const subRow = document.createElement("div");
+          subRow.className = "workout-subrow";
+          const subText = document.createElement("span");
+          subText.className = "workout-subtext";
+          subText.textContent = `${exercise.exerciseName}: ${exercise.details.join(", ")}`;
+          subRow.appendChild(subText);
+          recentDaysList.appendChild(subRow);
+        }
+      }
     },
   };
 }
 
-/** Shared by the inline Leave-a-note form (desktop/wide-viewport) and the mobile Message popup — just the network call, each caller handles its own form fields/status text. */
-async function sendMessage(author: string, text: string): Promise<void> {
+/**
+ * Shared by the inline Leave-a-note form (desktop/wide-viewport) and the
+ * mobile Message popup — just the network call, each caller handles its
+ * own form fields/status text. `characterId` is whichever character is
+ * currently selected at send time (not necessarily who was selected when
+ * the form was opened — see setupMobileMessageModal's own getCharacterId
+ * callback) — a note left while viewing Kevin is Kevin's alone, not a
+ * global inbox broadcast to every character (see server/broadcast.ts's
+ * fetchMessages for the matching read-side scoping).
+ */
+async function sendMessage(author: string, text: string, characterId: string): Promise<void> {
   const res = await fetch(`${STATUS_API_BASE}/api/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, author }),
+    body: JSON.stringify({ text, author, characterId }),
   });
   if (!res.ok) throw new Error((await res.json()).error || "failed to send");
 }
@@ -531,7 +578,7 @@ function setupSettingsModalUI(
 }
 
 /** A "native popup"-style dialog for leaving a note — the mobile Home tab's FAB, standing in for the inline form that doesn't fit there. */
-function setupMobileMessageModal(): { open: () => void } {
+function setupMobileMessageModal(getCharacterId: () => string): { open: () => void } {
   const modal = buildModal("Leave a note");
 
   const authorInput = document.createElement("input");
@@ -572,7 +619,7 @@ function setupMobileMessageModal(): { open: () => void } {
 
     sendBtn.disabled = true;
     try {
-      await sendMessage(authorInput.value.trim(), text);
+      await sendMessage(authorInput.value.trim(), text, getCharacterId());
       textInput.value = "";
       statusEl.textContent = "Sent!";
       setTimeout(() => modal.close(), 600);
@@ -833,7 +880,7 @@ async function main() {
         statisticModal.open();
         statisticDesktop.renderAllTime(latestStats);
         statisticDesktop.renderPeriod(latestPeriodStats);
-        statisticDesktop.renderWgerSummary(latestWgerLifetimeStats, latestWgerPersonalRecords);
+        statisticDesktop.renderWgerSummary(latestWgerLifetimeStats, latestWgerPersonalRecords, latestWgerRecentDays);
       },
     },
     { label: "Settings", onclick: settingsModal.open },
@@ -873,7 +920,7 @@ async function main() {
 
   const renderSyncMobile = buildSyncStatusBlock(mobileStatus);
 
-  const mobileMessageModal = setupMobileMessageModal();
+  const mobileMessageModal = setupMobileMessageModal(() => selectedCharacter.id);
   const mobileFab = document.createElement("button");
   mobileFab.className = "mobile-fab";
   mobileFab.textContent = "✉";
@@ -891,7 +938,7 @@ async function main() {
     if (tab === "statistic") {
       statisticMobile.renderAllTime(latestStats);
       statisticMobile.renderPeriod(latestPeriodStats);
-      statisticMobile.renderWgerSummary(latestWgerLifetimeStats, latestWgerPersonalRecords);
+      statisticMobile.renderWgerSummary(latestWgerLifetimeStats, latestWgerPersonalRecords, latestWgerRecentDays);
     }
   });
 
@@ -911,6 +958,7 @@ async function main() {
   let latestWorkoutSessions: WorkoutSession[] = [];
   let latestWgerLifetimeStats: WgerLifetimeStats | null = null;
   let latestWgerPersonalRecords: PersonalRecord[] = [];
+  let latestWgerRecentDays: DaySummary[] = [];
   let lastSyncAt: Date | null = null;
   let lastSyncError: string | null = null;
 
@@ -976,6 +1024,7 @@ async function main() {
     latestWorkoutSessions = data?.workoutToday?.[selectedCharacter.id] ?? [];
     latestWgerLifetimeStats = data?.wgerSummary?.[selectedCharacter.id]?.lifetimeStats ?? null;
     latestWgerPersonalRecords = data?.wgerSummary?.[selectedCharacter.id]?.personalRecords ?? [];
+    latestWgerRecentDays = data?.wgerSummary?.[selectedCharacter.id]?.recentDays ?? [];
     latestActivityLabel = status?.activityLabel ?? null;
     latestTodayMinutesByLabel = status?.todayMinutesByLabel ?? {};
     startedAtMs = status?.startedAt ? new Date(status.startedAt).getTime() : null;
@@ -1089,7 +1138,7 @@ async function main() {
 
     sendBtn.disabled = true;
     try {
-      await sendMessage(authorInput.value.trim(), text);
+      await sendMessage(authorInput.value.trim(), text, selectedCharacter.id);
       textInput.value = "";
       sendStatusEl.textContent = "Sent!";
     } catch (err) {
