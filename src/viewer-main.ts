@@ -19,7 +19,7 @@ import {
 } from "./dashboard/render";
 import { WorkoutSession, WgerLifetimeStats, PersonalRecord, DaySummary } from "./workout/types";
 import { summarizeWorkoutSessions } from "./workout/format";
-import { buildWorkoutRow, buildWorkoutSubRow } from "./workout/render";
+import { renderDaySummaries, renderLifetimeStats, renderPersonalRecords } from "./workout/render";
 import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "./status/render";
 import type { ActivityStat } from "./dashboard/stats";
 import type { FixedPeriodKey, FixedPeriodStats } from "./dashboard/periodStats";
@@ -294,37 +294,71 @@ function buildDashboardBlock(container: HTMLElement): { render(input: DashboardR
 }
 
 /**
- * All-Time Activity pie (same as before — no All-Time Goals here, since
- * goal completion/skip history never leaves the desktop app) plus a Period
- * tab fed from the 4 fixed windows pushed to val.town (This Week/Last
- * Week/This Month/Last Month, see dashboard/periodStats.ts): the viewer
- * has no AW access to run its own arbitrary-range queries, so it picks
- * from this fixed list instead of a free date picker like the desktop
- * Statistic modal's own Period tab. Shared by the desktop-viewport
- * Statistic modal and the mobile Statistic tab.
+ * The viewer's own Goals/Workout split, matching the desktop app's
+ * Statistic modal exactly (src/dashboard/statisticModal.ts) — Workout
+ * used to live folded into this function's own "All Time" tab (Lifetime
+ * Stats/Personal Records/Recent Days all stacked under the activity pie);
+ * promoted to its own outer tab, with its own Lifetime Stats/Personal
+ * Records/Logs segmented toggle, once the desktop app's equivalent moved
+ * from a separate top-level Workout modal into the same Statistic
+ * structure — see that file's own header comment for the full reasoning.
+ * Goals' own All-Time Activity pie (no All-Time Goals here, since goal
+ * completion/skip history never leaves the desktop app) plus a Period tab
+ * fed from the 4 fixed windows pushed to val.town (This Week/Last Week/
+ * This Month/Last Month, see dashboard/periodStats.ts): the viewer has no
+ * AW access to run its own arbitrary-range queries, so it picks from this
+ * fixed list instead of a free date picker like the desktop Statistic
+ * modal's own Period tab. Shared by the desktop-viewport Statistic modal
+ * and the mobile Statistic tab.
  */
-const IMPRESSION_TEXT: Record<"bad" | "neutral" | "good", string> = { bad: "Bad", neutral: "Neutral", good: "Good" };
-
 function buildStatisticBlock(container: HTMLElement): {
   renderAllTime(stats: ActivityStat[]): void;
   renderPeriod(periods: FixedPeriodStats[]): void;
-  renderWgerSummary(lifetimeStats: WgerLifetimeStats | null, personalRecords: PersonalRecord[], recentDays: DaySummary[]): void;
+  renderWgerSummary(lifetimeStats: WgerLifetimeStats | null, personalRecords: PersonalRecord[] | null, recentDays: DaySummary[] | null): void;
 } {
   let latestPeriods: FixedPeriodStats[] = [];
   let selectedKey: FixedPeriodKey = "thisWeek";
 
-  const tabsRow = document.createElement("div");
-  tabsRow.className = "stat-tabs";
-  container.appendChild(tabsRow);
+  const outerTabsRow = document.createElement("div");
+  outerTabsRow.className = "stat-tabs";
+  container.appendChild(outerTabsRow);
+
+  const goalsSection = document.createElement("div");
+  container.appendChild(goalsSection);
+
+  const workoutSection = document.createElement("div");
+  workoutSection.style.display = "none";
+  container.appendChild(workoutSection);
+
+  outerTabsRow.appendChild(
+    buildToggleGroup(
+      [
+        ["goals", "Goals"],
+        ["workout", "Workout"],
+      ] as const,
+      "goals",
+      (tab) => {
+        goalsSection.style.display = tab === "goals" ? "" : "none";
+        workoutSection.style.display = tab === "workout" ? "" : "none";
+      },
+      "stat-tab",
+    ),
+  );
+
+  // --- Goals: All Time / Period (inner segmented toggle) ---
+
+  const innerToggleRow = document.createElement("div");
+  innerToggleRow.className = "segment-toggle-row";
+  goalsSection.appendChild(innerToggleRow);
 
   const allTimeSection = document.createElement("div");
-  container.appendChild(allTimeSection);
+  goalsSection.appendChild(allTimeSection);
 
   const periodSection = document.createElement("div");
   periodSection.style.display = "none";
-  container.appendChild(periodSection);
+  goalsSection.appendChild(periodSection);
 
-  tabsRow.appendChild(
+  innerToggleRow.appendChild(
     buildToggleGroup(
       [
         ["all", "All Time"],
@@ -335,7 +369,7 @@ function buildStatisticBlock(container: HTMLElement): {
         allTimeSection.style.display = tab === "all" ? "" : "none";
         periodSection.style.display = tab === "period" ? "" : "none";
       },
-      "stat-tab",
+      "segment-toggle-btn",
     ),
   );
 
@@ -354,40 +388,57 @@ function buildStatisticBlock(container: HTMLElement): {
   list.className = "dashboard-list";
   allTimeSection.appendChild(list);
 
-  // --- Lifetime Stats + Personal Records (real wger data, the wger-linked
-  // character only — see server/broadcast.ts's pushWgerSummary). Same
-  // row-building style as the desktop app's own Workout modal tabs
-  // (src/workout/modal.ts), just fed from the val.town blob instead of a
-  // live RPC query — the viewer has no WebSocket connection to ask wger
-  // directly. Hidden entirely (not an empty-state placeholder) when
-  // there's nothing wger-linked to show, same "pride glance" stance
-  // renderWorkoutToday already takes for the Dashboard's own wger section.
-  const lifetimeHeading = document.createElement("h3");
-  lifetimeHeading.className = "panel-section-heading";
-  lifetimeHeading.textContent = "Lifetime Stats";
-  allTimeSection.appendChild(lifetimeHeading);
+  // --- Workout: Lifetime Stats / Personal Records / Logs (inner segmented
+  // toggle) — real wger data, the wger-linked character only (see
+  // server/broadcast.ts's pushWgerSummary). Same segmented toggle and the
+  // exact same row-building functions (src/workout/render.ts) as the
+  // desktop app's own Workout tab (src/workout/modal.ts), just fed from
+  // the val.town blob instead of a live RPC query — the viewer has no
+  // WebSocket connection to ask wger directly.
+
+  const workoutToggleRow = document.createElement("div");
+  workoutToggleRow.className = "segment-toggle-row";
+  workoutSection.appendChild(workoutToggleRow);
+
+  const lifetimeSection = document.createElement("div");
+  workoutSection.appendChild(lifetimeSection);
+
+  const recordsSection = document.createElement("div");
+  recordsSection.style.display = "none";
+  workoutSection.appendChild(recordsSection);
+
+  const logsSection = document.createElement("div");
+  logsSection.style.display = "none";
+  workoutSection.appendChild(logsSection);
+
+  workoutToggleRow.appendChild(
+    buildToggleGroup(
+      [
+        ["lifetime", "Lifetime Stats"],
+        ["records", "Personal Records"],
+        ["logs", "Logs"],
+      ] as const,
+      "lifetime",
+      (tab) => {
+        lifetimeSection.style.display = tab === "lifetime" ? "" : "none";
+        recordsSection.style.display = tab === "records" ? "" : "none";
+        logsSection.style.display = tab === "logs" ? "" : "none";
+      },
+      "segment-toggle-btn",
+    ),
+  );
 
   const lifetimeList = document.createElement("div");
   lifetimeList.className = "dashboard-list";
-  allTimeSection.appendChild(lifetimeList);
-
-  const recordsHeading = document.createElement("h3");
-  recordsHeading.className = "panel-section-heading";
-  recordsHeading.textContent = "Personal Records";
-  allTimeSection.appendChild(recordsHeading);
+  lifetimeSection.appendChild(lifetimeList);
 
   const recordsList = document.createElement("div");
   recordsList.className = "dashboard-list";
-  allTimeSection.appendChild(recordsList);
+  recordsSection.appendChild(recordsList);
 
-  const recentDaysHeading = document.createElement("h3");
-  recentDaysHeading.className = "panel-section-heading";
-  recentDaysHeading.textContent = "Recent Days";
-  allTimeSection.appendChild(recentDaysHeading);
-
-  const recentDaysList = document.createElement("div");
-  recentDaysList.className = "dashboard-list";
-  allTimeSection.appendChild(recentDaysList);
+  const logsList = document.createElement("div");
+  logsList.className = "dashboard-list";
+  logsSection.appendChild(logsList);
 
   // --- Period: fixed buckets only, no date picker (see function comment). ---
 
@@ -465,44 +516,9 @@ function buildStatisticBlock(container: HTMLElement): {
       renderSelectedPeriod();
     },
     renderWgerSummary(lifetimeStats, personalRecords, recentDays) {
-      const hasAny = lifetimeStats != null || personalRecords.length > 0 || recentDays.length > 0;
-      lifetimeHeading.style.display = hasAny ? "" : "none";
-      lifetimeList.style.display = hasAny ? "" : "none";
-      recordsHeading.style.display = hasAny ? "" : "none";
-      recordsList.style.display = hasAny ? "" : "none";
-      recentDaysHeading.style.display = hasAny ? "" : "none";
-      recentDaysList.style.display = hasAny ? "" : "none";
-      if (!hasAny) return;
-
-      lifetimeList.textContent = "";
-      if (lifetimeStats) {
-        const rows: [string, string][] = [
-          ["Total weight lifted", `${lifetimeStats.totalWeightLifted.toLocaleString()}${lifetimeStats.totalWeightLiftedUnit}`],
-          ["Total workouts", String(lifetimeStats.totalWorkouts)],
-          ["Current streak", `${lifetimeStats.currentStreak} day${lifetimeStats.currentStreak === 1 ? "" : "s"}`],
-          ["Longest streak", `${lifetimeStats.longestStreak} day${lifetimeStats.longestStreak === 1 ? "" : "s"}`],
-        ];
-        for (const [label, value] of rows) {
-          lifetimeList.appendChild(buildWorkoutRow(label, value));
-        }
-      }
-
-      recordsList.textContent = "";
-      for (const record of personalRecords) {
-        const weightPart = `${record.weight}${record.weightUnit ?? "kg"} × ${record.reps}`;
-        const oneRm = record.oneRepMaxEstimate != null ? ` (1RM ~${record.oneRepMaxEstimate}${record.weightUnit ?? "kg"})` : "";
-        recordsList.appendChild(buildWorkoutRow(record.exerciseName, `${weightPart}${oneRm}`));
-      }
-
-      recentDaysList.textContent = "";
-      for (const day of recentDays) {
-        const dateLabel = new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-        recentDaysList.appendChild(buildWorkoutRow(dateLabel, day.impression ? IMPRESSION_TEXT[day.impression] : ""));
-
-        for (const exercise of day.exercises) {
-          recentDaysList.appendChild(buildWorkoutSubRow(`${exercise.exerciseName}: ${exercise.details.join(", ")}`));
-        }
-      }
+      renderLifetimeStats(lifetimeList, lifetimeStats);
+      renderPersonalRecords(recordsList, personalRecords);
+      renderDaySummaries(logsList, recentDays);
     },
   };
 }

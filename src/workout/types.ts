@@ -45,26 +45,24 @@ export interface PersonalRecord {
   date: string;
 }
 
-/** One recent workout session (`/api/v2/workoutsession/`), independent of its sets — the "Log" tab's own view, one row per session rather than a grouped-by-exercise breakdown. */
-export interface RecentSession {
-  id: string;
-  datetimeStart: string;
-  datetimeEnd: string | null;
-  impression: "bad" | "neutral" | "good" | null;
-  notes: string | null;
-}
-
 /**
- * The coarser, public-facing equivalent of RecentSession — a day's
- * exercise summary (same grouped/sorted shape the Today tab and
- * Dashboard's "Lifted Today" already use) plus mood, with no exact
- * start/end timestamps or free-text notes. That precision/personal detail
- * doesn't matter for "did I work out, what did I do, how did it feel" —
- * see server/broadcast.ts's pushWgerSummary for why this is what reaches
- * the viewer instead of RecentSession itself.
+ * One recent workout day (`/api/v2/workoutsession/`, grouped by exercise)
+ * — the one representation of "what did I log recently" shared by the
+ * Statistic modal's Workout > Logs section (desktop app, src/workout/
+ * render.ts) AND the viewer's own equivalent (pushed via val.town, see
+ * server/broadcast.ts's pushWgerSummary), instead of the app keeping a
+ * separate, finer-grained session-by-session view: that used to exist as
+ * its own `RecentSession` type (exact start/end, free-text notes, no
+ * exercise grouping), dropped once the Statistic modal's Workout tab was
+ * unified across desktop/mobile/viewer — one shared shape, one shared
+ * render function, real start/end times included (not stripped the way
+ * an earlier, more private-by-default version of this type did — see git
+ * history if that's ever needed again).
  */
 export interface DaySummary {
   date: string;
+  datetimeStart: string;
+  datetimeEnd: string | null;
   exercises: { exerciseName: string; details: string[] }[];
   impression: "bad" | "neutral" | "good" | null;
 }

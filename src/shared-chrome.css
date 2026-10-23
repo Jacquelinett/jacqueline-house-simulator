@@ -494,10 +494,10 @@
 }
 
 /* Dashboard's "Lifted Today" section (dashboard/render.ts's
-   renderWorkoutToday) and the Workout modal's own per-session rows share
-   these two — moved here once the Dashboard section gave the viewer a
-   real equivalent (the modal itself stays app-only; see
-   src/styles.css's .workout-session-notes). */
+   renderWorkoutToday) and the Statistic modal's own Workout tab (src/
+   workout/render.ts, nested inside dashboard/statisticModal.ts and
+   viewer-main.ts alike — see that file's own header comment) share
+   these two. */
 .workout-row {
   justify-content: space-between;
 }
@@ -595,6 +595,63 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 4px;
+}
+
+/*
+ * A second, visually heavier toggle style — a true segmented control
+ * (every option takes an equal share of the full width, dark pink when
+ * selected) — used ONE LEVEL DOWN from .stat-tab's own underline tabs, so
+ * the two kinds of "pick a section" control read as a deliberate
+ * hierarchy rather than the same thing twice: the Statistic modal's outer
+ * Goals/Workout split stays .stat-tab, while the toggle *within* Goals
+ * (All Time/Period) and the one *within* Workout (Lifetime Stats/Personal
+ * Records/Logs) both use this instead. Used by buildToggleGroup() via a
+ * "segment-toggle-btn" buttonClass, wrapped in a ".segment-toggle-row"
+ * div — the row class exists only to give the toggle group's own bare
+ * <span> wrapper something to stretch full-width against, same reasoning
+ * CLAUDE.md's shared-render split favors: one small reusable piece, not a
+ * change to buildToggleGroup itself. Dark pink is a fixed, explicit color
+ * rather than var(--accent-bg) (which flips to blue in dark mode) —
+ * deliberately theme-independent, same "a dedicated control should read
+ * as itself, not blend into either theme" reasoning CLAUDE.md's
+ * .stop-activity-button already uses for its own always-red look.
+ */
+.segment-toggle-row {
+  margin-bottom: 14px;
+}
+
+.segment-toggle-row > span {
+  display: flex;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.segment-toggle-btn {
+  flex: 1;
+  background: var(--surface-soft);
+  color: var(--text);
+  border: none;
+  margin: 0;
+  padding: 10px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+}
+
+.segment-toggle-btn + .segment-toggle-btn {
+  border-left: 1px solid var(--border);
+}
+
+.segment-toggle-btn:not(.selected):hover {
+  background: var(--surface-strong);
+}
+
+.segment-toggle-btn.selected {
+  background: #d6336c;
+  color: #fff;
 }
 
 .panel-section-heading {

@@ -1,6 +1,6 @@
 import { getServerConfig } from "./serverConfig";
 import { getCharacterById } from "./characters";
-import { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession, DaySummary } from "../src/workout/types";
+import { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, DaySummary } from "../src/workout/types";
 import { groupSetsByExercise, formatSetDetail } from "../src/workout/format";
 
 /**
@@ -340,32 +340,19 @@ interface WgerSessionRow {
 
 const IMPRESSION_LABEL: Record<string, "bad" | "neutral" | "good"> = { "1": "bad", "2": "neutral", "3": "good" };
 
-/** The last `limit` workout sessions (default 7) from `characterId`'s own account, newest first — a session-level view independent of its sets, for the "Log" tab (the per-exercise breakdown lives in getWgerWorkoutsForDate/the Today tab instead). A single page, not wgerGetAllPages — "the last N" is exactly what one page of `limit=N` already gives, sorted. */
-export async function getWgerRecentSessions(characterId: string, limit = 7): Promise<RecentSession[]> {
-  const config = configFor(characterId);
-  if (!config) return [];
-  const page = await wgerGetJson<WgerPage<WgerSessionRow>>(`/api/v2/workoutsession/?ordering=-datetime_start&limit=${limit}`, config);
-  return page.results.map((r) => ({
-    id: r.id,
-    datetimeStart: r.datetime_start,
-    datetimeEnd: r.datetime_end,
-    impression: r.impression ? IMPRESSION_LABEL[r.impression] ?? null : null,
-    notes: r.notes || null,
-  }));
-}
-
 /**
- * The public-facing equivalent of getWgerRecentSessions above — same last
- * `limit` sessions (newest first), but each reshaped into that day's
- * exercise summary (reusing getWgerWorkoutsForDate + the same
- * groupSetsByExercise/formatSetDetail the Today tab/Dashboard already use
- * — one exercise-grouping implementation, not a second one for this
- * coarser view) plus mood, dropping exact start/end timestamps and
- * free-text notes entirely (see DaySummary's own comment in
- * src/workout/types.ts for why). One getWgerWorkoutsForDate call per
- * session rather than per distinct date — if two real sessions happen to
- * land on the same calendar day, this harmlessly fetches that day's logs
- * twice; not worth deduping for a bounded `limit` this small.
+ * The last `limit` workout days (default 7) from `characterId`'s own
+ * account, newest first, each reshaped into that day's exercise summary
+ * (reusing getWgerWorkoutsForDate + the same groupSetsByExercise/
+ * formatSetDetail the Dashboard's "Lifted Today" already uses — one
+ * exercise-grouping implementation, not a second one for this view) plus
+ * mood and the session's own real start/end time — see DaySummary's own
+ * comment in src/workout/types.ts. A single page, not wgerGetAllPages —
+ * "the last N" is exactly what one page of `limit=N` already gives,
+ * sorted. One getWgerWorkoutsForDate call per session rather than per
+ * distinct date — if two real sessions happen to land on the same
+ * calendar day, this harmlessly fetches that day's logs twice; not worth
+ * deduping for a bounded `limit` this small.
  */
 export async function getWgerRecentDaySummaries(characterId: string, limit = 7): Promise<DaySummary[]> {
   const config = configFor(characterId);
@@ -380,6 +367,8 @@ export async function getWgerRecentDaySummaries(characterId: string, limit = 7):
       const exercises = [...grouped.entries()].map(([exerciseName, sets]) => ({ exerciseName, details: formatSetDetail(sets) }));
       return {
         date: dateStr,
+        datetimeStart: r.datetime_start,
+        datetimeEnd: r.datetime_end,
         exercises,
         impression: r.impression ? IMPRESSION_LABEL[r.impression] ?? null : null,
       };

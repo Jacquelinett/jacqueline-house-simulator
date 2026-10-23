@@ -4,7 +4,6 @@ import { setupGoalsPanel, setupJacquelineStatus } from "./goals/panel";
 import { setupGoalsManageModal } from "./goals/manageModal";
 import { setupTodosModal } from "./todos/modal";
 import { setupTimerModal } from "./timer/modal";
-import { setupWorkoutModal, setupWorkoutContent } from "./workout/modal";
 import { setupSettingsModal, setupSettingsContent } from "./settings/modal";
 import { getSettings, onSettingsChange } from "./settings/state";
 import { setupMessagesModal } from "./broadcast/messagesModal";
@@ -76,7 +75,6 @@ function setupModals(): void {
   const todosModal = setupTodosModal();
 
   const timerModal = setupTimerModal();
-  const workoutModal = setupWorkoutModal();
   const settingsModal = setupSettingsModal();
   const messagesModal = setupMessagesModal();
   setupDashboardPanel();
@@ -86,7 +84,6 @@ function setupModals(): void {
     { label: "Goals", onclick: goalsModal.open },
     { label: "Todos", onclick: todosModal.open },
     { label: "Timer", onclick: timerModal.open },
-    { label: "Workout", onclick: workoutModal.open },
     { label: "Statistic", onclick: statisticModal.open },
     { label: "Messages", onclick: messagesModal.open },
     { label: "Settings", onclick: settingsModal.open },
@@ -135,19 +132,19 @@ function setupMobilePickAction(house: House): { open: () => void } {
 }
 
 /**
- * The mobile tab bar + its 5 pages. Built unconditionally alongside the
+ * The mobile tab bar + its 4 pages. Built unconditionally alongside the
  * desktop UI — shared-chrome.css's media query decides which is visible,
  * so this never needs to know whether it's actually on a small screen.
- * "Workout" is app-only (the viewer passes its own, shorter tab list to
- * setupMobileTabs() — see viewer-main.ts) since the Workout modal's real
- * wger data has no viewer-facing equivalent.
+ * Workout used to be its own 5th tab here (desktop-only, since the
+ * viewer had no RPC access to wger) — now that it's nested inside
+ * Statistic's own Workout tab instead (see dashboard/statisticModal.ts),
+ * this tab list matches the viewer's own exactly, see viewer-main.ts.
  */
 function setupMobileUI(house: House): void {
   const tabs = setupMobileTabs([
     { id: "home", label: "Home" },
     { id: "dashboard", label: "Dashboard" },
     { id: "statistic", label: "Statistic" },
-    { id: "workout", label: "Workout" },
     { id: "settings", label: "Settings" },
   ] as const);
 
@@ -166,12 +163,10 @@ function setupMobileUI(house: House): void {
 
   setupDashboardContent(tabs.pages.dashboard);
   const statistic = setupStatisticContent(tabs.pages.statistic);
-  const workout = setupWorkoutContent(tabs.pages.workout);
   setupSettingsContent(tabs.pages.settings);
 
   tabs.onTabChange((tab) => {
     if (tab === "statistic") statistic.refresh();
-    if (tab === "workout") workout.refresh();
   });
 }
 

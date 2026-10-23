@@ -1,7 +1,7 @@
-import { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession, DaySummary } from "../src/workout/types";
-import { getWgerWorkoutsForDate, getWgerLifetimeStats, getWgerPersonalRecords, getWgerRecentSessions, getWgerRecentDaySummaries } from "./wger";
+import { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, DaySummary } from "../src/workout/types";
+import { getWgerWorkoutsForDate, getWgerLifetimeStats, getWgerPersonalRecords, getWgerRecentDaySummaries } from "./wger";
 
-export type { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, RecentSession, DaySummary };
+export type { WorkoutSession, WorkoutSet, WgerLifetimeStats, PersonalRecord, DaySummary };
 
 /**
  * Thin try/catch wrappers around server/wger.ts's own per-character
@@ -39,16 +39,7 @@ export async function getPersonalRecordsForCharacter(characterId: string): Promi
   }
 }
 
-export async function getRecentSessionsForCharacter(characterId: string): Promise<RecentSession[]> {
-  try {
-    return await getWgerRecentSessions(characterId);
-  } catch (err) {
-    console.error("[workouts] wger recent-sessions fetch failed", err);
-    return [];
-  }
-}
-
-/** Same gatekeeping as the others above — the public-facing (no exact times/notes) equivalent of getRecentSessionsForCharacter, see DaySummary's own comment. */
+/** Same gatekeeping as the others above — feeds the Statistic modal's Workout > Logs section (desktop app, via RPC query) and the viewer's own equivalent (via pushWgerSummary), see DaySummary's own comment. */
 export async function getRecentDaySummariesForCharacter(characterId: string): Promise<DaySummary[]> {
   try {
     return await getWgerRecentDaySummaries(characterId);

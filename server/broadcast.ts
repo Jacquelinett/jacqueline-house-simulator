@@ -190,15 +190,15 @@ export async function pushWorkoutToday(characterId: string): Promise<void> {
 }
 
 /**
- * Lifetime Stats + Personal Records + a recent-days log — the Workout
- * modal's own tabs (see CLAUDE.md's wger section) — combined into one
- * blob, same reasoning periodStats bundles its four windows together
+ * Lifetime Stats + Personal Records + a recent-days log — the Statistic
+ * modal's own Workout tab (see CLAUDE.md's wger section) — combined into
+ * one blob, same reasoning periodStats bundles its four windows together
  * rather than several separate pushes. The recent-days piece is
- * DaySummary[] (getRecentDaySummariesForCharacter), not RecentSession[] —
- * exact start/end times and free-text notes read as personal logistics,
- * not something-to-brag-about, so the public-facing version is just "what
- * I did + how it felt" per day, the same "pride glance, not a full log"
- * stance pushWorkoutToday's own Today-only scope already takes. Empty/
+ * DaySummary[] (getRecentDaySummariesForCharacter), grouped by day/
+ * exercise (same shape pushWorkoutToday's own Today-only data already
+ * uses) rather than a flat per-session list, with each day's real start/
+ * end time included — unlike free-text session notes (never pushed
+ * anywhere), exact workout times aren't considered private here. Empty/
  * null for anyone not wger-linked, same as every other wger-backed push.
  */
 export async function pushWgerSummary(characterId: string): Promise<void> {

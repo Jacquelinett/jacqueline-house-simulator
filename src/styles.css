@@ -435,14 +435,3 @@ body {
   padding: 6px 0;
   color: var(--text);
 }
-
-/* Workout modal session notes — app-only, since the modal itself (as
-   opposed to the Dashboard's "Lifted Today" summary, which IS shared —
-   see shared-chrome.css's own .workout-row/.workout-sets-detail) stays a
-   desktop-only surface. */
-.workout-session-notes {
-  font-size: 12px;
-  opacity: 0.6;
-  font-style: italic;
-  margin-bottom: 4px;
-}
