@@ -18,6 +18,14 @@ export interface SpriteLayer {
   // needed at all).
   texture?: string; // path to art asset; omitted -> rendered as a placeholder color box
   color?: number; // placeholder fill used when texture is omitted
+  // Overlay-only now — below/above are always rendered at (0,0), forced
+  // to the object's own width/height (see renderer.ts's buildLayer), so
+  // there's nothing for an offset to mean there. Overlay has no
+  // width/height of its own (renders at its resolved texture's native
+  // size), so IT genuinely needs positioning — carried on
+  // ObjectTypeDef.overlayOffsetX/overlayOffsetY (a per-TYPE field, not
+  // this shared layer shape) and mirrored onto this resolved layer's
+  // offsetX/offsetY by server/objectTypes.ts for renderer.ts to read.
   offsetX?: number;
   offsetY?: number;
   // Overlay-only in practice (see ObjectTypeDef.overlay) — when set, this

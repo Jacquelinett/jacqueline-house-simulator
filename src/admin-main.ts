@@ -696,10 +696,15 @@ async function ensureTextureLoaded(path: string | undefined): Promise<void> {
 }
 
 /**
- * One below/above layer's editor — texture-or-color-or-none, plus
- * offsetX/offsetY. Overlay is no longer edited here at all — it's a
- * reference to a named Sprite Overlays-tab entity (see
- * openSpriteOverlayEditModal), picked by spriteKey, not an inline layer.
+ * One below/above layer's editor — texture-or-color-or-none. No
+ * offsetX/offsetY: a below/above layer always renders at (0,0), forced to
+ * the object's own width/height (renderer.ts's buildLayer), so there's
+ * nothing for an offset to mean there — unlike overlay, which has its own
+ * genuine Offset X/Y inputs (see openObjectTypeEditModal's overlay
+ * section) since it renders at its resolved texture's native size.
+ * Overlay is no longer edited here at all — it's a reference to a named
+ * Sprite Overlays-tab entity (see openSpriteOverlayEditModal), picked by
+ * spriteKey, not an inline layer.
  */
 function buildLayerSection(
   title: string,
@@ -740,33 +745,16 @@ function buildLayerSection(
   colorInput.style.display = textureSelect.value === "__color__" ? "" : "none";
   form.appendChild(colorInput);
 
-  const offsetXInput = document.createElement("input");
-  offsetXInput.type = "number";
-  offsetXInput.value = String(initial?.offsetX ?? 0);
-  offsetXInput.style.width = "60px";
-  const offsetYInput = document.createElement("input");
-  offsetYInput.type = "number";
-  offsetYInput.value = String(initial?.offsetY ?? 0);
-  offsetYInput.style.width = "60px";
-  form.append(document.createTextNode("Offset X:"), offsetXInput, document.createTextNode("Offset Y:"), offsetYInput);
-
   textureSelect.onchange = async () => {
     colorInput.style.display = textureSelect.value === "__color__" ? "" : "none";
     if (textureSelect.value !== "__none__" && textureSelect.value !== "__color__") await ensureTextureLoaded(textureSelect.value);
     onChange();
   };
   colorInput.oninput = onChange;
-  offsetXInput.onchange = onChange;
-  offsetYInput.onchange = onChange;
 
   function getLayer(): SpriteLayer | undefined {
     if (textureSelect.value === "__none__") return undefined;
-    const layer: SpriteLayer = textureSelect.value === "__color__" ? { color: parseInt(colorInput.value.slice(1), 16) } : { texture: textureSelect.value };
-    const offsetX = Number(offsetXInput.value) || 0;
-    const offsetY = Number(offsetYInput.value) || 0;
-    if (offsetX) layer.offsetX = offsetX;
-    if (offsetY) layer.offsetY = offsetY;
-    return layer;
+    return textureSelect.value === "__color__" ? { color: parseInt(colorInput.value.slice(1), 16) } : { texture: textureSelect.value };
   }
 
   return { element: section, getLayer };

@@ -102,7 +102,16 @@ export async function preloadRoomAssets(): Promise<void> {
   }
 }
 
-/** Exported for the admin tool's placement-ghost preview (adminPreview.ts), which builds a lightweight stand-in sprite from the same SpriteLayer data instead of duplicating this logic. */
+/**
+ * Exported for the admin tool's placement-ghost preview (adminPreview.ts),
+ * which builds a lightweight stand-in sprite from the same SpriteLayer
+ * data instead of duplicating this logic. Always positioned at (0,0) — a
+ * below/above layer has no width/height of its own, it's forced to the
+ * object's own width/height right below, so there's nothing for an
+ * offset to meaningfully mean (unlike overlay, which renders at its
+ * resolved texture's native size and genuinely needs one — see
+ * buildObject's own overlay construction).
+ */
 export function buildLayer(layer: SpriteLayer, width: number, height: number): Container {
   const node: Container = layer.texture
     ? new Sprite(Assets.get<Texture>(assetUrl(layer.texture)))
@@ -111,7 +120,6 @@ export function buildLayer(layer: SpriteLayer, width: number, height: number): C
     (node as Sprite).width = width;
     (node as Sprite).height = height;
   }
-  node.position.set(layer.offsetX ?? 0, layer.offsetY ?? 0);
   return node;
 }
 
