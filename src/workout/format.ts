@@ -11,9 +11,32 @@ export function groupSetsByExercise(sets: WorkoutSet[]): Map<string, WorkoutSet[
   return byExercise;
 }
 
-/** "60kg × 8, 60kg × 8, 60kg × 7" (or "8 reps" for a bodyweight set with no recorded weight) — defaults a missing weightUnit to "kg" (the old mock mirror never set one, and always implied kg). Pulled out of src/workout/modal.ts for the same reuse reason as groupSetsByExercise above. */
+/**
+ * "22.5kg × 5 (×5), 60kg × 8 (×2), 60kg × 7" (or "8 reps" for a bodyweight
+ * set with no recorded weight) — collapses consecutive-or-not sets that
+ * share the exact same weight/unit/reps into one entry with a "(×N)"
+ * count, rather than repeating an identical line N times (the common case
+ * for a real lift: 5 sets of the same weight×reps read as noise, not
+ * signal, listed out individually). Grouped by exact (weight, unit, reps)
+ * match regardless of position in the list — not just adjacent runs — so
+ * e.g. a warm-up set repeated later still collapses into the same count.
+ * A lone set (count 1) omits the "(×1)" suffix entirely, since there's
+ * nothing to collapse. Defaults a missing weightUnit to "kg" (the old mock
+ * mirror never set one, and always implied kg).
+ */
 export function formatSetDetail(sets: WorkoutSet[]): string {
-  return sets.map((s) => (s.weight != null ? `${s.weight}${s.weightUnit ?? "kg"} × ${s.reps}` : `${s.reps} reps`)).join(", ");
+  const order: string[] = [];
+  const counts = new Map<string, number>();
+  const labels = new Map<string, string>();
+  for (const s of sets) {
+    const key = `${s.weight ?? "none"}|${s.weightUnit ?? "kg"}|${s.reps}`;
+    if (!counts.has(key)) {
+      order.push(key);
+      labels.set(key, s.weight != null ? `${s.weight}${s.weightUnit ?? "kg"} × ${s.reps}` : `${s.reps} reps`);
+    }
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return order.map((key) => (counts.get(key)! > 1 ? `${labels.get(key)} (×${counts.get(key)})` : labels.get(key))).join(", ");
 }
 
 export interface WorkoutTodayEntry {
