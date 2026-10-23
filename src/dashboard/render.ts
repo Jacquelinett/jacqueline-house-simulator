@@ -2,6 +2,7 @@ import { formatMinutes } from "../goals/format";
 import { toCssColor } from "../scene/activities";
 import type { ActivityStat } from "./stats";
 import type { WorkoutTodayEntry } from "../workout/format";
+import { buildWorkoutRow, buildWorkoutSubRow } from "../workout/render";
 
 /**
  * Builds the "Today's Goals" / divider / "Today's Activity" / "Lifted
@@ -118,8 +119,9 @@ export function renderGoalList(container: HTMLElement, entries: DashboardGoalEnt
 }
 
 /**
- * "Lifted Today" — real logged wger sets (or [] for a mock/no-data day),
- * already grouped-by-exercise via src/workout/format.ts's
+ * "Lifted Today" — real logged wger sets (or [] for a non-wger-linked
+ * character or a day with nothing logged), already grouped-by-exercise
+ * via src/workout/format.ts's
  * summarizeWorkoutSessions() by the caller. Hides `section` entirely
  * (heading, divider, list, all of it) when there's nothing to show,
  * rather than rendering an empty-state placeholder the way
@@ -136,35 +138,14 @@ export function renderWorkoutToday(section: HTMLElement, list: HTMLElement, entr
   section.style.display = "";
   list.textContent = "";
   for (const entry of entries) {
-    const row = document.createElement("div");
-    row.className = "dashboard-row workout-row";
-
-    const name = document.createElement("span");
-    name.className = "dashboard-text";
-    name.textContent = entry.exerciseName;
-    row.appendChild(name);
-
-    const detail = document.createElement("span");
-    detail.className = "workout-sets-detail";
-    detail.textContent = entry.details[0] ?? "";
-    row.appendChild(detail);
-
-    list.appendChild(row);
+    list.appendChild(buildWorkoutRow(entry.exerciseName, entry.details[0] ?? ""));
 
     // Multiple distinct weight/rep groups (e.g. a warm-up set plus working
     // sets) get one line each, lightest first — same goal-subrow pattern
     // renderGoalList uses for streak text, rather than cramming every
     // group onto the exercise's own row.
     for (const extra of entry.details.slice(1)) {
-      const subRow = document.createElement("div");
-      subRow.className = "workout-subrow";
-
-      const subText = document.createElement("span");
-      subText.className = "workout-subtext";
-      subText.textContent = extra;
-      subRow.appendChild(subText);
-
-      list.appendChild(subRow);
+      list.appendChild(buildWorkoutSubRow(extra));
     }
   }
 }

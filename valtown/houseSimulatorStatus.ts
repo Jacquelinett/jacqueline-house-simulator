@@ -74,7 +74,9 @@
  *   POST /api/messages  -> public: a viewer leaves a note for whichever character they were viewing
  *                        (`characterId` in the body) — a note left while viewing Kevin shows up in
  *                        Kevin's inbox only, never Jacqueline's
- *   DELETE /api/messages/:id -> (secret required) dismiss a message from your inbox
+ *   DELETE /api/messages/:id?character=<id> -> (secret required) dismiss a message from your OWN inbox —
+ *                        scoped by character_id server-side (not just by id), so one character's device
+ *                        can't delete a note left for a different character just by guessing/knowing its id
  *   GET  /api/house-layout -> public JSON: {activities, objectTypes, rooms, floors} — the same four things
  *                             House Simulator's own WebSocket protocol sends a connected game client once on
  *                             connect; the viewer has no WebSocket connection at all, so without this it's
@@ -629,8 +631,9 @@ async function handlePostMessage(req: Request): Promise<Response> {
   return Response.json({ ok: true });
 }
 
-async function handleDeleteMessage(id: string): Promise<Response> {
-  await sqlite.execute({ sql: "delete from messages where id = :id", args: { id: Number(id) } });
+/** `characterId` scopes the delete the same way handleGetMessages scopes the read — without this, any authorized device could delete ANY character's message just by knowing/guessing its (small, sequential) id, not just messages in its own inbox. A missing/mismatched characterId deletes nothing (0 rows affected) rather than falling back to an unscoped delete. */
+async function handleDeleteMessage(id: string, characterId: string | null): Promise<Response> {
+  await sqlite.execute({ sql: "delete from messages where id = :id and character_id = :characterId", args: { id: Number(id), characterId } });
   return Response.json({ ok: true });
 }
 
@@ -760,7 +763,7 @@ export default async function (req: Request): Promise<Response> {
   const deleteMatch = pathname.match(/^\/api\/messages\/(\d+)$/);
   if (method === "DELETE" && deleteMatch) {
     if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
-    return handleDeleteMessage(deleteMatch[1]);
+    return handleDeleteMessage(deleteMatch[1], characterId);
   }
 
   if (method === "GET" && pathname === "/api/house-layout") {

@@ -111,7 +111,7 @@ export function setupDashboardContent(container: HTMLElement, providedDateInput?
    * another character" switch (getViewingCharacter()), since showing
    * Jacqueline's workout while looking at Kevin's dashboard would be
    * confusing — getWorkoutsForDate() just no-ops (empty array) for any
-   * character that isn't the one wger-linked account anyway.
+   * character with no wger_api_token of their own anyway.
    */
   async function renderWorkout() {
     const viewingId = getViewingCharacter()?.id;

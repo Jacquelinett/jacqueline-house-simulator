@@ -49,7 +49,7 @@ const commands: Record<string, (characterId: string, args: any) => Promise<void>
   addTodo: (characterId, { text }) => addTodo(characterId, text),
   toggleTodo: (characterId, { id }) => toggleTodo(characterId, id),
   deleteTodo: (characterId, { id }) => deleteTodo(characterId, id),
-  deleteMessage: (_characterId, { id }) => deleteMessage(id),
+  deleteMessage: (characterId, { id }) => deleteMessage(characterId, id),
 };
 
 /**

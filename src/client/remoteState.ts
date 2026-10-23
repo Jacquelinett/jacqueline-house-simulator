@@ -108,7 +108,15 @@ function promptForConnectionDetails(prefill?: { serverUrl: string; lanSecret: st
     form.appendChild(urlLabel);
 
     const secretLabel = document.createElement("label");
-    secretLabel.textContent = "Server secret (server_config.lan_secret — leave blank if none)";
+    // Stale through the per-character auth migration: this used to be the
+    // one shared server_config.lan_secret (which is why the variable/key
+    // names below are still "lanSecret"), but the WS handshake now resolves
+    // a CHARACTER by this value (getCharacterBySecret() — see
+    // server/characters.ts), so it has to be that character's own secret
+    // from the admin tool's Characters tab, not the old global value —
+    // and it's never optional anymore, so "leave blank if none" no longer
+    // applies either (a blank secret matches no character and 4001s).
+    secretLabel.textContent = "Character secret (from the admin tool's Characters tab — e.g. your own character's secret)";
     const secretInput = document.createElement("input");
     secretInput.type = "text";
     secretInput.value = prefill?.lanSecret ?? "";

@@ -19,6 +19,7 @@ import {
 } from "./dashboard/render";
 import { WorkoutSession, WgerLifetimeStats, PersonalRecord, DaySummary } from "./workout/types";
 import { summarizeWorkoutSessions } from "./workout/format";
+import { buildWorkoutRow, buildWorkoutSubRow } from "./workout/render";
 import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "./status/render";
 import type { ActivityStat } from "./dashboard/stats";
 import type { FixedPeriodKey, FixedPeriodStats } from "./dashboard/periodStats";
@@ -482,59 +483,24 @@ function buildStatisticBlock(container: HTMLElement): {
           ["Longest streak", `${lifetimeStats.longestStreak} day${lifetimeStats.longestStreak === 1 ? "" : "s"}`],
         ];
         for (const [label, value] of rows) {
-          const row = document.createElement("div");
-          row.className = "dashboard-row workout-row";
-          const name = document.createElement("span");
-          name.className = "dashboard-text";
-          name.textContent = label;
-          row.appendChild(name);
-          const detail = document.createElement("span");
-          detail.className = "workout-sets-detail";
-          detail.textContent = value;
-          row.appendChild(detail);
-          lifetimeList.appendChild(row);
+          lifetimeList.appendChild(buildWorkoutRow(label, value));
         }
       }
 
       recordsList.textContent = "";
       for (const record of personalRecords) {
-        const row = document.createElement("div");
-        row.className = "dashboard-row workout-row";
-        const name = document.createElement("span");
-        name.className = "dashboard-text";
-        name.textContent = record.exerciseName;
-        row.appendChild(name);
-        const detail = document.createElement("span");
-        detail.className = "workout-sets-detail";
         const weightPart = `${record.weight}${record.weightUnit ?? "kg"} × ${record.reps}`;
         const oneRm = record.oneRepMaxEstimate != null ? ` (1RM ~${record.oneRepMaxEstimate}${record.weightUnit ?? "kg"})` : "";
-        detail.textContent = `${weightPart}${oneRm}`;
-        row.appendChild(detail);
-        recordsList.appendChild(row);
+        recordsList.appendChild(buildWorkoutRow(record.exerciseName, `${weightPart}${oneRm}`));
       }
 
       recentDaysList.textContent = "";
       for (const day of recentDays) {
-        const row = document.createElement("div");
-        row.className = "dashboard-row workout-row";
-        const name = document.createElement("span");
-        name.className = "dashboard-text";
-        name.textContent = new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-        row.appendChild(name);
-        const detail = document.createElement("span");
-        detail.className = "workout-sets-detail";
-        detail.textContent = day.impression ? IMPRESSION_TEXT[day.impression] : "";
-        row.appendChild(detail);
-        recentDaysList.appendChild(row);
+        const dateLabel = new Date(`${day.date}T00:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+        recentDaysList.appendChild(buildWorkoutRow(dateLabel, day.impression ? IMPRESSION_TEXT[day.impression] : ""));
 
         for (const exercise of day.exercises) {
-          const subRow = document.createElement("div");
-          subRow.className = "workout-subrow";
-          const subText = document.createElement("span");
-          subText.className = "workout-subtext";
-          subText.textContent = `${exercise.exerciseName}: ${exercise.details.join(", ")}`;
-          subRow.appendChild(subText);
-          recentDaysList.appendChild(subRow);
+          recentDaysList.appendChild(buildWorkoutSubRow(`${exercise.exerciseName}: ${exercise.details.join(", ")}`));
         }
       }
     },
