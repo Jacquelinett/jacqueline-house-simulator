@@ -22,9 +22,6 @@ import {
 } from "./broadcast";
 import { serveStatic } from "./staticServer";
 import { listCharacters } from "./characters";
-import { seedMockWorkoutsIfEmpty } from "./workouts";
-import { isWgerLinkedCharacter } from "./wger";
-import { localDateString } from "../src/goals/recurrence";
 import { seedActivitiesIfEmpty } from "./activities";
 import { seedObjectTypesIfEmpty } from "./objectTypes";
 import { seedRoomsIfEmpty } from "./rooms";
@@ -96,19 +93,8 @@ async function main() {
   // exists anywhere in the house. See rpc.ts's own comment.
   await stopOrphanedActivities().catch((err) => console.error("[server] stopOrphanedActivities at startup failed", err));
 
-  // Mock wger data (see server/workouts.ts's own comment) — only for
-  // Jacqueline specifically (unrelated to val.town publishing below — a
-  // separate, not-yet-multi-character feature), only if today has nothing
-  // yet (so this doesn't overwrite anything on every restart), and only
-  // if she isn't actually wger-linked — once server_config.wger_base_url/
-  // wger_api_token are set for her, getWorkoutsForDate() reads live wger
-  // data instead and this mock seed would just be unused dead rows.
-  const jacqueline = characters.find((c) => c.name === "Jacqueline");
-  if (jacqueline && !isWgerLinkedCharacter(jacqueline.id)) {
-    seedMockWorkoutsIfEmpty(jacqueline.id, localDateString(new Date()));
-  }
   if (!getServerConfig().wgerBaseUrl) {
-    console.warn("[server] no wger_base_url set in server_config — the wger integration will silently no-op (mock workout data instead).");
+    console.warn("[server] no wger_base_url set in server_config — getWorkoutsForDate() will return no data for every character until it's configured.");
   }
 
   // Re-queried fresh at each use (not captured once here) so an admin
