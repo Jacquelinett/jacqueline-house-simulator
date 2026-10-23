@@ -12,9 +12,9 @@ interface TypeRow {
   anchor_x: number | null;
   anchor_y: number | null;
   overlay_id: number | null;
-  overlay_sprite_key: string | null;
   overlay_offset_x: number | null;
   overlay_offset_y: number | null;
+  overlay_sprite_key: string | null;
   overlay_frame_count: number | null;
   overlay_frame_duration_ms: number | null;
 }
@@ -22,12 +22,14 @@ interface TypeRow {
 // Joins sprite_overlays so overlay comes back fully resolved, matching the
 // shape every consumer (renderer.ts/admin-main.ts/viewer) already expects
 // — see ObjectTypeDef.overlay's own comment in rooms.ts on why overlay
-// itself is read-only/derived while overlayId is the real foreign key.
+// itself is read-only/derived while overlayId/overlayOffsetX/Y are the
+// real fields. Position (overlay_offset_x/y) is THIS type's own column,
+// not joined from sprite_overlays — two types referencing the same
+// overlay can still position it differently.
 const SELECT_TYPES_SQL = `
   SELECT ot.id, ot.name, ot.below_json, ot.above_json, ot.width, ot.height, ot.anchor_x, ot.anchor_y,
-         ot.overlay_id,
+         ot.overlay_id, ot.overlay_offset_x, ot.overlay_offset_y,
          so.sprite_key AS overlay_sprite_key,
-         so.offset_x AS overlay_offset_x, so.offset_y AS overlay_offset_y,
          so.frame_count AS overlay_frame_count, so.frame_duration_ms AS overlay_frame_duration_ms
   FROM object_types ot
   LEFT JOIN sprite_overlays so ON so.id = ot.overlay_id
@@ -51,6 +53,8 @@ function rowToType(row: TypeRow): ObjectTypeDef {
     below: row.below_json ? (JSON.parse(row.below_json) as SpriteLayer[]) : undefined,
     overlay: overlay ? [overlay] : undefined,
     overlayId: row.overlay_id ?? undefined,
+    overlayOffsetX: row.overlay_offset_x ?? undefined,
+    overlayOffsetY: row.overlay_offset_y ?? undefined,
     above: row.above_json ? (JSON.parse(row.above_json) as SpriteLayer[]) : undefined,
     anchorX: row.anchor_x ?? undefined,
     anchorY: row.anchor_y ?? undefined,
@@ -65,13 +69,13 @@ export function getObjectTypes(): Record<string, ObjectTypeDef> {
   return result;
 }
 
-/** One-time seed from scene/rooms.ts's STATIC_OBJECT_TYPES — explicit ids matching that registry's own literal ids, so existing STATIC_ROOM_SPECS placements (type: STATIC_OBJECT_TYPES.piano.id) resolve against the seeded rows unchanged. A seed type's own overlay (only Piano's, today) gets its own sprite_overlays row created first, same as any admin-authored overlay — there's no bulk/shared seed path for overlays since only one type has ever needed one. */
+/** One-time seed from scene/rooms.ts's STATIC_OBJECT_TYPES — explicit ids matching that registry's own literal ids, so existing STATIC_ROOM_SPECS placements (type: STATIC_OBJECT_TYPES.piano.id) resolve against the seeded rows unchanged. A seed type's own overlay (only Piano's, today) gets its own sprite_overlays row created first (spriteKey/frame fields only — position is this type's own column below), same as any admin-authored overlay — there's no bulk/shared seed path for overlays since only one type has ever needed one. */
 export function seedObjectTypesIfEmpty(): void {
   const { n } = db.prepare("SELECT COUNT(*) as n FROM object_types").get() as { n: number };
   if (n > 0) return;
   const insert = db.prepare(`
-    INSERT INTO object_types (id, name, below_json, above_json, width, height, anchor_x, anchor_y, overlay_id)
-    VALUES (@id, @name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @overlayId)
+    INSERT INTO object_types (id, name, below_json, above_json, width, height, anchor_x, anchor_y, overlay_id, overlay_offset_x, overlay_offset_y)
+    VALUES (@id, @name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @overlayId, @overlayOffsetX, @overlayOffsetY)
   `);
   const tx = db.transaction(() => {
     for (const type of Object.values(STATIC_OBJECT_TYPES) as ObjectTypeDef[]) {
@@ -86,18 +90,20 @@ export function seedObjectTypesIfEmpty(): void {
         anchorX: type.anchorX ?? null,
         anchorY: type.anchorY ?? null,
         overlayId,
+        overlayOffsetX: type.overlay?.[0]?.offsetX ?? null,
+        overlayOffsetY: type.overlay?.[0]?.offsetY ?? null,
       });
     }
   });
   tx();
 }
 
-/** `def.id` (if present) is ignored — id omitted from the INSERT so SQLite auto-assigns the next INTEGER PRIMARY KEY. `def.overlay` is ignored too (it's read-only/derived, see ObjectTypeDef's own comment) — only `def.overlayId` is persisted. */
+/** `def.id` (if present) is ignored — id omitted from the INSERT so SQLite auto-assigns the next INTEGER PRIMARY KEY. `def.overlay` is ignored too (it's read-only/derived, see ObjectTypeDef's own comment) — only `def.overlayId`/`def.overlayOffsetX`/`def.overlayOffsetY` are persisted. */
 export function createObjectType(def: ObjectTypeDef): number {
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO object_types (name, below_json, above_json, width, height, anchor_x, anchor_y, overlay_id)
-     VALUES (@name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @overlayId)`,
+      `INSERT INTO object_types (name, below_json, above_json, width, height, anchor_x, anchor_y, overlay_id, overlay_offset_x, overlay_offset_y)
+     VALUES (@name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @overlayId, @overlayOffsetX, @overlayOffsetY)`,
     )
     .run({
       name: def.name,
@@ -108,6 +114,8 @@ export function createObjectType(def: ObjectTypeDef): number {
       anchorX: def.anchorX ?? null,
       anchorY: def.anchorY ?? null,
       overlayId: def.overlayId ?? null,
+      overlayOffsetX: def.overlayOffsetX ?? null,
+      overlayOffsetY: def.overlayOffsetY ?? null,
     });
   return Number(lastInsertRowid);
 }
@@ -116,7 +124,8 @@ export function updateObjectType(id: number, def: ObjectTypeDef): void {
   db.prepare(
     `UPDATE object_types SET name = @name, below_json = @belowJson,
      above_json = @aboveJson, width = @width, height = @height,
-     anchor_x = @anchorX, anchor_y = @anchorY, overlay_id = @overlayId WHERE id = @id`,
+     anchor_x = @anchorX, anchor_y = @anchorY, overlay_id = @overlayId,
+     overlay_offset_x = @overlayOffsetX, overlay_offset_y = @overlayOffsetY WHERE id = @id`,
   ).run({
     id,
     name: def.name,
@@ -127,6 +136,8 @@ export function updateObjectType(id: number, def: ObjectTypeDef): void {
     anchorX: def.anchorX ?? null,
     anchorY: def.anchorY ?? null,
     overlayId: def.overlayId ?? null,
+    overlayOffsetX: def.overlayOffsetX ?? null,
+    overlayOffsetY: def.overlayOffsetY ?? null,
   });
 }
 

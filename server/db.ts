@@ -334,12 +334,16 @@ function migrateTypeDefaultActionsToPlacements(): void {
  * overlay instead of each hand-duplicating an identical inline blob, and
  * the admin tool can show/pick overlays by their spriteKey instead of
  * editing raw layer JSON per type (see admin-main.ts's Sprite Overlays
- * tab). Must run AFTER the CREATE TABLE/ALTER block below — it needs
- * sprite_overlays and object_types.overlay_id to already exist — unlike
- * migrateNavigateActionKind/migrateTypeDefaultActionsToPlacements above,
- * which only ever touch columns that already exist going in. Gated on
- * overlay_json still existing, same idiom as those two: drops that column
- * once done, so this is a near-instant no-op on every later startup.
+ * tab). Position (offsetX/offsetY) goes straight onto THIS type's own
+ * overlay_offset_x/y columns, not into sprite_overlays — two types
+ * referencing the same overlay can still want it positioned differently,
+ * same reasoning below/above's own offsets are per-type too. Must run
+ * AFTER the CREATE TABLE/ALTER block below — it needs sprite_overlays and
+ * object_types.overlay_id/overlay_offset_x/overlay_offset_y to already
+ * exist — unlike migrateNavigateActionKind/migrateTypeDefaultActionsToPlacements
+ * above, which only ever touch columns that already exist going in. Gated
+ * on overlay_json still existing, same idiom as those two: drops that
+ * column once done, so this is a near-instant no-op on every later startup.
  */
 function migrateOverlayJsonToSpriteOverlays(): void {
   if (!tableExists("object_types") || columnType("object_types", "overlay_json") === undefined) return;
@@ -349,11 +353,8 @@ function migrateOverlayJsonToSpriteOverlays(): void {
     overlay_json: string;
   }[];
 
-  const insert = db.prepare(`
-    INSERT INTO sprite_overlays (sprite_key, offset_x, offset_y, frame_count, frame_duration_ms)
-    VALUES (@spriteKey, @offsetX, @offsetY, @frameCount, @frameDurationMs)
-  `);
-  const setOverlayId = db.prepare("UPDATE object_types SET overlay_id = ? WHERE id = ?");
+  const insert = db.prepare(`INSERT INTO sprite_overlays (sprite_key, frame_count, frame_duration_ms) VALUES (@spriteKey, @frameCount, @frameDurationMs)`);
+  const setOverlay = db.prepare("UPDATE object_types SET overlay_id = ?, overlay_offset_x = ?, overlay_offset_y = ? WHERE id = ?");
 
   for (const row of rows) {
     const layers = JSON.parse(row.overlay_json) as {
@@ -375,15 +376,45 @@ function migrateOverlayJsonToSpriteOverlays(): void {
     const spriteKey = layer.spriteKey?.trim() || `type${row.id}`;
     const { lastInsertRowid } = insert.run({
       spriteKey,
-      offsetX: layer.offsetX ?? null,
-      offsetY: layer.offsetY ?? null,
       frameCount: layer.frameCount ?? null,
       frameDurationMs: layer.frameDurationMs ?? null,
     });
-    setOverlayId.run(Number(lastInsertRowid), row.id);
+    setOverlay.run(Number(lastInsertRowid), layer.offsetX ?? null, layer.offsetY ?? null, row.id);
   }
 
   db.exec("ALTER TABLE object_types DROP COLUMN overlay_json");
+}
+
+/**
+ * One-time migration: overlay offsetX/offsetY move from sprite_overlays
+ * (a shared, reusable entity) to object_types itself (overlay_offset_x/y)
+ * — two object types referencing the SAME overlay need to be able to
+ * position it differently, the same way below/above's own offsetX/offsetY
+ * already live per-type rather than on a shared definition. Must run
+ * AFTER the CREATE TABLE/ALTER block below (needs
+ * object_types.overlay_offset_x/y to already exist) but BEFORE
+ * sprite_overlays.offset_x/y are ever dropped. Gated on those columns
+ * still existing on sprite_overlays — drops them itself once done, same
+ * idiom as every other migration in this file. A no-op for any install
+ * that went straight from the previous (texture/frameWidth/frameHeight)
+ * shape to this one via migrateOverlayJsonToSpriteOverlays above, since
+ * that function never writes offset_x/y into sprite_overlays anymore —
+ * this exists specifically for an install that passed through the
+ * brief window where sprite_overlays.offset_x/y existed and held real data.
+ */
+function migrateOverlayOffsetToObjectType(): void {
+  if (!tableExists("sprite_overlays") || columnType("sprite_overlays", "offset_x") === undefined) return;
+
+  const types = db.prepare("SELECT id, overlay_id FROM object_types WHERE overlay_id IS NOT NULL").all() as { id: number; overlay_id: number }[];
+  const getOffsets = db.prepare("SELECT offset_x, offset_y FROM sprite_overlays WHERE id = ?");
+  const update = db.prepare("UPDATE object_types SET overlay_offset_x = ?, overlay_offset_y = ? WHERE id = ?");
+  for (const type of types) {
+    const overlay = getOffsets.get(type.overlay_id) as { offset_x: number | null; offset_y: number | null } | undefined;
+    if (overlay) update.run(overlay.offset_x, overlay.offset_y, type.id);
+  }
+
+  db.exec("ALTER TABLE sprite_overlays DROP COLUMN offset_x");
+  db.exec("ALTER TABLE sprite_overlays DROP COLUMN offset_y");
 }
 
 /**
@@ -490,9 +521,9 @@ export function migrate(): void {
       color INTEGER NOT NULL
     );
 
-    -- One row per named overlay (spriteKey + offset + optional frame-
-    -- animation fields) — object_types.overlay_id references this by id,
-    -- so multiple types can share one overlay definition instead of each
+    -- One row per named overlay (spriteKey + optional frame-animation
+    -- fields) — object_types.overlay_id references this by id, so
+    -- multiple types can share one overlay definition instead of each
     -- embedding an identical inline blob (see server/spriteOverlays.ts,
     -- admin-main.ts's Sprite Overlays tab). No texture column — a sprite-
     -- keyed overlay's art is always "<characterSpriteName>_<spriteKey>.png",
@@ -502,12 +533,13 @@ export function migrate(): void {
     -- spritesheet's frames are always its own full height and equal-width
     -- slices of its own width, derived at load time from the resolved
     -- texture's natural size (renderer.ts's sliceFrames) rather than typed
-    -- in separately.
+    -- in separately. No offset_x/offset_y either — position is a per-
+    -- OBJECT-TYPE concern (object_types.overlay_offset_x/y below), not
+    -- part of this shared entity, since two types reusing the same
+    -- overlay can still want it positioned differently.
     CREATE TABLE IF NOT EXISTS sprite_overlays (
       id INTEGER PRIMARY KEY,
       sprite_key TEXT NOT NULL UNIQUE,
-      offset_x REAL,
-      offset_y REAL,
       frame_count INTEGER,
       frame_duration_ms INTEGER
     );
@@ -521,7 +553,9 @@ export function migrate(): void {
       height INTEGER NOT NULL,
       anchor_x REAL,
       anchor_y REAL,
-      overlay_id INTEGER
+      overlay_id INTEGER,
+      overlay_offset_x REAL,
+      overlay_offset_y REAL
     );
 
     -- Mirrors src/scene/rooms.ts's RoomSpec shape (not flattened absolute
@@ -599,6 +633,8 @@ export function migrate(): void {
     "ALTER TABLE object_types ADD COLUMN anchor_x REAL",
     "ALTER TABLE object_types ADD COLUMN anchor_y REAL",
     "ALTER TABLE object_types ADD COLUMN overlay_id INTEGER",
+    "ALTER TABLE object_types ADD COLUMN overlay_offset_x REAL",
+    "ALTER TABLE object_types ADD COLUMN overlay_offset_y REAL",
     "ALTER TABLE rooms ADD COLUMN show_left_wall INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE rooms ADD COLUMN show_right_wall INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE characters ADD COLUMN publish_to_viewer INTEGER NOT NULL DEFAULT 0",
@@ -655,6 +691,7 @@ export function migrate(): void {
   }
 
   migrateOverlayJsonToSpriteOverlays();
+  migrateOverlayOffsetToObjectType();
 
   seedJacquelineCharacter();
   backfillCharacterId();

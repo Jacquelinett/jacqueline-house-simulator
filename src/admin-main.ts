@@ -531,15 +531,20 @@ async function renderActivities(body: HTMLElement) {
 
 /**
  * Edits (or creates, when `id` is null) one named overlay — just spriteKey
- * (required, doubles as this entity's display name everywhere) + offsetX/
- * offsetY + optional frameCount/frameDurationMs. No texture field at all:
- * a sprite-keyed overlay's art is always "<characterSpriteName>_<spriteKey>
- * .png", falling back to the same convention for DEFAULT_SPRITE_CHARACTER
- * (see characterSprites.ts) — there's nothing for the admin to pick from a
+ * (required, doubles as this entity's display name everywhere) + optional
+ * frameCount/frameDurationMs. No texture field at all: a sprite-keyed
+ * overlay's art is always "<characterSpriteName>_<spriteKey>.png", falling
+ * back to the same convention for DEFAULT_SPRITE_CHARACTER (see
+ * characterSprites.ts) — there's nothing for the admin to pick from a
  * list, just the key itself. No frameWidth/frameHeight either — a
  * spritesheet's frames are always its own full height and equal-width
  * slices of its own width, derived at load time from whichever texture
- * actually resolves (renderer.ts's sliceFrames).
+ * actually resolves (renderer.ts's sliceFrames). No offsetX/offsetY either
+ * — unlike spriteKey/frame settings (which genuinely describe the art
+ * itself), position is a per-OBJECT-TYPE concern now (see
+ * openObjectTypeEditModal's own overlay section), the same way below/
+ * above's offsets already live per-type rather than on shared art — two
+ * types reusing the same overlay can still want it positioned differently.
  */
 function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDef | null, onSaved: () => void): void {
   const modal = buildModal(id ? `Edit Sprite Overlay: ${existing!.spriteKey}` : "Add Sprite Overlay", {});
@@ -557,19 +562,6 @@ function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDe
   spriteHint.className = "admin-hint";
   spriteHint.textContent = `Resolves per-character to "<their sprite name>_<key>.png" under public/characters/ (see the Characters tab's own "Sprite name" field) — falls back to "${DEFAULT_SPRITE_CHARACTER}_<key>.png" when a character has no sprite name, or no matching file exists.`;
   modal.body.appendChild(spriteHint);
-
-  const offsetRow = document.createElement("div");
-  offsetRow.className = "admin-form";
-  const offsetXInput = document.createElement("input");
-  offsetXInput.type = "number";
-  offsetXInput.value = String(existing?.layer.offsetX ?? 0);
-  offsetXInput.style.width = "60px";
-  const offsetYInput = document.createElement("input");
-  offsetYInput.type = "number";
-  offsetYInput.value = String(existing?.layer.offsetY ?? 0);
-  offsetYInput.style.width = "60px";
-  offsetRow.append(document.createTextNode("Offset X:"), offsetXInput, document.createTextNode("Offset Y:"), offsetYInput);
-  modal.body.appendChild(offsetRow);
 
   const frameRow = document.createElement("div");
   frameRow.className = "admin-form";
@@ -610,10 +602,6 @@ function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDe
     }
     const frameCount = Number(frameCountInput.value) || 0;
     const layer: SpriteLayer = { spriteKey };
-    const offsetX = Number(offsetXInput.value) || 0;
-    const offsetY = Number(offsetYInput.value) || 0;
-    if (offsetX) layer.offsetX = offsetX;
-    if (offsetY) layer.offsetY = offsetY;
     if (frameCount > 1) {
       layer.frameCount = frameCount;
       if (frameDurationInput.value) layer.frameDurationMs = Number(frameDurationInput.value);
@@ -641,11 +629,11 @@ async function renderSpriteOverlays(body: HTMLElement) {
 
   const table = document.createElement("table");
   table.className = "admin-table";
-  table.innerHTML = "<tr><th>Sprite key</th><th>Offset</th><th>Frames</th><th></th></tr>";
+  table.innerHTML = "<tr><th>Sprite key</th><th>Frames</th><th></th></tr>";
   for (const o of overlays) {
     const row = document.createElement("tr");
     const framesText = o.layer.frameCount && o.layer.frameCount > 1 ? `${o.layer.frameCount} @ ${o.layer.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS}ms` : "static";
-    row.innerHTML = `<td>${o.spriteKey}</td><td>${o.layer.offsetX ?? 0}, ${o.layer.offsetY ?? 0}</td><td>${framesText}</td>`;
+    row.innerHTML = `<td>${o.spriteKey}</td><td>${framesText}</td>`;
 
     const actionCell = document.createElement("td");
     const editBtn = document.createElement("button");
@@ -882,8 +870,30 @@ async function openObjectTypeEditModal(
   overlayHint.className = "admin-hint";
   overlayHint.textContent = "Managed on the Sprite Overlays tab — pick which one (if any) this type shows while in use.";
   overlayWrap.appendChild(overlayHint);
+
+  // Offset lives here, per-type, not on the Sprite Overlay entity itself —
+  // same reasoning below/above's own offsetX/offsetY already get: a
+  // shared, reusable overlay (e.g. "playPiano") can still need a different
+  // position on different object types that reuse it, exactly the way two
+  // differently-shaped objects already position their below/above layers
+  // independently even when they happen to share art.
+  const overlayOffsetRow = document.createElement("div");
+  overlayOffsetRow.className = "admin-form";
+  const overlayOffsetXInput = document.createElement("input");
+  overlayOffsetXInput.type = "number";
+  overlayOffsetXInput.value = String(draftType.overlayOffsetX ?? 0);
+  overlayOffsetXInput.style.width = "60px";
+  const overlayOffsetYInput = document.createElement("input");
+  overlayOffsetYInput.type = "number";
+  overlayOffsetYInput.value = String(draftType.overlayOffsetY ?? 0);
+  overlayOffsetYInput.style.width = "60px";
+  overlayOffsetRow.append(document.createTextNode("Offset X:"), overlayOffsetXInput, document.createTextNode("Offset Y:"), overlayOffsetYInput);
+  overlayWrap.appendChild(overlayOffsetRow);
+
   modal.body.appendChild(overlayWrap);
   overlaySelect.onchange = () => rebuildSprite();
+  overlayOffsetXInput.onchange = () => rebuildSprite();
+  overlayOffsetYInput.onchange = () => rebuildSprite();
   function getSelectedOverlay(): SpriteOverlayDef | undefined {
     return overlays.find((o) => String(o.id) === overlaySelect.value);
   }
@@ -1059,7 +1069,7 @@ async function openObjectTypeEditModal(
         } else {
           sprite.texture = baseTexture;
         }
-        sprite.position.set(overlayLayer.offsetX ?? 0, overlayLayer.offsetY ?? 0);
+        sprite.position.set(Number(overlayOffsetXInput.value) || 0, Number(overlayOffsetYInput.value) || 0);
         spriteLayer.addChild(sprite);
         overlaySprite = sprite;
       }
@@ -1113,8 +1123,10 @@ async function openObjectTypeEditModal(
       width: Number(widthInput.value),
       height: Number(heightInput.value),
       below: below ? [below] : undefined,
-      overlay: undefined, // derived/read-only, see ObjectTypeDef's own comment — overlayId below is what's actually persisted
+      overlay: undefined, // derived/read-only, see ObjectTypeDef's own comment — overlayId/overlayOffsetX/Y below are what's actually persisted
       overlayId: overlaySelect.value ? Number(overlaySelect.value) : null,
+      overlayOffsetX: Number(overlayOffsetXInput.value) || 0,
+      overlayOffsetY: Number(overlayOffsetYInput.value) || 0,
       above: above ? [above] : undefined,
       anchorX,
       anchorY,
