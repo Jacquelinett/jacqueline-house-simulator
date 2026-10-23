@@ -25,7 +25,7 @@
 import { Application, Assets, Container, Graphics, Sprite, Texture } from "pixi.js";
 import { buildModal } from "./ui/modal";
 import { assetUrl, buildFloorAndWalls, buildLayer, DEFAULT_OVERLAY_FRAME_DURATION_MS, preloadRoomAssets, sliceFrames } from "./scene/renderer";
-import { characterSpritePath } from "./scene/characterSprites";
+import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./scene/characterSprites";
 import { AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
 import {
@@ -529,12 +529,68 @@ async function renderActivities(body: HTMLElement) {
 
 // --- Sprite overlays ---
 
-/** Edits (or creates, when `id` is null) one named overlay — reuses buildLayerSection's spriteKeyFields editor verbatim (same texture/offset/spriteKey/frame fields an object type's overlay used to edit inline), just standalone with no live preview of its own; the Object Types tab's own preview shows whichever overlay a type picks. */
-function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDef | null, characterAssetPaths: string[], onSaved: () => void): void {
+/**
+ * Edits (or creates, when `id` is null) one named overlay — just spriteKey
+ * (required, doubles as this entity's display name everywhere) + offsetX/
+ * offsetY + optional frameCount/frameDurationMs. No texture field at all:
+ * a sprite-keyed overlay's art is always "<characterSpriteName>_<spriteKey>
+ * .png", falling back to the same convention for DEFAULT_SPRITE_CHARACTER
+ * (see characterSprites.ts) — there's nothing for the admin to pick from a
+ * list, just the key itself. No frameWidth/frameHeight either — a
+ * spritesheet's frames are always its own full height and equal-width
+ * slices of its own width, derived at load time from whichever texture
+ * actually resolves (renderer.ts's sliceFrames).
+ */
+function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDef | null, onSaved: () => void): void {
   const modal = buildModal(id ? `Edit Sprite Overlay: ${existing!.spriteKey}` : "Add Sprite Overlay", {});
 
-  const layerSection = buildLayerSection("Overlay", existing?.layer, characterAssetPaths, true, () => {});
-  modal.body.appendChild(layerSection.element);
+  const form = document.createElement("div");
+  form.className = "admin-form";
+  modal.body.appendChild(form);
+
+  const spriteKeyInput = document.createElement("input");
+  spriteKeyInput.placeholder = "e.g. playPiano";
+  spriteKeyInput.value = existing?.spriteKey ?? "";
+  form.append(document.createTextNode("Sprite key:"), spriteKeyInput);
+
+  const spriteHint = document.createElement("div");
+  spriteHint.className = "admin-hint";
+  spriteHint.textContent = `Resolves per-character to "<their sprite name>_<key>.png" under public/characters/ (see the Characters tab's own "Sprite name" field) — falls back to "${DEFAULT_SPRITE_CHARACTER}_<key>.png" when a character has no sprite name, or no matching file exists.`;
+  modal.body.appendChild(spriteHint);
+
+  const offsetRow = document.createElement("div");
+  offsetRow.className = "admin-form";
+  const offsetXInput = document.createElement("input");
+  offsetXInput.type = "number";
+  offsetXInput.value = String(existing?.layer.offsetX ?? 0);
+  offsetXInput.style.width = "60px";
+  const offsetYInput = document.createElement("input");
+  offsetYInput.type = "number";
+  offsetYInput.value = String(existing?.layer.offsetY ?? 0);
+  offsetYInput.style.width = "60px";
+  offsetRow.append(document.createTextNode("Offset X:"), offsetXInput, document.createTextNode("Offset Y:"), offsetYInput);
+  modal.body.appendChild(offsetRow);
+
+  const frameRow = document.createElement("div");
+  frameRow.className = "admin-form";
+  const frameCountInput = document.createElement("input");
+  frameCountInput.type = "number";
+  frameCountInput.placeholder = "1";
+  frameCountInput.value = existing?.layer.frameCount ? String(existing.layer.frameCount) : "";
+  frameCountInput.style.width = "50px";
+  const frameDurationInput = document.createElement("input");
+  frameDurationInput.type = "number";
+  frameDurationInput.placeholder = "150";
+  frameDurationInput.value = existing?.layer.frameDurationMs ? String(existing.layer.frameDurationMs) : "";
+  frameDurationInput.style.width = "60px";
+  frameRow.append(document.createTextNode("Frame count:"), frameCountInput, document.createTextNode("ms/frame:"), frameDurationInput);
+  modal.body.appendChild(frameRow);
+
+  const frameHint = document.createElement("div");
+  frameHint.className = "admin-hint";
+  frameHint.textContent =
+    "Only needed for animation: a frame count above 1 means the resolved art is a spritesheet, sliced into that many equal-width frames (each the sheet's own full height) left to right. Leave blank (or 1) for a plain static image.";
+  modal.body.appendChild(frameHint);
 
   const footer = document.createElement("div");
   footer.className = "admin-form";
@@ -547,10 +603,20 @@ function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDe
   modal.body.appendChild(footer);
 
   saveBtn.onclick = async () => {
-    const layer = layerSection.getLayer();
-    if (!layer?.spriteKey?.trim()) {
+    const spriteKey = spriteKeyInput.value.trim();
+    if (!spriteKey) {
       showError(new Error("Sprite key is required"));
       return;
+    }
+    const frameCount = Number(frameCountInput.value) || 0;
+    const layer: SpriteLayer = { spriteKey };
+    const offsetX = Number(offsetXInput.value) || 0;
+    const offsetY = Number(offsetYInput.value) || 0;
+    if (offsetX) layer.offsetX = offsetX;
+    if (offsetY) layer.offsetY = offsetY;
+    if (frameCount > 1) {
+      layer.frameCount = frameCount;
+      if (frameDurationInput.value) layer.frameDurationMs = Number(frameDurationInput.value);
     }
     try {
       if (id) {
@@ -571,23 +637,20 @@ function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDe
 
 async function renderSpriteOverlays(body: HTMLElement) {
   body.textContent = "";
-  const [overlays, characterAssetPaths] = await Promise.all([
-    adminFetch<SpriteOverlayDef[]>("/api/admin/sprite-overlays"),
-    adminFetch<string[]>("/api/admin/character-assets"),
-  ]);
+  const overlays = await adminFetch<SpriteOverlayDef[]>("/api/admin/sprite-overlays");
 
   const table = document.createElement("table");
   table.className = "admin-table";
-  table.innerHTML = "<tr><th>Sprite key</th><th>Texture</th><th>Frames</th><th></th></tr>";
+  table.innerHTML = "<tr><th>Sprite key</th><th>Offset</th><th>Frames</th><th></th></tr>";
   for (const o of overlays) {
     const row = document.createElement("tr");
     const framesText = o.layer.frameCount && o.layer.frameCount > 1 ? `${o.layer.frameCount} @ ${o.layer.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS}ms` : "static";
-    row.innerHTML = `<td>${o.spriteKey}</td><td>${o.layer.texture ? o.layer.texture.replace(/^\/characters\//, "") : "(none)"}</td><td>${framesText}</td>`;
+    row.innerHTML = `<td>${o.spriteKey}</td><td>${o.layer.offsetX ?? 0}, ${o.layer.offsetY ?? 0}</td><td>${framesText}</td>`;
 
     const actionCell = document.createElement("td");
     const editBtn = document.createElement("button");
     editBtn.textContent = "Edit";
-    editBtn.onclick = () => openSpriteOverlayEditModal(o.id, o, characterAssetPaths, () => renderSpriteOverlays(body));
+    editBtn.onclick = () => openSpriteOverlayEditModal(o.id, o, () => renderSpriteOverlays(body));
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {
@@ -608,7 +671,7 @@ async function renderSpriteOverlays(body: HTMLElement) {
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.textContent = "Add Sprite Overlay";
-  addBtn.onclick = () => openSpriteOverlayEditModal(null, null, characterAssetPaths, () => renderSpriteOverlays(body));
+  addBtn.onclick = () => openSpriteOverlayEditModal(null, null, () => renderSpriteOverlays(body));
   body.appendChild(addBtn);
 }
 
@@ -645,21 +708,15 @@ async function ensureTextureLoaded(path: string | undefined): Promise<void> {
 }
 
 /**
- * One below/overlay/above layer's editor — texture-or-color-or-none, plus
- * offsetX/offsetY, and (overlay only, via `spriteKeyFields`) a spriteKey
- * and optional frame-animation fields. Below/above pick their texture
- * from `assetPaths` (public/objects/ via /api/admin/object-assets);
- * overlay's own call site passes the character-art list instead
- * (public/characters/ via /api/admin/character-assets) — that's the
- * shared-default FALLBACK texture a spriteKey falls back to, not a
- * specific character's own art, which is never picked from a list here,
- * only named via the spriteKey convention (see characterSprites.ts).
+ * One below/above layer's editor — texture-or-color-or-none, plus
+ * offsetX/offsetY. Overlay is no longer edited here at all — it's a
+ * reference to a named Sprite Overlays-tab entity (see
+ * openSpriteOverlayEditModal), picked by spriteKey, not an inline layer.
  */
 function buildLayerSection(
   title: string,
   initial: SpriteLayer | undefined,
   assetPaths: string[],
-  spriteKeyFields: boolean,
   onChange: () => void,
 ): { element: HTMLElement; getLayer(): SpriteLayer | undefined } {
   const section = document.createElement("div");
@@ -705,67 +762,6 @@ function buildLayerSection(
   offsetYInput.style.width = "60px";
   form.append(document.createTextNode("Offset X:"), offsetXInput, document.createTextNode("Offset Y:"), offsetYInput);
 
-  let spriteKeyInput: HTMLInputElement | null = null;
-  let frameWidthInput: HTMLInputElement | null = null;
-  let frameHeightInput: HTMLInputElement | null = null;
-  let frameCountInput: HTMLInputElement | null = null;
-  let frameDurationInput: HTMLInputElement | null = null;
-  if (spriteKeyFields) {
-    const spriteRow = document.createElement("div");
-    spriteRow.className = "admin-form";
-    spriteKeyInput = document.createElement("input");
-    spriteKeyInput.placeholder = "e.g. playPiano";
-    spriteKeyInput.value = initial?.spriteKey ?? "";
-    spriteRow.append(document.createTextNode("Sprite key:"), spriteKeyInput);
-    section.appendChild(spriteRow);
-
-    const spriteHint = document.createElement("div");
-    spriteHint.className = "admin-hint";
-    spriteHint.textContent =
-      'Resolves per-character to "<their sprite name>_<key>.png" under public/characters/ (see the Characters tab\'s own "Sprite name" field) — falls back to the texture above when a character has no sprite name, or no matching file exists. Leave blank to always use the texture above.';
-    section.appendChild(spriteHint);
-
-    const frameRow = document.createElement("div");
-    frameRow.className = "admin-form";
-    frameWidthInput = document.createElement("input");
-    frameWidthInput.type = "number";
-    frameWidthInput.placeholder = "px";
-    frameWidthInput.value = initial?.frameWidth ? String(initial.frameWidth) : "";
-    frameWidthInput.style.width = "60px";
-    frameHeightInput = document.createElement("input");
-    frameHeightInput.type = "number";
-    frameHeightInput.placeholder = "px";
-    frameHeightInput.value = initial?.frameHeight ? String(initial.frameHeight) : "";
-    frameHeightInput.style.width = "60px";
-    frameCountInput = document.createElement("input");
-    frameCountInput.type = "number";
-    frameCountInput.placeholder = "1";
-    frameCountInput.value = initial?.frameCount ? String(initial.frameCount) : "";
-    frameCountInput.style.width = "50px";
-    frameDurationInput = document.createElement("input");
-    frameDurationInput.type = "number";
-    frameDurationInput.placeholder = "150";
-    frameDurationInput.value = initial?.frameDurationMs ? String(initial.frameDurationMs) : "";
-    frameDurationInput.style.width = "60px";
-    frameRow.append(
-      document.createTextNode("Frame W:"),
-      frameWidthInput,
-      document.createTextNode("Frame H:"),
-      frameHeightInput,
-      document.createTextNode("Frame count:"),
-      frameCountInput,
-      document.createTextNode("ms/frame:"),
-      frameDurationInput,
-    );
-    section.appendChild(frameRow);
-
-    const frameHint = document.createElement("div");
-    frameHint.className = "admin-hint";
-    frameHint.textContent =
-      "Only needed for animation: a frame count above 1 means the texture above is a spritesheet, sliced into that many equal-width frames left to right. Leave frame count blank (or 1) for a plain static image.";
-    section.appendChild(frameHint);
-  }
-
   textureSelect.onchange = async () => {
     colorInput.style.display = textureSelect.value === "__color__" ? "" : "none";
     if (textureSelect.value !== "__none__" && textureSelect.value !== "__color__") await ensureTextureLoaded(textureSelect.value);
@@ -774,11 +770,6 @@ function buildLayerSection(
   colorInput.oninput = onChange;
   offsetXInput.onchange = onChange;
   offsetYInput.onchange = onChange;
-  spriteKeyInput?.addEventListener("change", onChange);
-  frameWidthInput?.addEventListener("change", onChange);
-  frameHeightInput?.addEventListener("change", onChange);
-  frameCountInput?.addEventListener("change", onChange);
-  frameDurationInput?.addEventListener("change", onChange);
 
   function getLayer(): SpriteLayer | undefined {
     if (textureSelect.value === "__none__") return undefined;
@@ -787,14 +778,6 @@ function buildLayerSection(
     const offsetY = Number(offsetYInput.value) || 0;
     if (offsetX) layer.offsetX = offsetX;
     if (offsetY) layer.offsetY = offsetY;
-    if (spriteKeyInput?.value.trim()) layer.spriteKey = spriteKeyInput.value.trim();
-    const frameCount = frameCountInput ? Number(frameCountInput.value) || 0 : 0;
-    if (frameCount > 1) {
-      layer.frameCount = frameCount;
-      if (frameWidthInput?.value) layer.frameWidth = Number(frameWidthInput.value);
-      if (frameHeightInput?.value) layer.frameHeight = Number(frameHeightInput.value);
-      if (frameDurationInput?.value) layer.frameDurationMs = Number(frameDurationInput.value);
-    }
     return layer;
   }
 
@@ -872,7 +855,7 @@ async function openObjectTypeEditModal(
   // (see rooms.ts's ObjectTypeDef.overlayId) — a plain dropdown showing
   // each one's spriteKey, not the raw id, per CLAUDE.md's "never show a
   // raw id to the admin" convention.
-  const belowSection = buildLayerSection("Below (base sprite)", draftType.below?.[0], assetPaths, false, () => rebuildSprite());
+  const belowSection = buildLayerSection("Below (base sprite)", draftType.below?.[0], assetPaths, () => rebuildSprite());
   modal.body.appendChild(belowSection.element);
 
   const overlayWrap = document.createElement("div");
@@ -905,7 +888,7 @@ async function openObjectTypeEditModal(
     return overlays.find((o) => String(o.id) === overlaySelect.value);
   }
 
-  const aboveSection = buildLayerSection("Above (rendered on top)", draftType.above?.[0], assetPaths, false, () => rebuildSprite());
+  const aboveSection = buildLayerSection("Above (rendered on top)", draftType.above?.[0], assetPaths, () => rebuildSprite());
   modal.body.appendChild(aboveSection.element);
 
   const anchorHint = document.createElement("div");
@@ -992,28 +975,23 @@ async function openObjectTypeEditModal(
     .fill({ color: 0xff3366 });
   stage.addChild(crosshair);
 
-  // Simulates the overlay layer too, defaulting to Jacqueline's own art
-  // (the obvious default character for anyone previewing this) — the
-  // actual game decides this per-attribution at runtime, but there's no
-  // "who's doing this" to attribute in a static authoring preview, so a
-  // fixed stand-in is the only thing that makes sense here.
-  const PREVIEW_CHARACTER_SPRITE_NAME = "jacqueline";
+  // Simulates the overlay layer too, defaulting to DEFAULT_SPRITE_CHARACTER
+  // ("jacqueline") — the actual game decides this per-attribution at
+  // runtime, but there's no "who's doing this" to attribute in a static
+  // authoring preview, so the same universal fallback character the real
+  // renderer uses is the only stand-in that makes sense here too.
   let overlaySprite: Sprite | null = null;
   let overlayFrames: Texture[] | null = null;
   let overlayFrameIndex = 0;
   let overlayFrameElapsedMs = 0;
 
-  /** Same fallback contract as resolveOverlayTexture in renderer.ts (spriteKey -> "<name>_<key>.png", falling back to the layer's own texture) — checked against the already-fetched characterAssetPaths list instead of attempting-and-catching a 404, since the admin tool has that directory listing up front. */
+  /** Same contract as resolveOverlayTexture in renderer.ts (spriteKey -> "<name>_<key>.png") — checked against the already-fetched characterAssetPaths list instead of attempting-and-catching a 404, since the admin tool has that directory listing up front. No texture field to fall back to anymore — if DEFAULT_SPRITE_CHARACTER has no file for this key either, the preview just shows nothing, same as the real renderer would. */
   async function resolveOverlayPreviewTexture(layer: SpriteLayer): Promise<string | undefined> {
-    if (layer.spriteKey) {
-      const candidate = characterSpritePath(PREVIEW_CHARACTER_SPRITE_NAME, layer.spriteKey);
-      if (characterAssetPaths.includes(candidate)) {
-        await ensureTextureLoaded(candidate);
-        return candidate;
-      }
-    }
-    if (layer.texture) await ensureTextureLoaded(layer.texture);
-    return layer.texture;
+    if (!layer.spriteKey) return undefined;
+    const candidate = characterSpritePath(DEFAULT_SPRITE_CHARACTER, layer.spriteKey);
+    if (!characterAssetPaths.includes(candidate)) return undefined;
+    await ensureTextureLoaded(candidate);
+    return candidate;
   }
 
   // Ticker-driven, same as renderer.ts's own tick() — Pixi's Application
@@ -1073,8 +1051,8 @@ async function openObjectTypeEditModal(
       if (texturePath) {
         const baseTexture = Assets.get<Texture>(assetUrl(texturePath));
         const sprite = new Sprite();
-        if (overlayLayer.frameCount && overlayLayer.frameCount > 1 && overlayLayer.frameWidth && overlayLayer.frameHeight) {
-          overlayFrames = sliceFrames(baseTexture, overlayLayer.frameWidth, overlayLayer.frameHeight, overlayLayer.frameCount);
+        if (overlayLayer.frameCount && overlayLayer.frameCount > 1) {
+          overlayFrames = sliceFrames(baseTexture, overlayLayer.frameCount);
           overlayFrameIndex = 0;
           overlayFrameElapsedMs = 0;
           sprite.texture = overlayFrames[0];

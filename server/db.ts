@@ -350,8 +350,8 @@ function migrateOverlayJsonToSpriteOverlays(): void {
   }[];
 
   const insert = db.prepare(`
-    INSERT INTO sprite_overlays (sprite_key, texture, offset_x, offset_y, frame_width, frame_height, frame_count, frame_duration_ms)
-    VALUES (@spriteKey, @texture, @offsetX, @offsetY, @frameWidth, @frameHeight, @frameCount, @frameDurationMs)
+    INSERT INTO sprite_overlays (sprite_key, offset_x, offset_y, frame_count, frame_duration_ms)
+    VALUES (@spriteKey, @offsetX, @offsetY, @frameCount, @frameDurationMs)
   `);
   const setOverlayId = db.prepare("UPDATE object_types SET overlay_id = ? WHERE id = ?");
 
@@ -375,11 +375,8 @@ function migrateOverlayJsonToSpriteOverlays(): void {
     const spriteKey = layer.spriteKey?.trim() || `type${row.id}`;
     const { lastInsertRowid } = insert.run({
       spriteKey,
-      texture: layer.texture ?? null,
       offsetX: layer.offsetX ?? null,
       offsetY: layer.offsetY ?? null,
-      frameWidth: layer.frameWidth ?? null,
-      frameHeight: layer.frameHeight ?? null,
       frameCount: layer.frameCount ?? null,
       frameDurationMs: layer.frameDurationMs ?? null,
     });
@@ -493,19 +490,24 @@ export function migrate(): void {
       color INTEGER NOT NULL
     );
 
-    -- One row per named overlay (spriteKey + shared-default texture +
-    -- optional frame-animation fields) — object_types.overlay_id
-    -- references this by id, so multiple types can share one overlay
-    -- definition instead of each embedding an identical inline blob (see
-    -- server/spriteOverlays.ts, admin-main.ts's Sprite Overlays tab).
+    -- One row per named overlay (spriteKey + offset + optional frame-
+    -- animation fields) — object_types.overlay_id references this by id,
+    -- so multiple types can share one overlay definition instead of each
+    -- embedding an identical inline blob (see server/spriteOverlays.ts,
+    -- admin-main.ts's Sprite Overlays tab). No texture column — a sprite-
+    -- keyed overlay's art is always "<characterSpriteName>_<spriteKey>.png",
+    -- falling back to the same convention for DEFAULT_SPRITE_CHARACTER
+    -- ("jacqueline") rather than a separately-authored fallback file (see
+    -- characterSprites.ts). No frame_width/frame_height either — a
+    -- spritesheet's frames are always its own full height and equal-width
+    -- slices of its own width, derived at load time from the resolved
+    -- texture's natural size (renderer.ts's sliceFrames) rather than typed
+    -- in separately.
     CREATE TABLE IF NOT EXISTS sprite_overlays (
       id INTEGER PRIMARY KEY,
       sprite_key TEXT NOT NULL UNIQUE,
-      texture TEXT,
       offset_x REAL,
       offset_y REAL,
-      frame_width INTEGER,
-      frame_height INTEGER,
       frame_count INTEGER,
       frame_duration_ms INTEGER
     );
@@ -628,7 +630,23 @@ export function migrate(): void {
   // here. No code reads these anymore and the one-time migration that
   // ever needed them has already run against every room that had real
   // data in them, so they're dropped outright rather than left inert.
-  for (const stmt of ["ALTER TABLE rooms DROP COLUMN connected_to_room_id", "ALTER TABLE rooms DROP COLUMN connected_to_direction", "ALTER TABLE rooms DROP COLUMN connected_to_gap_tiles"]) {
+  // sprite_overlays.texture/frame_width/frame_height — retired the same
+  // day they were introduced, once it turned out a sprite-keyed overlay's
+  // texture is always derivable ("<characterSpriteName>_<spriteKey>.png",
+  // falling back to DEFAULT_SPRITE_CHARACTER's own file) and a
+  // spritesheet's frame dimensions are always derivable from its own
+  // natural size / frameCount — nothing left that ever needs these typed
+  // in. migrateOverlayJsonToSpriteOverlays() above never writes them
+  // either, so this is just cleanup for an install that ran this app in
+  // the brief window those columns existed.
+  for (const stmt of [
+    "ALTER TABLE rooms DROP COLUMN connected_to_room_id",
+    "ALTER TABLE rooms DROP COLUMN connected_to_direction",
+    "ALTER TABLE rooms DROP COLUMN connected_to_gap_tiles",
+    "ALTER TABLE sprite_overlays DROP COLUMN texture",
+    "ALTER TABLE sprite_overlays DROP COLUMN frame_width",
+    "ALTER TABLE sprite_overlays DROP COLUMN frame_height",
+  ]) {
     try {
       db.exec(stmt);
     } catch {

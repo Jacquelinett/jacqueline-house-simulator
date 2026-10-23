@@ -8,7 +8,11 @@ import { SpriteLayer } from "../src/scene/rooms";
  * table (server/db.ts's migrateOverlayJsonToSpriteOverlays) so distinct
  * object types can reference the same overlay by id instead of each
  * duplicating an identical blob, and the admin tool can show/pick one by
- * its spriteKey rather than editing raw layer JSON per type.
+ * its spriteKey rather than editing raw layer JSON per type. No texture
+ * column — a sprite-keyed overlay's art is always resolved from spriteKey
+ * alone at render time (src/scene/characterSprites.ts); no frame_width/
+ * frame_height either — derived from the resolved texture's own natural
+ * size (src/scene/renderer.ts's sliceFrames) rather than authored.
  */
 export interface SpriteOverlayDef {
   id: number;
@@ -19,11 +23,8 @@ export interface SpriteOverlayDef {
 interface OverlayRow {
   id: number;
   sprite_key: string;
-  texture: string | null;
   offset_x: number | null;
   offset_y: number | null;
-  frame_width: number | null;
-  frame_height: number | null;
   frame_count: number | null;
   frame_duration_ms: number | null;
 }
@@ -33,12 +34,9 @@ function rowToOverlay(row: OverlayRow): SpriteOverlayDef {
     id: row.id,
     spriteKey: row.sprite_key,
     layer: {
-      texture: row.texture ?? undefined,
       offsetX: row.offset_x ?? undefined,
       offsetY: row.offset_y ?? undefined,
       spriteKey: row.sprite_key,
-      frameWidth: row.frame_width ?? undefined,
-      frameHeight: row.frame_height ?? undefined,
       frameCount: row.frame_count ?? undefined,
       frameDurationMs: row.frame_duration_ms ?? undefined,
     },
@@ -50,22 +48,19 @@ export function getSpriteOverlays(): SpriteOverlayDef[] {
   return rows.map(rowToOverlay);
 }
 
-/** `layer.spriteKey` is the required identifying field — the rest (texture/offset/frame fields) are all optional, same shape the admin tool's buildLayerSection already produces. */
+/** `layer.spriteKey` is the required identifying field — offset/frame fields are all optional, same shape the admin tool's sprite-overlay editor already produces. */
 export function createSpriteOverlay(layer: SpriteLayer): number {
   const spriteKey = layer.spriteKey?.trim();
   if (!spriteKey) throw new Error("spriteKey is required");
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO sprite_overlays (sprite_key, texture, offset_x, offset_y, frame_width, frame_height, frame_count, frame_duration_ms)
-       VALUES (@spriteKey, @texture, @offsetX, @offsetY, @frameWidth, @frameHeight, @frameCount, @frameDurationMs)`,
+      `INSERT INTO sprite_overlays (sprite_key, offset_x, offset_y, frame_count, frame_duration_ms)
+       VALUES (@spriteKey, @offsetX, @offsetY, @frameCount, @frameDurationMs)`,
     )
     .run({
       spriteKey,
-      texture: layer.texture ?? null,
       offsetX: layer.offsetX ?? null,
       offsetY: layer.offsetY ?? null,
-      frameWidth: layer.frameWidth ?? null,
-      frameHeight: layer.frameHeight ?? null,
       frameCount: layer.frameCount ?? null,
       frameDurationMs: layer.frameDurationMs ?? null,
     });
@@ -76,17 +71,14 @@ export function updateSpriteOverlay(id: number, layer: SpriteLayer): void {
   const spriteKey = layer.spriteKey?.trim();
   if (!spriteKey) throw new Error("spriteKey is required");
   db.prepare(
-    `UPDATE sprite_overlays SET sprite_key = @spriteKey, texture = @texture, offset_x = @offsetX, offset_y = @offsetY,
-     frame_width = @frameWidth, frame_height = @frameHeight, frame_count = @frameCount, frame_duration_ms = @frameDurationMs
+    `UPDATE sprite_overlays SET sprite_key = @spriteKey, offset_x = @offsetX, offset_y = @offsetY,
+     frame_count = @frameCount, frame_duration_ms = @frameDurationMs
      WHERE id = @id`,
   ).run({
     id,
     spriteKey,
-    texture: layer.texture ?? null,
     offsetX: layer.offsetX ?? null,
     offsetY: layer.offsetY ?? null,
-    frameWidth: layer.frameWidth ?? null,
-    frameHeight: layer.frameHeight ?? null,
     frameCount: layer.frameCount ?? null,
     frameDurationMs: layer.frameDurationMs ?? null,
   });

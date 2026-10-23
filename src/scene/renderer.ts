@@ -1,7 +1,7 @@
 import { AlphaFilter, Application, Assets, Container, Graphics, Rectangle, Sprite, Text, Texture } from "pixi.js";
 import { gridToScreen, rooms as roomDefs, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
 import { findActivityById } from "./activities";
-import { characterSpritePath } from "./characterSprites";
+import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./characterSprites";
 import { TileOverride, TileRect } from "./tileset";
 
 const DIM_ALPHA = 0.15;
@@ -51,8 +51,10 @@ interface ActiveOverlay {
   nameTagText: string | null;
 }
 
-/** Slices one spritesheet texture into `frameCount` equal-width frames laid out left-to-right starting at (0,0) — same sub-rect-of-one-sheet technique tileset.ts's floor/wall variants use, just a uniform grid instead of hand-placed rects (animation frames are naturally uniform-sized, unlike tileset corners/edges). Exported for the admin tool's object-type preview, which reuses this exact slicing to simulate overlay animation. */
-export function sliceFrames(base: Texture, frameWidth: number, frameHeight: number, frameCount: number): Texture[] {
+/** Slices one spritesheet texture into `frameCount` equal-width frames laid out left-to-right starting at (0,0) — same sub-rect-of-one-sheet technique tileset.ts's floor/wall variants use, just a uniform grid instead of hand-placed rects (animation frames are naturally uniform-sized, unlike tileset corners/edges). Frame width/height are derived from the sheet's own natural size (width / frameCount, full height) rather than authored — a spritesheet's frames are always its own height, and equal-width slices of its own width. Exported for the admin tool's object-type preview, which reuses this exact slicing to simulate overlay animation. */
+export function sliceFrames(base: Texture, frameCount: number): Texture[] {
+  const frameWidth = base.width / frameCount;
+  const frameHeight = base.height;
   const frames: Texture[] = [];
   for (let i = 0; i < frameCount; i++) {
     frames.push(new Texture({ source: base.source, frame: new Rectangle(i * frameWidth, 0, frameWidth, frameHeight) }));
@@ -324,10 +326,12 @@ export class SceneRenderer {
     }
 
     for (const layer of obj.overlay ?? []) {
-      // No texture arg -> Pixi's own blank/empty texture — stays that way
-      // (and invisible, see below) if this layer has no `texture` fallback
-      // at all and no per-character art has resolved yet (the "else
-      // nothing" tier of the sprite-key fallback, applied per-layer).
+      // No texture loaded yet -> Pixi's own blank/empty texture, stays
+      // invisible (see below) until the first updateActiveOverlays call
+      // resolves someone's attribution — there's no synchronous "shared
+      // default" to apply eagerly anymore, since every overlay texture
+      // (including the DEFAULT_SPRITE_CHARACTER fallback) is resolved the
+      // same per-character way (resolveOverlayTexture).
       const overlay = new Sprite();
       overlay.position.set(layer.offsetX ?? 0, layer.offsetY ?? 0);
       overlay.visible = false;
@@ -351,13 +355,6 @@ export class SceneRenderer {
         nameTag,
         nameTagText: null,
       };
-      // The shared-default texture (if any) is already preloaded — see
-      // preloadRoomAssets — and needs no per-character resolution, so it's
-      // applied synchronously here rather than waiting for the first
-      // updateActiveOverlays call. A sprite-keyed layer's own per-character
-      // art is resolved lazily instead (resolveOverlayTexture, called from
-      // updateActiveOverlays) once we actually know who's attributed to it.
-      if (layer.texture) this.applyOverlayTexture(activeOverlay, Assets.get<Texture>(assetUrl(layer.texture)));
       this.activeOverlays.push(activeOverlay);
     }
 
@@ -448,8 +445,8 @@ export class SceneRenderer {
   /** Builds (and, if frameCount > 1, slices into animation frames) whichever texture an overlay should show right now — shared by the synchronous shared-default path at build time and the lazy per-character path below. */
   private applyOverlayTexture(overlay: ActiveOverlay, baseTexture: Texture) {
     const { layer } = overlay;
-    if (layer.frameCount && layer.frameCount > 1 && layer.frameWidth && layer.frameHeight) {
-      overlay.frames = sliceFrames(baseTexture, layer.frameWidth, layer.frameHeight, layer.frameCount);
+    if (layer.frameCount && layer.frameCount > 1) {
+      overlay.frames = sliceFrames(baseTexture, layer.frameCount);
       overlay.frameIndex = 0;
       overlay.frameElapsedMs = 0;
       overlay.sprite.texture = overlay.frames[0];
@@ -460,21 +457,34 @@ export class SceneRenderer {
   }
 
   /**
-   * Lazily resolves a sprite-keyed overlay's per-character texture —
-   * never blocks the (synchronous) render, just kicks off an Assets.load
-   * the first time a given character+key combo is needed and swaps the
-   * texture in once it resolves. A 404 (no art for this character+key
-   * yet) is expected, not an error: `attemptedPaths` remembers it so the
-   * same missing file isn't re-requested on every subsequent status
-   * update, and the overlay just keeps showing whatever it already had
-   * (the shared default from build time, or a previously-resolved
-   * character's art) — see characterSprites.ts's own comment on this
-   * fallback contract.
+   * Lazily resolves a sprite-keyed overlay's texture — tries the
+   * attributed character's own file first, falling back to
+   * DEFAULT_SPRITE_CHARACTER's file for the same key when that character
+   * has no spriteName, or no matching file exists for them specifically
+   * (see characterSprites.ts's own comment on this fallback contract).
+   * Never blocks the (synchronous) render — kicks off an Assets.load the
+   * first time a given path is needed and swaps the texture in once it
+   * resolves.
    */
   private resolveOverlayTexture(overlay: ActiveOverlay, characterSpriteName: string | null) {
     const { layer } = overlay;
-    if (!layer.spriteKey || !characterSpriteName) return;
-    const path = characterSpritePath(characterSpriteName, layer.spriteKey);
+    if (!layer.spriteKey) return;
+    const primaryName = characterSpriteName ?? DEFAULT_SPRITE_CHARACTER;
+    const fallbackName = primaryName === DEFAULT_SPRITE_CHARACTER ? null : DEFAULT_SPRITE_CHARACTER;
+    this.tryResolveOverlayPath(overlay, characterSpritePath(primaryName, layer.spriteKey), fallbackName);
+  }
+
+  /**
+   * Tries one path; on a 404 (or an already-known 404 from earlier this
+   * session) falls through to `fallbackCharacterName`'s own file for the
+   * same spriteKey, if given. `resolveOverlayTexture` only ever passes
+   * DEFAULT_SPRITE_CHARACTER as the fallback, so this is at most one hop
+   * deep, never a longer chain. A final 404 (fallback also missing, or no
+   * fallback given) is expected, not an error — the overlay just keeps
+   * showing whatever it already had, or stays blank if nothing's resolved
+   * yet.
+   */
+  private tryResolveOverlayPath(overlay: ActiveOverlay, path: string, fallbackCharacterName: string | null) {
     if (overlay.resolvedPath === path) return; // already showing this
     const url = assetUrl(path);
     if (Assets.cache.has(url)) {
@@ -482,7 +492,13 @@ export class SceneRenderer {
       this.applyOverlayTexture(overlay, Assets.get<Texture>(url));
       return;
     }
-    if (overlay.attemptedPaths.has(path)) return; // already tried + failed this session
+    const fallThrough = () => {
+      if (fallbackCharacterName) this.tryResolveOverlayPath(overlay, characterSpritePath(fallbackCharacterName, overlay.layer.spriteKey!), null);
+    };
+    if (overlay.attemptedPaths.has(path)) {
+      fallThrough(); // already tried + failed this session
+      return;
+    }
     overlay.attemptedPaths.add(path);
     Assets.load<Texture>(url)
       .then((texture) => {
@@ -491,9 +507,7 @@ export class SceneRenderer {
         this.applyOverlayTexture(overlay, texture);
         this.app.render(); // force an immediate repaint rather than waiting for the next ticker frame
       })
-      .catch(() => {
-        // no art for this character+key yet — stays on whatever it already had, see this method's own comment
-      });
+      .catch(fallThrough);
   }
 
   /**

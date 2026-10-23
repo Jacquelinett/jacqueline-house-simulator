@@ -12,6 +12,10 @@ import { ACTIVITIES, findActivityById } from "./activities";
 import { Floor, STATIC_FLOORS } from "./floors";
 
 export interface SpriteLayer {
+  // Below/above only in practice now — overlay resolves its texture
+  // purely from spriteKey below, never this field (see that field's own
+  // comment for why a separately-authored fallback texture is no longer
+  // needed at all).
   texture?: string; // path to art asset; omitted -> rendered as a placeholder color box
   color?: number; // placeholder fill used when texture is omitted
   offsetX?: number;
@@ -19,19 +23,21 @@ export interface SpriteLayer {
   // Overlay-only in practice (see ObjectTypeDef.overlay) — when set, this
   // layer's actual texture is resolved per-character at render time
   // (src/scene/characterSprites.ts: "<spriteName>_<spriteKey>.png"),
-  // falling back to `texture` above (the shared default) when the
-  // attributed character has no spriteName set, or no matching file
-  // exists. `texture` is still required alongside spriteKey precisely to
-  // provide that fallback — spriteKey only ever narrows which texture
-  // gets tried first, never replaces having a default.
+  // falling back to the SAME convention applied to DEFAULT_SPRITE_CHARACTER
+  // ("jacqueline") when the attributed character has no spriteName set, or
+  // no matching file exists for them specifically. That default
+  // character's own file doubles as the universal "shared default" art, so
+  // there's no separate admin-authored fallback texture to maintain.
   spriteKey?: string;
-  // frameCount > 1 means the resolved texture (per-character or
-  // fallback) is a single spritesheet image, sliced into this many
-  // equal-width frames laid out left-to-right starting at (0,0) and
-  // animated by swapping frames every frameDurationMs (default ~150ms).
-  // Omitted/1 is today's plain static image, unchanged.
-  frameWidth?: number;
-  frameHeight?: number;
+  // frameCount > 1 means the resolved texture is a single spritesheet
+  // image, sliced into this many EQUAL-WIDTH frames laid out left-to-right
+  // starting at (0,0) and animated by swapping frames every
+  // frameDurationMs (default ~150ms). Frame width/height are derived at
+  // load time (texture's own natural width / frameCount, and its full
+  // natural height) rather than authored — a spritesheet's frames are
+  // always the sheet's own height, and equal-width slices of its own
+  // width, so there's nothing for an admin to get wrong by typing them in
+  // separately. Omitted/1 is a plain static image, unchanged.
   frameCount?: number;
   frameDurationMs?: number;
 }
@@ -155,7 +161,7 @@ const STATIC_OBJECT_TYPES = {
     height: 64,
     below: [{ texture: "/objects/piano_base.png" }],
     above: [{ texture: "/objects/piano_top.png" }],
-    overlay: [{ texture: "/characters/playing_piano.png", offsetX: 32, offsetY: 0, spriteKey: "playPiano" }],
+    overlay: [{ offsetX: 32, offsetY: 0, spriteKey: "playPiano" }],
   },
   workLaptop: {
     id: 2,

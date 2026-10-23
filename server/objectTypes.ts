@@ -13,11 +13,8 @@ interface TypeRow {
   anchor_y: number | null;
   overlay_id: number | null;
   overlay_sprite_key: string | null;
-  overlay_texture: string | null;
   overlay_offset_x: number | null;
   overlay_offset_y: number | null;
-  overlay_frame_width: number | null;
-  overlay_frame_height: number | null;
   overlay_frame_count: number | null;
   overlay_frame_duration_ms: number | null;
 }
@@ -29,9 +26,8 @@ interface TypeRow {
 const SELECT_TYPES_SQL = `
   SELECT ot.id, ot.name, ot.below_json, ot.above_json, ot.width, ot.height, ot.anchor_x, ot.anchor_y,
          ot.overlay_id,
-         so.sprite_key AS overlay_sprite_key, so.texture AS overlay_texture,
+         so.sprite_key AS overlay_sprite_key,
          so.offset_x AS overlay_offset_x, so.offset_y AS overlay_offset_y,
-         so.frame_width AS overlay_frame_width, so.frame_height AS overlay_frame_height,
          so.frame_count AS overlay_frame_count, so.frame_duration_ms AS overlay_frame_duration_ms
   FROM object_types ot
   LEFT JOIN sprite_overlays so ON so.id = ot.overlay_id
@@ -40,12 +36,9 @@ const SELECT_TYPES_SQL = `
 function rowToType(row: TypeRow): ObjectTypeDef {
   const overlay: SpriteLayer | undefined = row.overlay_id
     ? {
-        texture: row.overlay_texture ?? undefined,
         offsetX: row.overlay_offset_x ?? undefined,
         offsetY: row.overlay_offset_y ?? undefined,
         spriteKey: row.overlay_sprite_key ?? undefined,
-        frameWidth: row.overlay_frame_width ?? undefined,
-        frameHeight: row.overlay_frame_height ?? undefined,
         frameCount: row.overlay_frame_count ?? undefined,
         frameDurationMs: row.overlay_frame_duration_ms ?? undefined,
       }
