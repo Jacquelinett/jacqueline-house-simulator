@@ -784,6 +784,12 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
     rows: 10,
     floor: floor1,
     wall: wall1,
+    // One of the few rooms default-visible on a fresh install — set here
+    // directly rather than via a separate server-side backfill, since this
+    // room always exists from the initial seed (unlike e.g. Gym, which only
+    // exists at all because it was hand-added through the admin tool on the
+    // live install — nothing to default there until an admin adds it).
+    visible: true,
     // Doorway toward the DDR Room: it connects along this room's u=0 (left)
     // wall, so that's the one that needs the gap — DDR's own facing edge
     // (its u=cols corner) has no wall by default already. Adjust v / widen
@@ -830,6 +836,7 @@ export const STATIC_ROOM_SPECS: RoomSpec[] = [
     rows: 6,
     floor: floor1,
     wall: wall1,
+    visible: true, // see Jacqueline's Office's own comment above
     connectedTo: [{ roomId: 1, direction: "behindLeft", gapTiles: 1 }],
     objects: [{ id: 5, type: STATIC_OBJECT_TYPES.ddrCabinet.id, x: 8, y: 0, actions: [{ kind: "activity", activityId: ACTIVITIES.ddr.id }] }],
   },

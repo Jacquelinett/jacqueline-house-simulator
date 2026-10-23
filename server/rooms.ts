@@ -134,10 +134,9 @@ export function seedRoomsIfEmpty(): void {
         showRightWall: spec.showRightWall === false ? 0 : 1,
         showBottomLeftWall: spec.showBottomLeftWall === true ? 1 : 0,
         showBottomRightWall: spec.showBottomRightWall === true ? 1 : 0,
-        // Not set per-spec here (STATIC_ROOM_SPECS predates this field
-        // entirely) — migrate()'s own backfillDefaultVisibleRooms turns
-        // the right few on right after this seed runs, same as it does
-        // for an upgrading install.
+        // Jacqueline's Office/DDR Room set visible: true directly on their
+        // STATIC_ROOM_SPECS entry (see rooms.ts) — any other seeded room
+        // defaults to invisible until an admin opts it in.
         visible: spec.visible === true ? 1 : 0,
       });
       replaceConnections(spec.id, spec.connectedTo);
