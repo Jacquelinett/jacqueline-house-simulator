@@ -9,10 +9,11 @@ import { TileOverride, TileRect } from "./tileset";
 // hand-picked value.
 export const DIM_ALPHA = 0.4;
 // How transparent a room's front (bottom) walls go once that room is the
-// one actually being viewed — they paint above objects/overlays (see
-// buildRoom), so without this the wall would block your own view of the
-// room you're looking at. Kept barely visible rather than fully
-// invisible so the wall doesn't just disappear outright.
+// one actually being viewed — lower than DIM_ALPHA, not just equal to
+// it, since they paint above objects/overlays there (see buildRoom), and
+// without the extra fade the wall would block your own view of the room
+// you're looking at. Kept barely visible rather than fully invisible so
+// the wall doesn't just disappear outright.
 const FRONT_WALL_FOCUSED_ALPHA = 0.08;
 const PAN_EASE = 0.15;
 // Exported for the admin tool's object-type preview (admin-main.ts),
@@ -342,13 +343,14 @@ export class SceneRenderer {
   // Front (bottom) walls paint ABOVE objects/overlays (see buildRoom) —
   // unlike the back walls, they sit between the floor/objects and the
   // camera, so a real wall there would actually occlude whatever's behind
-  // it. That only looks right for a room you're NOT currently focused
-  // on, though — for the room you ARE viewing, a solid front wall would
-  // block your own view of the very objects you're looking at, so it
-  // fades to FRONT_WALL_FOCUSED_ALPHA instead (see applyFocus). Separate
-  // from roomWallAlphaFilters above since the two need opposite-ish rules
-  // (back walls dim moderately when NOT viewed; front walls stay opaque
-  // except when they ARE viewed) rather than sharing one filter/value.
+  // it. Dims the same DIM_ALPHA amount as the back walls for any room
+  // that isn't the one being viewed, but fades further still — down to
+  // FRONT_WALL_FOCUSED_ALPHA — for the room you ARE viewing, since a
+  // solid wall there would block your own view of the very objects
+  // you're looking at (see applyFocus). Kept as its own filter/map rather
+  // than sharing roomWallAlphaFilters above purely because the two need
+  // an extra dim step at a different trigger, not because the baseline
+  // differs.
   protected roomFrontWallAlphaFilters = new Map<number, AlphaFilter>();
   // Sprites shown only while one of their object's activity labels is the
   // currently-running activity (e.g. a character sprite at the piano).
@@ -731,13 +733,16 @@ export class SceneRenderer {
         container.visible = true;
         const isViewed = id === this.viewedRoomId;
         this.applyRoomDim(id, isViewed);
-        // Front walls always stay opaque except for the room actually
-        // being viewed — opposite-ish rule from applyRoomDim's back-wall
-        // dimming, not routed through that override (AdminPreviewRenderer
-        // included — its own whole-room filter wraps this one too, so a
-        // non-focal room there still ends up uniformly dimmed overall; see
-        // FRONT_WALL_FOCUSED_ALPHA's own comment).
-        this.roomFrontWallAlphaFilters.get(id)!.alpha = isViewed ? FRONT_WALL_FOCUSED_ALPHA : 1;
+        // Front walls dim the same amount as the back walls (DIM_ALPHA)
+        // for any room that isn't the one actually being viewed, then dim
+        // further still — all the way down to FRONT_WALL_FOCUSED_ALPHA —
+        // specifically for the viewed room, since they paint above
+        // objects/overlays there (see buildRoom) and would otherwise
+        // block your own view of what you're looking at. Not routed
+        // through applyRoomDim's override (AdminPreviewRenderer included
+        // — its own whole-room filter wraps this one too, so a non-focal
+        // room there still ends up uniformly dimmed overall).
+        this.roomFrontWallAlphaFilters.get(id)!.alpha = isViewed ? FRONT_WALL_FOCUSED_ALPHA : DIM_ALPHA;
         container.eventMode = "static";
       }
     }
