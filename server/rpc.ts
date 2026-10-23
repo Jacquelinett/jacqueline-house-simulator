@@ -71,7 +71,7 @@ const queries: Record<string, (characterId: string, args: any) => Promise<unknow
   getCurrentActivity: async (characterId) => getCurrentActivity(bucketIdFor(characterId)),
   getGoalHistory: async (characterId, { viewingCharacterId }) => getAllHistory(viewingCharacterId ?? characterId),
   historyForGoal: async (characterId, { goalId }) => historyForGoal(characterId, goalId),
-  getWorkoutsForDate: async (characterId, { dateStr }) => getWorkoutsForDate(characterId, dateStr),
+  getWorkoutsForDate: async (characterId, { dateStr, viewingCharacterId }) => getWorkoutsForDate(viewingCharacterId ?? characterId, dateStr),
   fetchMessages: () => fetchMessages(),
   getBroadcastHealth: async () => getBroadcastHealthInfo(),
 };

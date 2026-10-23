@@ -11,6 +11,7 @@ import { getActivities } from "./activities";
 import { getObjectTypes } from "./objectTypes";
 import { getRoomSpecs } from "./rooms";
 import { getFloors } from "./floors";
+import { getWorkoutsForDate } from "./workouts";
 
 /**
  * Server-side home for src/broadcast/client.ts's push functions — same
@@ -164,6 +165,23 @@ export async function pushTodayStreaks(characterId: string): Promise<void> {
     "today's streaks",
   );
   if (ok) streaksPushedForToday.set(characterId, todayStr);
+}
+
+/**
+ * Today's logged workout (real wger data when configured, mock mirror
+ * otherwise — see server/workouts.ts's dispatch) — pushed every hourly
+ * tick alongside pushStats/pushPeriodStats/etc. (see server/index.ts's
+ * runStatsPushes and that call site's own comment on why this one never
+ * self-skips the way pushYesterdayStats/pushTodayStreaks do). Always
+ * pushes, even when there's nothing logged yet today (an empty `sessions`
+ * array) — simpler than a separate "absent" vs "empty" distinction, and
+ * the viewer already treats an empty array as "don't show this section"
+ * (see dashboard/render.ts's renderWorkoutToday).
+ */
+export async function pushWorkoutToday(characterId: string): Promise<void> {
+  const todayStr = localDateString(new Date());
+  const sessions = await getWorkoutsForDate(characterId, todayStr);
+  await pushWithHealth("/api/workout-today", { ...characterFields(characterId), sessions }, "workout today");
 }
 
 /**

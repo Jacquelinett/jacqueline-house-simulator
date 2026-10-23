@@ -520,7 +520,10 @@ export function migrate(): void {
       broadcast_url TEXT,
       broadcast_secret TEXT,
       lan_secret TEXT,
-      admin_secret TEXT
+      admin_secret TEXT,
+      wger_base_url TEXT,
+      wger_api_token TEXT,
+      wger_character_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS workout_sessions (
@@ -676,6 +679,24 @@ export function migrate(): void {
     // default texture for any sprite-keyed overlay" (see
     // src/scene/characterSprites.ts).
     "ALTER TABLE characters ADD COLUMN sprite_name TEXT",
+    // wger integration (see server/wger.ts, CLAUDE.md's wger section) —
+    // same "one row, hand-edited on the home server" convention as
+    // broadcast_url/broadcast_secret/lan_secret/admin_secret above, so a
+    // fresh install that predates this feature just gets three more null
+    // columns rather than a failed migration. wger_character_id is which
+    // House Simulator character the (single) configured wger account's
+    // data belongs to — null falls back to whichever character is named
+    // "Jacqueline" (see resolveWgerCharacterId()) rather than requiring
+    // this to be set by hand on every install.
+    "ALTER TABLE server_config ADD COLUMN wger_base_url TEXT",
+    "ALTER TABLE server_config ADD COLUMN wger_api_token TEXT",
+    "ALTER TABLE server_config ADD COLUMN wger_character_id TEXT",
+    // Per-set weight unit ("kg"/"lb") — the mock mirror never had one (it
+    // always implied kg), but a real wger instance's workoutlog rows carry
+    // their own weight_unit, and a US user could easily be on lb. Nullable
+    // so existing/mock-seeded sets stay valid; formatSetDetail() in
+    // src/workout/format.ts defaults a missing unit to "kg".
+    "ALTER TABLE workout_sets ADD COLUMN weight_unit TEXT",
   ]) {
     try {
       db.exec(stmt);

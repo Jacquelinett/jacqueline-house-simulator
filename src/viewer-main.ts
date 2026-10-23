@@ -15,7 +15,10 @@ import {
   renderAllTimeActivity,
   renderGoalList,
   renderGoalOutcomes,
+  renderWorkoutToday,
 } from "./dashboard/render";
+import { WorkoutSession } from "./workout/types";
+import { summarizeWorkoutSessions } from "./workout/format";
 import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "./status/render";
 import type { ActivityStat } from "./dashboard/stats";
 import type { FixedPeriodKey, FixedPeriodStats } from "./dashboard/periodStats";
@@ -93,6 +96,8 @@ interface AllDataResponse {
   periodStats: Record<string, FixedPeriodStats[]>;
   yesterday: Record<string, Record<string, number>>;
   streaks: Record<string, Record<string, number>>;
+  /** Absent on a val.town deployment not yet re-pasted with /api/workout-today support — see loadHouseLayout's own "fall back, don't break the page" reasoning. Missing or empty for a character just means "nothing to show," same contract the Dashboard's wger section has everywhere else (see dashboard/render.ts's renderWorkoutToday). */
+  workoutToday?: Record<string, WorkoutSession[]>;
 }
 
 const SELECTED_CHARACTER_KEY = "houseSimulatorViewerCharacterId";
@@ -186,6 +191,7 @@ interface DashboardRenderInput {
   activityLabel: string | null;
   startedAtMs: number | null;
   colorByLabel: Map<string, number>;
+  workoutSessions: WorkoutSession[];
 }
 
 /**
@@ -221,7 +227,7 @@ function buildDashboardBlock(container: HTMLElement): { render(input: DashboardR
   );
   container.appendChild(dateRow);
 
-  const { goalHeading, goalList, activityHeading, activityList } = buildDashboardSections(container);
+  const { goalHeading, goalList, activityHeading, activityList, workoutSection, workoutList } = buildDashboardSections(container);
 
   function renderCurrent() {
     if (!latestInput) return;
@@ -233,8 +239,14 @@ function buildDashboardBlock(container: HTMLElement): { render(input: DashboardR
       activityLabel: runningLabel,
       startedAtMs,
       colorByLabel,
+      workoutSessions,
     } = latestInput;
     const isToday = day === "today";
+
+    // Always about the real current day regardless of the Today/Yesterday
+    // toggle above — same reasoning as the desktop Dashboard panel's own
+    // renderWorkout() (src/dashboard/panel.ts).
+    renderWorkoutToday(workoutSection, workoutList, summarizeWorkoutSessions(workoutSessions));
 
     goalHeading.textContent = isToday ? "Today's Goals" : "Yesterday's Goals";
     activityHeading.textContent = isToday ? "Today's Activity" : "Yesterday's Activity";
@@ -812,6 +824,7 @@ async function main() {
   let latestYesterdayMinutesByLabel: Record<string, number> = {};
   let latestStreaksByGoalId: Record<string, number> = {};
   let latestGoals: Goal[] = [];
+  let latestWorkoutSessions: WorkoutSession[] = [];
   let lastSyncAt: Date | null = null;
   let lastSyncError: string | null = null;
 
@@ -834,6 +847,7 @@ async function main() {
       activityLabel: latestActivityLabel,
       startedAtMs,
       colorByLabel: new Map(latestStats.map((s) => [s.label, s.color] as const)),
+      workoutSessions: latestWorkoutSessions,
     };
     dashboardDesktop.render(input);
     dashboardMobile.render(input);
@@ -873,6 +887,7 @@ async function main() {
     latestPeriodStats = data?.periodStats[selectedCharacter.id] ?? [];
     latestYesterdayMinutesByLabel = data?.yesterday[selectedCharacter.id] ?? {};
     latestStreaksByGoalId = data?.streaks[selectedCharacter.id] ?? {};
+    latestWorkoutSessions = data?.workoutToday?.[selectedCharacter.id] ?? [];
     latestActivityLabel = status?.activityLabel ?? null;
     latestTodayMinutesByLabel = status?.todayMinutesByLabel ?? {};
     startedAtMs = status?.startedAt ? new Date(status.startedAt).getTime() : null;
