@@ -48,19 +48,39 @@ export interface WallVariant {
   connection: WallPart;
 }
 
+/** The 5 named parts a WallVariant exposes — used wherever code needs to pick "the same structural role" from a DIFFERENT variant than the one it was first resolved against, e.g. a per-segment wallVariant override (see TileOverride) swapping sheets but not which part a given wall position plays. */
+export type WallPartName = "edgeLeft" | "left" | "right" | "edgeRight" | "connection";
+
 // A tile rect plus which sheet it lives in — self-contained, so an override
 // can reference a tile from a different variant/sheet than the room's default.
 export interface PlacedTile extends TileRect {
   texture: string;
 }
 
-// Per-tile override for floor/wall placement, keyed by exact (u,v). REPLACES
-// the default tile at that position rather than rendering on top of it —
-// `tile: null` means render nothing there at all (e.g. a doorway gap).
+/**
+ * Per-tile override for floor/wall placement, keyed by exact (u,v).
+ * REPLACES the default tile at that position rather than rendering on top
+ * of it. Exactly one of two things describes the replacement:
+ *  - `tile: null` -> render nothing there at all (e.g. a doorway gap).
+ *  - `tile: PlacedTile` -> one flat custom texture/rect, the same every
+ *    time regardless of which structural part (left/edgeLeft/etc.) this
+ *    position would normally use — bypasses the wall autotile stack
+ *    entirely. Used for floor overrides (which have no stack to bypass)
+ *    and for a wall position that genuinely wants one fixed image.
+ *  - `wallVariant` (wall overrides only, ignored for floorOverrides): a
+ *    wall sheet path (e.g. "/walls/wall2.png") — renders this position
+ *    NORMALLY (the full top/mid/bottom autotile stack, same structural
+ *    part/role this position already has) but reads that part's pixels
+ *    from THIS sheet instead of the room's own wallVariant. Checked
+ *    before `tile`, so a position can have both set in old data without
+ *    ambiguity — the admin tool's wall-edit-mode only ever writes one of
+ *    the three shapes per position, never combines them.
+ */
 export interface TileOverride {
   u: number;
   v: number;
   tile: PlacedTile | null;
+  wallVariant?: string;
 }
 
 // Every floor sheet is 3 side-by-side 32x32 tiles (mid, edgeBottomRight,

@@ -1,6 +1,6 @@
-import { AlphaFilter, Container, FederatedPointerEvent, Graphics, Polygon } from "pixi.js";
-import { gridToScreen, ObjectDef, RoomDef, screenToGrid } from "./rooms";
-import { buildLayer, DIM_ALPHA, SceneRenderer } from "./renderer";
+import { AlphaFilter, Container, FederatedPointerEvent, Graphics, Polygon, Rectangle } from "pixi.js";
+import { gridToScreen, rooms as roomDefs, ObjectDef, RoomDef, screenToGrid } from "./rooms";
+import { buildLayer, DIM_ALPHA, SceneRenderer, wallSegments, WallSegmentInfo } from "./renderer";
 
 /**
  * Read-only-except-for-placement preview renderer for the admin tool —
@@ -88,6 +88,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
   private placingRoomContainer: Container | null = null;
   private placingGhost: Container | null = null;
   private placingObjectId: number | null = null;
+  private wallEditGraphics: Graphics[] = [];
 
   constructor(
     app: ConstructorParameters<typeof SceneRenderer>[0],
@@ -299,6 +300,70 @@ export class AdminPreviewRenderer extends SceneRenderer {
       delete container._placementHandlers;
     }
     this.placingRoomContainer = null;
+    this.app.render();
+  }
+
+  /**
+   * Hover/click interaction for individual wall segments (see
+   * renderer.ts's WallSegmentInfo) on the currently-viewed room — what the
+   * room editor's wall-edit-mode toggle (admin-main.ts) uses to let an
+   * admin pick one wall position and add an exception there (a gap, or a
+   * different wall sheet) instead of only being able to toggle a whole
+   * side on/off. Each segment gets its own invisible Graphics hit-rect,
+   * sized/positioned straight from wallSegments(room) rather than
+   * re-derived here — guaranteed to line up with whatever buildBackWalls/
+   * buildBottomWalls actually drew underneath it, since it's the exact
+   * same function computing both. A plain explicit `hitArea` rather than
+   * relying on fill geometry, same pattern an object's own hitbox already
+   * uses elsewhere in this engine — reliable regardless of the fill's own
+   * near-zero alpha. Red stroke only appears on hover ("show a red
+   * border"); idle state draws nothing visible at all.
+   */
+  public enableWallEditMode(onSegmentClick: (segment: WallSegmentInfo) => void): void {
+    this.disableWallEditMode();
+
+    const room = roomDefs.find((r) => r.id === this.viewedRoomId);
+    const container = this.roomContainers.get(this.viewedRoomId);
+    if (!room || !container) {
+      console.warn(`[adminPreview] instance #${this.instanceId} enableWallEditMode — no room/container for viewedRoomId "${this.viewedRoomId}"`);
+      return;
+    }
+
+    for (const segment of wallSegments(room)) {
+      const g = new Graphics();
+      g.hitArea = new Rectangle(0, 0, segment.width, segment.height);
+      g.eventMode = "static";
+      g.cursor = "pointer";
+      const drawIdle = () => g.clear().rect(0, 0, segment.width, segment.height).fill({ color: 0xffffff, alpha: 0.001 });
+      const drawHover = () =>
+        g
+          .clear()
+          .rect(0, 0, segment.width, segment.height)
+          .fill({ color: 0xffffff, alpha: 0.001 })
+          .stroke({ width: 2, color: 0xff2d55 });
+      drawIdle();
+      g.on("pointerover", () => {
+        drawHover();
+        this.app.render();
+      });
+      g.on("pointerout", () => {
+        drawIdle();
+        this.app.render();
+      });
+      g.on("pointertap", (e: FederatedPointerEvent) => {
+        e.stopPropagation();
+        onSegmentClick(segment);
+      });
+      g.position.set(segment.x, segment.y);
+      container.addChild(g);
+      this.wallEditGraphics.push(g);
+    }
+    this.app.render();
+  }
+
+  public disableWallEditMode(): void {
+    for (const g of this.wallEditGraphics) g.destroy();
+    this.wallEditGraphics = [];
     this.app.render();
   }
 }

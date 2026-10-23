@@ -2,7 +2,7 @@ import { AlphaFilter, Application, Assets, BlurFilter, Container, Graphics, Rect
 import { DEFAULT_WALL_HEIGHT, gridToScreen, rooms as roomDefs, screenToGrid, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
 import { findActivityById } from "./activities";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./characterSprites";
-import { TileOverride, TileRect, WallPart, WallVariant, WALL_PART_SIZE } from "./tileset";
+import { resolveWallVariant, TileOverride, TileRect, WallPart, WallPartName, WallVariant, WALL_PART_SIZE } from "./tileset";
 
 // Exported for AdminPreviewRenderer (adminPreview.ts), which reuses this
 // same dim level for its own whole-room dimming instead of a separately
@@ -111,6 +111,7 @@ export async function preloadRoomAssets(): Promise<void> {
     paths.add(room.wall.texture);
     for (const o of [...(room.floorOverrides ?? []), ...(room.wallOverrides ?? [])]) {
       if (o.tile) paths.add(o.tile.texture);
+      if (o.wallVariant) paths.add(o.wallVariant);
     }
     for (const obj of room.objects) {
       const layers = [...(obj.below ?? []), ...(obj.overlay ?? []), ...(obj.above ?? [])];
@@ -195,9 +196,91 @@ function placeTileWithOverrides(
   placeTile(container, defaultTexture, defaultRect, u, v, groundOffset);
 }
 
-/** How tall a room's walls actually render, in pixels — `wallHeight` 16px autotile pieces stacked (see tileset.ts's WallPart/WALL_PART_SIZE), falling back to DEFAULT_WALL_HEIGHT when unset (e.g. a hand-built RoomSpec that never set it). */
-function totalWallHeight(room: RoomDef): number {
+/** How tall a room's walls actually render, in pixels — `wallHeight` 16px autotile pieces stacked (see tileset.ts's WallPart/WALL_PART_SIZE), falling back to DEFAULT_WALL_HEIGHT when unset (e.g. a hand-built RoomSpec that never set it). Exported for wallSegments below (and AdminPreviewRenderer, which needs the same number to build matching hit-rects). */
+export function totalWallHeight(room: RoomDef): number {
   return (room.wallHeight ?? DEFAULT_WALL_HEIGHT) * WALL_PART_SIZE;
+}
+
+/** Which of the four wall runs a segment belongs to — matches buildBackWalls'/buildBottomWalls' own "left"/"right" naming (named for which WallVariant part family it reuses, not screen-left/right — see those functions' own comments). */
+export type WallSide = "backLeft" | "backRight" | "frontLeft" | "frontRight";
+
+/** One clickable wall position — same thing buildBackWalls/buildBottomWalls place a sprite stack at, just as plain position/size data instead of a built Sprite. `x`/`y`/`width`/`height` are in the room's own local coordinate space (same space gridToScreen returns, no room offset baked in) — the same space any child added to that room's own container (see SceneRenderer.roomContainers) already renders in. */
+export interface WallSegmentInfo {
+  side: WallSide;
+  u: number;
+  v: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Every wall segment a room's back/front walls actually render right now
+ * — the exact same (u,v)/xOffset/yOffset combinations buildBackWalls/
+ * buildBottomWalls use to place a sprite stack, returned as hit-rect data
+ * instead of built sprites. This is what the admin tool's wall-edit mode
+ * (AdminPreviewRenderer.enableWallEditMode) builds its hover/click targets
+ * from, rather than re-deriving the same position math a second time —
+ * this exact math has already produced three separate live bugs earlier
+ * in this file's history (the corner/connection-slot overlap, both end
+ * caps sagging below their run), so a second independent copy of it is
+ * exactly the kind of thing that drifts out of sync silently.
+ *
+ * Deliberately only includes segments for a side that's actually shown
+ * (showLeftWall/showRightWall default true, showBottomLeftWall/
+ * showBottomRightWall default false, same flags buildBackWalls/
+ * buildBottomWalls gate on) — a hidden side has nothing rendered to point
+ * at yet, so there's nothing for wall-edit mode to highlight there; turn
+ * the side on first, then use wall-edit mode once it's visible. Within a
+ * shown side, every position is included regardless of whether a
+ * wallOverrides gap already hides it there — the gap IS the current
+ * state of that one position, and should stay clickable to change or
+ * remove it.
+ */
+export function wallSegments(room: RoomDef): WallSegmentInfo[] {
+  const wallHeightUnits = room.wallHeight ?? DEFAULT_WALL_HEIGHT;
+  const groundOffset = totalWallHeight(room) - room.floor.mid.h;
+  const capRise = TILE_HEIGHT / 2;
+  const showLeft = room.showLeftWall !== false;
+  const showRight = room.showRightWall !== false;
+  const showBottomLeft = room.showBottomLeftWall === true;
+  const showBottomRight = room.showBottomRightWall === true;
+  const rightWallShift = showLeft && showRight ? WALL_PART_SIZE : 0;
+  const height = wallHeightUnits * WALL_PART_SIZE;
+
+  const segments: WallSegmentInfo[] = [];
+  const add = (side: WallSide, u: number, v: number, xOffset: number, yOffset: number) => {
+    const { x, y } = gridToScreen(u, v);
+    segments.push({ side, u, v, x: x - TILE_WIDTH / 2 + xOffset, y: y - groundOffset + yOffset, width: WALL_PART_SIZE, height });
+  };
+
+  // Back corner — one segment per side actually shown there (placeCorner
+  // draws a single un-shifted stack when only one side is shown, which is
+  // exactly what rightWallShift already reduces to as 0 in that case).
+  if (showLeft) add("backLeft", 0, 0, 0, 0);
+  if (showRight) add("backRight", 0, 0, rightWallShift, 0);
+
+  if (showLeft) {
+    for (let v = 1; v < room.rows; v++) add("backLeft", 0, v, 0, 0);
+    add("backLeft", 0, room.rows, 0, -capRise);
+  }
+  if (showRight) {
+    for (let u = 1; u < room.cols; u++) add("backRight", u, 0, rightWallShift, 0);
+    add("backRight", room.cols, 0, rightWallShift, -capRise);
+  }
+  if (showBottomRight) {
+    add("frontRight", room.cols, 0, 0, 0);
+    for (let v = 1; v < room.rows; v++) add("frontRight", room.cols, v, 0, 0);
+    add("frontRight", room.cols, room.rows, 0, -capRise);
+  }
+  if (showBottomLeft) {
+    add("frontLeft", 0, room.rows, 0, 0);
+    for (let u = 1; u < room.cols; u++) add("frontLeft", u, room.rows, 0, 0);
+    add("frontLeft", room.cols, room.rows, 0, -capRise);
+  }
+
+  return segments;
 }
 
 /**
@@ -240,13 +323,17 @@ function placeWallStack(
 
 /**
  * Like placeTileWithOverrides, but for a wall stack rather than a single
- * tile: checks `overrides` for this exact (u,v) first (replacing the
- * entire stack with ONE plain tile via placeTile, or a gap for `tile:
- * null` — a per-tile wall override was never meant to represent "a whole
- * custom stack," just a single replacement image, e.g. a doorway gap, so
- * it bypasses the autotile stacking entirely rather than needing its own
- * top/mid/bottom shape). Falls through to placeWallStack only when
- * there's no override and `renderDefault` is true, same gating
+ * tile: checks `overrides` for this exact (u,v) first. Three outcomes, in
+ * priority order — see TileOverride's own comment for the full reasoning:
+ *  1. `override.wallVariant` set — still a real autotile stack, same
+ *     structural `partName` this position already uses, just reading that
+ *     part's pixels from a DIFFERENT wall sheet (resolveWallVariant) than
+ *     the room's own `wall`.
+ *  2. `override.tile` set (and no wallVariant) — one flat custom texture/
+ *     rect, bypassing the stack entirely.
+ *  3. `override.tile === null` — a gap, render nothing.
+ * Falls through to the room's own default stack only when there's no
+ * override at all and `renderDefault` is true, same gating
  * placeTileWithOverrides already uses for showLeftWall/showRightWall etc.
  * `xOffset`/`yOffset` just forward to placeWallStack — the override
  * lookup itself always stays keyed by the logical (u,v), never the
@@ -255,8 +342,8 @@ function placeWallStack(
 function placeWallWithOverrides(
   container: Container,
   overrides: TileOverride[] | undefined,
-  texturePath: string,
-  part: WallPart,
+  wall: WallVariant,
+  partName: WallPartName,
   u: number,
   v: number,
   groundOffset: number,
@@ -266,12 +353,17 @@ function placeWallWithOverrides(
   yOffset = 0,
 ) {
   const override = overrides?.find((o) => o.u === u && o.v === v);
+  if (override?.wallVariant) {
+    const altWall = resolveWallVariant(override.wallVariant);
+    placeWallStack(container, altWall.texture, altWall[partName], u, v, groundOffset, wallHeightUnits, xOffset, yOffset);
+    return;
+  }
   if (override) {
     if (override.tile) placeTile(container, override.tile.texture, override.tile, u, v, groundOffset);
     return;
   }
   if (!renderDefault) return;
-  placeWallStack(container, texturePath, part, u, v, groundOffset, wallHeightUnits, xOffset, yOffset);
+  placeWallStack(container, wall.texture, wall[partName], u, v, groundOffset, wallHeightUnits, xOffset, yOffset);
 }
 
 /**
@@ -279,12 +371,15 @@ function placeWallWithOverrides(
  * its own function since it's the one position that can draw TWO
  * half-width stacks side by side rather than zero or one (see
  * WallVariant's own comment on why there's no single dedicated corner
- * tile anymore). An override here still replaces the whole joint with one
- * plain tile (or a gap), checked once up front so the two-stack case
- * below never needs to re-check it per half. When only one side is shown,
- * that side's own reusable part just continues straight through the
- * joint — same "no dedicated joint piece unless both sides are real"
- * behavior the old single-corner-tile version had.
+ * tile anymore). An override here still replaces the whole joint first —
+ * a wallVariant override redraws the SAME one-or-two-stack shape the
+ * default path would (still respecting showLeft/showRight), just from a
+ * different sheet; a tile/null override still bypasses that shape
+ * entirely for one flat replacement or a gap, checked once up front so
+ * neither override case needs to re-check it per half. When only one
+ * side is shown, that side's own reusable part just continues straight
+ * through the joint — same "no dedicated joint piece unless both sides
+ * are real" behavior the old single-corner-tile version had.
  */
 function placeCorner(
   container: Container,
@@ -298,17 +393,19 @@ function placeCorner(
   showRight: boolean,
 ) {
   const override = overrides?.find((o) => o.u === u && o.v === v);
-  if (override) {
+  const effectiveWall = override?.wallVariant ? resolveWallVariant(override.wallVariant) : null;
+  if (override && !effectiveWall) {
     if (override.tile) placeTile(container, override.tile.texture, override.tile, u, v, groundOffset);
     return;
   }
+  const w = effectiveWall ?? wall;
   if (!showLeft && !showRight) return;
   if (showLeft && showRight) {
-    placeWallStack(container, wall.texture, wall.left, u, v, groundOffset, wallHeightUnits);
-    placeWallStack(container, wall.texture, wall.connection, u, v, groundOffset, wallHeightUnits, WALL_PART_SIZE);
+    placeWallStack(container, w.texture, w.left, u, v, groundOffset, wallHeightUnits);
+    placeWallStack(container, w.texture, w.connection, u, v, groundOffset, wallHeightUnits, WALL_PART_SIZE);
     return;
   }
-  placeWallStack(container, wall.texture, showLeft ? wall.left : wall.right, u, v, groundOffset, wallHeightUnits);
+  placeWallStack(container, w.texture, showLeft ? w.left : w.right, u, v, groundOffset, wallHeightUnits);
 }
 
 /**
@@ -372,9 +469,9 @@ export function buildBackWalls(room: RoomDef): Container {
   const capRise = TILE_HEIGHT / 2;
 
   for (let v = 1; v < room.rows; v++) {
-    placeWallWithOverrides(container, wo, wall.texture, wall.left, 0, v, groundOffset, wallHeightUnits, showLeft);
+    placeWallWithOverrides(container, wo, wall, "left", 0, v, groundOffset, wallHeightUnits, showLeft);
   }
-  placeWallWithOverrides(container, wo, wall.texture, wall.edgeLeft, 0, room.rows, groundOffset, wallHeightUnits, showLeft, 0, -capRise);
+  placeWallWithOverrides(container, wo, wall, "edgeLeft", 0, room.rows, groundOffset, wallHeightUnits, showLeft, 0, -capRise);
 
   // The right run needs one more correction the left run doesn't: when
   // the corner draws a true two-stack joint (see placeCorner), its
@@ -394,9 +491,9 @@ export function buildBackWalls(room: RoomDef): Container {
   // of where it should actually end.
   const rightWallShift = showLeft && showRight ? WALL_PART_SIZE : 0;
   for (let u = 1; u < room.cols; u++) {
-    placeWallWithOverrides(container, wo, wall.texture, wall.right, u, 0, groundOffset, wallHeightUnits, showRight, rightWallShift);
+    placeWallWithOverrides(container, wo, wall, "right", u, 0, groundOffset, wallHeightUnits, showRight, rightWallShift);
   }
-  placeWallWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols, 0, groundOffset, wallHeightUnits, showRight, rightWallShift, -capRise);
+  placeWallWithOverrides(container, wo, wall, "edgeRight", room.cols, 0, groundOffset, wallHeightUnits, showRight, rightWallShift, -capRise);
 
   return container;
 }
@@ -446,22 +543,22 @@ export function buildBottomWalls(room: RoomDef): Container {
   const showBottomRight = room.showBottomRightWall === true;
 
   for (let v = 1; v < room.rows; v++) {
-    placeWallWithOverrides(container, wo, wall.texture, wall.left, room.cols, v, groundOffset, wallHeightUnits, showBottomRight);
+    placeWallWithOverrides(container, wo, wall, "left", room.cols, v, groundOffset, wallHeightUnits, showBottomRight);
   }
   for (let u = 1; u < room.cols; u++) {
-    placeWallWithOverrides(container, wo, wall.texture, wall.right, u, room.rows, groundOffset, wallHeightUnits, showBottomLeft);
+    placeWallWithOverrides(container, wo, wall, "right", u, room.rows, groundOffset, wallHeightUnits, showBottomLeft);
   }
 
   // Right vertex (cols,0) / left vertex (0,rows) — just the first tile of
   // each front wall's own run, not a joint with anything.
-  placeWallWithOverrides(container, wo, wall.texture, wall.left, room.cols, 0, groundOffset, wallHeightUnits, showBottomRight);
-  placeWallWithOverrides(container, wo, wall.texture, wall.right, 0, room.rows, groundOffset, wallHeightUnits, showBottomLeft);
+  placeWallWithOverrides(container, wo, wall, "left", room.cols, 0, groundOffset, wallHeightUnits, showBottomRight);
+  placeWallWithOverrides(container, wo, wall, "right", 0, room.rows, groundOffset, wallHeightUnits, showBottomLeft);
 
   // Far end of each front wall's own run — see this function's own
   // header comment on why (cols,rows) is safe to use now that a cap is
   // a trimmed, capRise-adjusted piece rather than a full regular panel.
-  placeWallWithOverrides(container, wo, wall.texture, wall.edgeLeft, room.cols, room.rows, groundOffset, wallHeightUnits, showBottomRight, 0, -capRise);
-  placeWallWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols, room.rows, groundOffset, wallHeightUnits, showBottomLeft, 0, -capRise);
+  placeWallWithOverrides(container, wo, wall, "edgeLeft", room.cols, room.rows, groundOffset, wallHeightUnits, showBottomRight, 0, -capRise);
+  placeWallWithOverrides(container, wo, wall, "edgeRight", room.cols, room.rows, groundOffset, wallHeightUnits, showBottomLeft, 0, -capRise);
 
   return container;
 }

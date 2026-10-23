@@ -24,7 +24,7 @@
 // verify continuous pointer-drag math well enough to trust.
 import { Application, Assets, Container, Graphics, Sprite, Texture } from "pixi.js";
 import { buildModal } from "./ui/modal";
-import { assetUrl, buildFloorAndWalls, buildLayer, DEFAULT_OVERLAY_FRAME_DURATION_MS, preloadRoomAssets, sliceFrames } from "./scene/renderer";
+import { assetUrl, buildFloorAndWalls, buildLayer, DEFAULT_OVERLAY_FRAME_DURATION_MS, preloadRoomAssets, sliceFrames, WallSegmentInfo } from "./scene/renderer";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./scene/characterSprites";
 import { AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
@@ -48,7 +48,7 @@ import {
   SpriteLayer,
   TILE_WIDTH,
 } from "./scene/rooms";
-import { floor1, wall1 } from "./scene/tileset";
+import { floor1, TileOverride, wall1 } from "./scene/tileset";
 import { Floor } from "./scene/floors";
 
 const ADMIN_SECRET_KEY = "houseSimulatorAdminSecret";
@@ -100,6 +100,8 @@ interface RoomSpecWire {
   rows: number;
   floorVariant: string;
   wallVariant: string;
+  floorOverrides?: TileOverride[];
+  wallOverrides?: TileOverride[];
   showLeftWall?: boolean;
   showRightWall?: boolean;
   showBottomLeftWall?: boolean;
@@ -1462,6 +1464,7 @@ async function openRoomEditModal(
     showBottomLeftWall: room.showBottomLeftWall === true,
     showBottomRightWall: room.showBottomRightWall === true,
     wallHeight: room.wallHeight ?? 8,
+    wallOverrides: room.wallOverrides ?? [],
     visible: room.visible === true,
   };
 
@@ -1585,6 +1588,18 @@ async function openRoomEditModal(
   tileModeLabel.append(tileModeCheckbox, document.createTextNode(" Tile mode (enter grid coordinates instead of raw pixels)"));
   modal.body.appendChild(tileModeLabel);
 
+  // Separate mode from tile mode above (that one's just an input-
+  // interpretation toggle, not an interaction mode) — this one hijacks
+  // the preview's own pointer events the same way object placement does
+  // below, so the two are kept mutually exclusive (see each one's own
+  // onclick/onchange).
+  const wallEditModeLabel = document.createElement("label");
+  wallEditModeLabel.className = "admin-tile-mode-toggle";
+  const wallEditModeCheckbox = document.createElement("input");
+  wallEditModeCheckbox.type = "checkbox";
+  wallEditModeLabel.append(wallEditModeCheckbox, document.createTextNode(" Wall edit mode (hover a wall segment, click to add an exception)"));
+  modal.body.appendChild(wallEditModeLabel);
+
   const table = document.createElement("table");
   table.className = "admin-table";
   modal.body.appendChild(table);
@@ -1659,6 +1674,16 @@ async function openRoomEditModal(
       previewContainer.appendChild(currentApp.canvas);
       currentRenderer = new AdminPreviewRenderer(currentApp, () => {}, highlightRow);
       console.log("[admin] renderPreview rebuilt OK, currentRenderer set:", !!currentRenderer);
+      // renderPreview() tears down and rebuilds the whole canvas on every
+      // field change (including the ones wall edit mode's own menu makes),
+      // so a brand-new AdminPreviewRenderer never has wall-edit-mode's
+      // hover/click targets attached — unlike object placement (which
+      // deliberately cancels on rebuild, a one-off action meant to
+      // complete and return to normal browsing), wall edit mode is a
+      // persistent toggle the admin explicitly turned on, so it's worth
+      // re-attaching here rather than silently dropping it after every
+      // single edit.
+      if (wallEditModeCheckbox.checked) currentRenderer.enableWallEditMode(openWallSegmentMenu);
     } catch (err) {
       console.error("[admin] renderPreview failed", err);
       showError(err);
@@ -1797,6 +1822,12 @@ async function openRoomEditModal(
       }
       setPlacingUI(false);
       placeBtn.onclick = () => {
+        // Mutually exclusive with wall edit mode — both hijack the same
+        // preview pointer events (see wallEditModeCheckbox's own comment).
+        if (wallEditModeCheckbox.checked) {
+          wallEditModeCheckbox.checked = false;
+          currentRenderer?.disableWallEditMode();
+        }
         // Unsaved placements have no real id yet, so they all resolve to
         // the same -1 sentinel in the preview (see resolveObjectPlacement) —
         // fine as long as only one is ever being placed at a time.
@@ -1851,6 +1882,99 @@ async function openRoomEditModal(
   }
 
   tileModeCheckbox.onchange = () => renderTable();
+
+  wallEditModeCheckbox.onchange = () => {
+    if (wallEditModeCheckbox.checked) {
+      // Mutually exclusive with object placement — see placeBtn's own comment.
+      if (placingObjectId !== null) {
+        currentRenderer?.disablePlacement();
+        placingObjectId = null;
+        renderTable();
+      }
+      currentRenderer?.enableWallEditMode(openWallSegmentMenu);
+    } else {
+      currentRenderer?.disableWallEditMode();
+    }
+  };
+
+  const WALL_SIDE_LABEL: Record<WallSegmentInfo["side"], string> = {
+    backLeft: "Back-left wall",
+    backRight: "Back-right wall",
+    frontLeft: "Front-left wall",
+    frontRight: "Front-right wall",
+  };
+
+  /**
+   * Opens on a wall-edit-mode click (see enableWallEditMode's own
+   * comment) — three choices for the one segment clicked, each writing
+   * straight into roomFields.wallOverrides (so it rides the same
+   * {...room, ...roomFields} PATCH + isRoomFieldsDirty() dirty-check
+   * every other room field already uses, no separate save path needed):
+   * remove any override here (back to the room's own default), a gap
+   * (tile: null — e.g. a doorway), or a different wall sheet entirely
+   * (wallVariant — still a real autotile stack, just reading from
+   * another file, see TileOverride's own comment).
+   */
+  function openWallSegmentMenu(segment: WallSegmentInfo): void {
+    const existing = roomFields.wallOverrides.find((o) => o.u === segment.u && o.v === segment.v);
+
+    const modal = buildModal(`${WALL_SIDE_LABEL[segment.side]} — u=${segment.u}, v=${segment.v}`, {});
+
+    const statusLine = document.createElement("div");
+    statusLine.className = "admin-hint";
+    statusLine.textContent = !existing
+      ? "Currently: room default"
+      : existing.wallVariant
+        ? `Currently: using ${existing.wallVariant} here`
+        : existing.tile === null
+          ? "Currently: gap (nothing rendered)"
+          : "Currently: a custom tile";
+    modal.body.appendChild(statusLine);
+
+    function applyOverride(entry: TileOverride | null) {
+      const rest = roomFields.wallOverrides.filter((o) => !(o.u === segment.u && o.v === segment.v));
+      roomFields.wallOverrides = entry ? [...rest, entry] : rest;
+      updateSaveState();
+      modal.close();
+      renderPreview();
+    }
+
+    const form = document.createElement("div");
+    form.className = "admin-form";
+    modal.body.appendChild(form);
+
+    const defaultBtn = document.createElement("button");
+    defaultBtn.type = "button";
+    defaultBtn.textContent = "Use room default";
+    defaultBtn.disabled = !existing;
+    defaultBtn.onclick = () => applyOverride(null);
+
+    const gapBtn = document.createElement("button");
+    gapBtn.type = "button";
+    gapBtn.textContent = "Nothing here (gap)";
+    gapBtn.onclick = () => applyOverride({ u: segment.u, v: segment.v, tile: null });
+
+    form.append(defaultBtn, gapBtn);
+
+    const variantForm = document.createElement("div");
+    variantForm.className = "admin-form";
+    modal.body.appendChild(variantForm);
+
+    const variantSelect = buildVariantSelect(wallAssetPaths, existing?.wallVariant ?? room.wallVariant);
+    const variantBtn = document.createElement("button");
+    variantBtn.type = "button";
+    variantBtn.textContent = "Use this wall here";
+    variantBtn.onclick = () => applyOverride({ u: segment.u, v: segment.v, tile: null, wallVariant: variantSelect.value });
+    variantForm.append(document.createTextNode("Another wall: "), variantSelect, variantBtn);
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.textContent = "Close";
+    closeBtn.onclick = () => modal.close();
+    modal.body.appendChild(closeBtn);
+
+    modal.open();
+  }
 
   function renderAddForm() {
     addForm.textContent = "";
