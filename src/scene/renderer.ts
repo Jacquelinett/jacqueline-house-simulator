@@ -4,7 +4,7 @@ import { findActivityById } from "./activities";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./characterSprites";
 import { TileOverride, TileRect } from "./tileset";
 
-const DIM_ALPHA = 0.15;
+const DIM_ALPHA = 0.4;
 const PAN_EASE = 0.15;
 // Exported for the admin tool's object-type preview (admin-main.ts),
 // which simulates the overlay layer too now (defaulting to Jacqueline's
