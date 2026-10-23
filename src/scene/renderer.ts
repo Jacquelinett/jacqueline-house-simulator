@@ -26,7 +26,7 @@ const PAN_EASE = 0.15;
 // than perfectly symmetric; at this small a scale it reads as a
 // negligible difference.
 const ROOM_RAISE_PX = -15;
-const ROOM_GROW_SCALE = 1.1;
+const ROOM_GROW_SCALE = 1.05;
 const ROOM_FOCUS_EASE = 0.2;
 // A soft blurred glow sitting behind the viewed room's own floor
 // silhouette (see buildRoom) — not a crisp outline, a filled-then-blurred
