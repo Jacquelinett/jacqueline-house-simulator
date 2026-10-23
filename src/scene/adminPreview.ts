@@ -56,6 +56,25 @@ function objectContainersFor(renderer: AdminPreviewRenderer): Map<number, Regist
   return map;
 }
 
+// Same WeakMap workaround as objectContainersByRenderer above, for the
+// exact same reason: onRoomContainerBuilt is ALSO called polymorphically
+// from the base class's own constructor (via buildRoom), before this
+// subclass's own field initializers have run — a regular `private
+// roomAlphaFilters = new Map(...)` class field confirmed broken live
+// (TypeError: Cannot read properties of undefined (reading 'set') inside
+// onRoomContainerBuilt, the moment any room build touched it during
+// super()). A module-level WeakMap is never touched by class construction
+// at all, so it sidesteps the timing issue entirely instead of fighting it.
+const roomAlphaFiltersByRenderer = new WeakMap<AdminPreviewRenderer, Map<number, AlphaFilter>>();
+function roomAlphaFiltersFor(renderer: AdminPreviewRenderer): Map<number, AlphaFilter> {
+  let map = roomAlphaFiltersByRenderer.get(renderer);
+  if (!map) {
+    map = new Map();
+    roomAlphaFiltersByRenderer.set(renderer, map);
+  }
+  return map;
+}
+
 export class AdminPreviewRenderer extends SceneRenderer {
   // Diagnostic only — STATIC (not instance) fields so they're readable
   // from attachObjectInteraction while it's being called from inside the
@@ -69,13 +88,6 @@ export class AdminPreviewRenderer extends SceneRenderer {
   private placingRoomContainer: Container | null = null;
   private placingGhost: Container | null = null;
   private placingObjectId: number | null = null;
-  // One whole-room AlphaFilter per room, keyed here rather than reusing
-  // the base class's walls-only roomWallAlphaFilters — the admin tool's
-  // focus is purely on editing one room at a time, so a non-viewed room
-  // (e.g. a synthesized neighbor in the connections preview) dims
-  // entirely, not just its walls, unlike the real game/viewer (see
-  // applyRoomDim below and renderer.ts's own comment on why those differ).
-  private roomAlphaFilters = new Map<number, AlphaFilter>();
 
   constructor(
     app: ConstructorParameters<typeof SceneRenderer>[0],
@@ -114,16 +126,23 @@ export class AdminPreviewRenderer extends SceneRenderer {
     });
   }
 
-  /** Gives every room its own whole-room AlphaFilter (see roomAlphaFilters' own comment) — walls already got their own from the base class's buildRoom, this just adds a second one wrapping the WHOLE room container on top. */
+  /**
+   * Gives every room its own whole-room AlphaFilter — walls already got
+   * their own from the base class's buildRoom, this just adds a second
+   * one wrapping the WHOLE room container on top, so a non-viewed room
+   * (e.g. a synthesized neighbor in the connections preview) dims
+   * entirely, not just its walls, unlike the real game/viewer (see
+   * applyRoomDim below and renderer.ts's own comment on why those differ).
+   */
   protected onRoomContainerBuilt(roomId: number, container: Container): void {
     const filter = new AlphaFilter();
     container.filters = [filter];
-    this.roomAlphaFilters.set(roomId, filter);
+    roomAlphaFiltersFor(this).set(roomId, filter);
   }
 
   /** Dims the whole room (not just walls, unlike the base class's default) — the admin tool's focus is purely on editing one room at a time. */
   protected applyRoomDim(roomId: number, isViewed: boolean): void {
-    const filter = this.roomAlphaFilters.get(roomId);
+    const filter = roomAlphaFiltersFor(this).get(roomId);
     if (filter) filter.alpha = isViewed ? 1 : DIM_ALPHA;
   }
 
