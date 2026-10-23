@@ -151,6 +151,11 @@ export class AdminPreviewRenderer extends SceneRenderer {
     return false;
   }
 
+  /** The admin tool must show/edit a room regardless of its `visible` flag — that flag is exactly what's being edited here, unlike the real game/viewer which should actually hide an invisible room. */
+  protected respectsRoomVisibility(): boolean {
+    return false;
+  }
+
   /** Moves one object's own sprite directly — no scene rebuild, so this never blips. Only valid for an already-built object (same type/size as when the scene was last built). */
   public moveObject(objectId: number, x: number, y: number): void {
     const entry = objectContainersFor(this).get(objectId);

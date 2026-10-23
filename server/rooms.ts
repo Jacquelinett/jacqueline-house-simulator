@@ -15,6 +15,7 @@ interface RoomRow {
   show_right_wall: number;
   show_bottom_left_wall: number;
   show_bottom_right_wall: number;
+  visible: number;
 }
 
 interface ConnectionRow {
@@ -80,6 +81,7 @@ export function getRoomSpecs(): RoomSpecWire[] {
     showRightWall: !!row.show_right_wall,
     showBottomLeftWall: !!row.show_bottom_left_wall,
     showBottomRightWall: !!row.show_bottom_right_wall,
+    visible: !!row.visible,
     connectedTo: connectionsByRoom.get(row.id),
     objects: objectsByRoom.get(row.id) ?? [],
   }));
@@ -111,8 +113,8 @@ export function seedRoomsIfEmpty(): void {
   if (n > 0) return;
 
   const insertRoom = db.prepare(`
-    INSERT INTO rooms (id, name, cols, rows, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json, show_left_wall, show_right_wall, show_bottom_left_wall, show_bottom_right_wall)
-    VALUES (@id, @name, @cols, @rows, '/floors/floor1.png', '/walls/wall1.png', @floorOverridesJson, @wallOverridesJson, @showLeftWall, @showRightWall, @showBottomLeftWall, @showBottomRightWall)
+    INSERT INTO rooms (id, name, cols, rows, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json, show_left_wall, show_right_wall, show_bottom_left_wall, show_bottom_right_wall, visible)
+    VALUES (@id, @name, @cols, @rows, '/floors/floor1.png', '/walls/wall1.png', @floorOverridesJson, @wallOverridesJson, @showLeftWall, @showRightWall, @showBottomLeftWall, @showBottomRightWall, @visible)
   `);
   const insertObject = db.prepare(`
     INSERT INTO objects (id, room_id, type_id, x, y, enabled, action_json)
@@ -132,6 +134,11 @@ export function seedRoomsIfEmpty(): void {
         showRightWall: spec.showRightWall === false ? 0 : 1,
         showBottomLeftWall: spec.showBottomLeftWall === true ? 1 : 0,
         showBottomRightWall: spec.showBottomRightWall === true ? 1 : 0,
+        // Not set per-spec here (STATIC_ROOM_SPECS predates this field
+        // entirely) — migrate()'s own backfillDefaultVisibleRooms turns
+        // the right few on right after this seed runs, same as it does
+        // for an upgrading install.
+        visible: spec.visible === true ? 1 : 0,
       });
       replaceConnections(spec.id, spec.connectedTo);
       for (const placement of spec.objects) {
@@ -157,8 +164,8 @@ export function createRoom(spec: Omit<RoomSpecInput, "id">): number {
   const tx = db.transaction((): number => {
     const { lastInsertRowid } = db
       .prepare(
-        `INSERT INTO rooms (name, cols, rows, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json, show_left_wall, show_right_wall, show_bottom_left_wall, show_bottom_right_wall)
-       VALUES (@name, @cols, @rows, @floorVariant, @wallVariant, @floorOverridesJson, @wallOverridesJson, @showLeftWall, @showRightWall, @showBottomLeftWall, @showBottomRightWall)`,
+        `INSERT INTO rooms (name, cols, rows, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json, show_left_wall, show_right_wall, show_bottom_left_wall, show_bottom_right_wall, visible)
+       VALUES (@name, @cols, @rows, @floorVariant, @wallVariant, @floorOverridesJson, @wallOverridesJson, @showLeftWall, @showRightWall, @showBottomLeftWall, @showBottomRightWall, @visible)`,
       )
       .run({
         name: spec.name,
@@ -172,6 +179,7 @@ export function createRoom(spec: Omit<RoomSpecInput, "id">): number {
         showRightWall: spec.showRightWall === false ? 0 : 1,
         showBottomLeftWall: spec.showBottomLeftWall === true ? 1 : 0,
         showBottomRightWall: spec.showBottomRightWall === true ? 1 : 0,
+        visible: spec.visible === true ? 1 : 0,
       });
     const id = Number(lastInsertRowid);
     replaceConnections(id, spec.connectedTo);
@@ -186,7 +194,7 @@ export function updateRoom(spec: RoomSpecInput): void {
       `UPDATE rooms SET name = @name, cols = @cols, rows = @rows, floor_variant = @floorVariant, wall_variant = @wallVariant,
        floor_overrides_json = @floorOverridesJson, wall_overrides_json = @wallOverridesJson,
        show_left_wall = @showLeftWall, show_right_wall = @showRightWall,
-       show_bottom_left_wall = @showBottomLeftWall, show_bottom_right_wall = @showBottomRightWall WHERE id = @id`,
+       show_bottom_left_wall = @showBottomLeftWall, show_bottom_right_wall = @showBottomRightWall, visible = @visible WHERE id = @id`,
     ).run({
       id: spec.id,
       name: spec.name,
@@ -200,6 +208,7 @@ export function updateRoom(spec: RoomSpecInput): void {
       showRightWall: spec.showRightWall === false ? 0 : 1,
       showBottomLeftWall: spec.showBottomLeftWall === true ? 1 : 0,
       showBottomRightWall: spec.showBottomRightWall === true ? 1 : 0,
+      visible: spec.visible === true ? 1 : 0,
     });
     replaceConnections(spec.id, spec.connectedTo);
   });

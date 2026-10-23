@@ -378,6 +378,15 @@ export interface RoomSpec {
   // renderer.ts's buildBackWalls/buildBottomWalls for the actual placement.
   showBottomLeftWall?: boolean;
   showBottomRightWall?: boolean;
+  // Whether the room + everything inside it actually renders/is clickable
+  // client-side — default false (unlike the wall-show flags above, which
+  // default true). Deliberately NEVER read by resolveRooms() or
+  // computeFloorMembership() — an invisible room still fully participates
+  // in position/floor-membership resolution, since other rooms may be
+  // connectedTo it. Purely a renderer/input concern (see renderer.ts's
+  // applyFocus) — an activity tracked on an object inside an invisible room
+  // keeps running server-side exactly as if it were visible.
+  visible?: boolean;
   objects: ObjectPlacement[];
   // Placement relative to another room's edge, instead of an absolute pixel
   // offset — stays correct if either room's size changes. Unset/empty means
@@ -421,6 +430,7 @@ export interface RoomSpecWire {
   showRightWall?: boolean;
   showBottomLeftWall?: boolean;
   showBottomRightWall?: boolean;
+  visible?: boolean;
   connectedTo?: ConnectedToEntry[];
   objects: ObjectPlacement[];
 }
@@ -439,6 +449,7 @@ export function roomSpecsFromWire(wire: RoomSpecWire[]): RoomSpec[] {
     showRightWall: w.showRightWall,
     showBottomLeftWall: w.showBottomLeftWall,
     showBottomRightWall: w.showBottomRightWall,
+    visible: w.visible,
     connectedTo: w.connectedTo,
     objects: w.objects,
   }));

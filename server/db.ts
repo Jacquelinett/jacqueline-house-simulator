@@ -459,6 +459,12 @@ export function migrate(): void {
   // otherwise silently undo an admin unchecking it later (same landmine
   // already hit once with rooms.connected_to_* — see that comment below).
   const hadPublishToViewerColumnAlready = tableExists("characters") && columnType("characters", "publish_to_viewer") !== undefined;
+  // Same reasoning as hadPublishToViewerColumnAlready above — `rooms` not
+  // existing at all also counts as "predates this column" (a fresh
+  // install's seedRoomsIfEmpty() inserts every room at the column's own
+  // DEFAULT 0, so the backfill below is what actually turns the right few
+  // on, same as any upgrading install).
+  const hadVisibleColumnAlready = tableExists("rooms") && columnType("rooms", "visible") !== undefined;
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS characters (
@@ -596,7 +602,8 @@ export function migrate(): void {
       show_left_wall INTEGER NOT NULL DEFAULT 1,
       show_right_wall INTEGER NOT NULL DEFAULT 1,
       show_bottom_left_wall INTEGER NOT NULL DEFAULT 0,
-      show_bottom_right_wall INTEGER NOT NULL DEFAULT 0
+      show_bottom_right_wall INTEGER NOT NULL DEFAULT 0,
+      visible INTEGER NOT NULL DEFAULT 0
     );
 
     -- Mirrors ObjectPlacement: type_id + position + optional per-placement
@@ -660,6 +667,9 @@ export function migrate(): void {
     "ALTER TABLE rooms ADD COLUMN show_right_wall INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE rooms ADD COLUMN show_bottom_left_wall INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE rooms ADD COLUMN show_bottom_right_wall INTEGER NOT NULL DEFAULT 0",
+    // Meaningful default handled the same way publish_to_viewer's is —
+    // see hadVisibleColumnAlready/backfillDefaultVisibleRooms below.
+    "ALTER TABLE rooms ADD COLUMN visible INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE characters ADD COLUMN publish_to_viewer INTEGER NOT NULL DEFAULT 0",
     // Nullable, no backfill needed (unlike publish_to_viewer's meaningful
     // default) — null just means "no custom sprite, use the shared
@@ -719,6 +729,7 @@ export function migrate(): void {
   seedJacquelineCharacter();
   backfillCharacterId();
   if (!hadPublishToViewerColumnAlready) backfillJacquelinePublishToViewer();
+  if (!hadVisibleColumnAlready) backfillDefaultVisibleRooms();
 }
 
 /** Keeps Jacqueline's existing lan_secret working unchanged as her character secret, so none of her already-configured devices need to re-enter anything. Published to the viewer by default — same "Jacqueline is the one public character" behavior as before publish_to_viewer existed at all. */
@@ -747,6 +758,18 @@ function seedJacquelineCharacter(): void {
  */
 function backfillJacquelinePublishToViewer(): void {
   db.prepare("UPDATE characters SET publish_to_viewer = 1 WHERE name = 'Jacqueline'").run();
+}
+
+/**
+ * One-time seed for the new `visible` column — everything defaults to
+ * invisible (the column's own DEFAULT 0), this just turns on the handful
+ * of rooms meant to start visible. Only called once ever (guarded by
+ * migrate()'s own hadVisibleColumnAlready check) — an admin who later
+ * hides/shows a room through the admin tool never has this silently
+ * re-run on top of their own choice.
+ */
+function backfillDefaultVisibleRooms(): void {
+  db.prepare("UPDATE rooms SET visible = 1 WHERE name IN (?, ?, ?)").run("Jacqueline's Office", "DDR Room", "Gym");
 }
 
 /** One-time backfill for rows that predate the character_id column. */

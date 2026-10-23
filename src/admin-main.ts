@@ -102,6 +102,7 @@ interface RoomSpecWire {
   showRightWall?: boolean;
   showBottomLeftWall?: boolean;
   showBottomRightWall?: boolean;
+  visible?: boolean;
   connectedTo?: ConnectedToEntry[];
   objects: ObjectPlacementWire[];
 }
@@ -1432,6 +1433,7 @@ async function openRoomEditModal(
     showRightWall: room.showRightWall !== false,
     showBottomLeftWall: room.showBottomLeftWall === true,
     showBottomRightWall: room.showBottomRightWall === true,
+    visible: room.visible === true,
   };
 
   const roomPropsForm = document.createElement("div");
@@ -1486,6 +1488,22 @@ async function openRoomEditModal(
   showBottomRightWallLabel.append(showBottomRightWallCheckbox, document.createTextNode(" Bottom-right wall"));
   wallVisibilityForm.append(showLeftWallLabel, showRightWallLabel, showBottomLeftWallLabel, showBottomRightWallLabel);
 
+  // Separate row/section, not crammed into the wall-visibility checkboxes
+  // above — this controls whether the room (+ everything in it) renders at
+  // all, a different concern from which walls a visible room draws. Defaults
+  // off for most rooms (see RoomSpec's own comment) — edit-modal-only, same
+  // as the wall-visibility checkboxes, not part of buildAddRoomForm().
+  const roomVisibilityForm = document.createElement("div");
+  roomVisibilityForm.className = "admin-form";
+  modal.body.appendChild(roomVisibilityForm);
+
+  const visibleLabel = document.createElement("label");
+  const visibleCheckbox = document.createElement("input");
+  visibleCheckbox.type = "checkbox";
+  visibleCheckbox.checked = roomFields.visible;
+  visibleLabel.append(visibleCheckbox, document.createTextNode(" Visible (rendered + clickable in the game/viewer)"));
+  roomVisibilityForm.append(visibleLabel);
+
   function applyRoomFields() {
     roomFields.name = nameInput.value;
     // Clamped to >=1 rather than rejected — an in-between value (e.g.
@@ -1501,6 +1519,7 @@ async function openRoomEditModal(
     roomFields.showRightWall = showRightWallCheckbox.checked;
     roomFields.showBottomLeftWall = showBottomLeftWallCheckbox.checked;
     roomFields.showBottomRightWall = showBottomRightWallCheckbox.checked;
+    roomFields.visible = visibleCheckbox.checked;
     updateSaveState();
     renderPreview();
   }
@@ -1513,6 +1532,7 @@ async function openRoomEditModal(
   showRightWallCheckbox.onchange = applyRoomFields;
   showBottomLeftWallCheckbox.onchange = applyRoomFields;
   showBottomRightWallCheckbox.onchange = applyRoomFields;
+  visibleCheckbox.onchange = applyRoomFields;
 
   const tileModeLabel = document.createElement("label");
   tileModeLabel.className = "admin-tile-mode-toggle";

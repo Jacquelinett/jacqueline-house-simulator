@@ -592,6 +592,20 @@ export class SceneRenderer {
     return true;
   }
 
+  /**
+   * True by default (the real game/viewer) — a room with `visible: false`
+   * hides along with its contents (see applyFocus). Overridden by
+   * AdminPreviewRenderer to return false: the admin tool needs to show and
+   * edit a room regardless of whether it's currently flagged visible to
+   * players, since that's exactly the flag being edited. A METHOD, not a
+   * field, for the same class-field-initialization-order reason as
+   * isRoomFocusEffectsEnabled above — applyFocus runs once synchronously
+   * during this base class's own constructor.
+   */
+  protected respectsRoomVisibility(): boolean {
+    return true;
+  }
+
   protected buildObject(roomId: number, obj: ObjectDef): Container {
     const container = new Container();
     // Plain pixel offset from the room's own origin (same (0,0) the floor
@@ -831,7 +845,7 @@ export class SceneRenderer {
     const viewedLevel = roomDefs.find((r) => r.id === this.viewedRoomId)!.level;
     for (const [id, container] of this.roomContainers) {
       const room = roomDefs.find((r) => r.id === id)!;
-      if (room.level !== viewedLevel) {
+      if (room.level !== viewedLevel || (this.respectsRoomVisibility() && room.visible === false)) {
         // A different floor entirely — hide rather than dim, since it's not
         // spatially related to what's in view the way a same-floor
         // neighboring room is (that's still worth seeing in full). Also
@@ -839,6 +853,14 @@ export class SceneRenderer {
         // (e.g. a bedroom directly above the office) can geometrically
         // overlap on screen, and a hidden room's hitArea would otherwise
         // still intercept clicks meant for the visible one on top of it.
+        //
+        // room.visible === false (admin-controlled, defaults false — see
+        // RoomSpec's own comment) piggybacks on this exact same hide path:
+        // the room still fully participates in position/floor-membership
+        // resolution (resolveRooms never reads this flag), it just never
+        // renders or receives clicks. An activity tracked on an object
+        // inside it keeps running server-side regardless — this is a
+        // client-only rendering/input concern.
         container.visible = false;
         container.eventMode = "none";
       } else {
@@ -877,7 +899,8 @@ export class SceneRenderer {
       // room as the first thing it does (see House.ts's
       // attachObjectInteraction) — one click now does both.
       const room = roomDefs.find((r) => r.id === roomId)!;
-      container.eventMode = room.level === viewedLevel ? "static" : "none";
+      const visibleEnough = !this.respectsRoomVisibility() || room.visible !== false;
+      container.eventMode = room.level === viewedLevel && visibleEnough ? "static" : "none";
     }
   }
 
