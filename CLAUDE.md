@@ -228,3 +228,41 @@ Builds and deploys only `dist-viewer/` on every push to `main` — the desktop a
 
 - `vite.viewer.config.ts` sets `base: "/jacqueline-house-simulator/"` — GitHub Pages serves a project repo from that subpath, not domain root. Every texture path in `rooms.ts` is a root-relative string (`/objects/piano_base.png`) baked in long before Pages was a consideration; `src/scene/renderer.ts`'s `assetUrl()` helper routes every one of them through `import.meta.env.BASE_URL` so they resolve under the subpath. (`BASE_URL` is `/` for the Tauri app's own build — this is a no-op there.)
 - `npm run build:viewer` renames the build output from `viewer.html` to `index.html` as a second step. Can't just name the *source* file `index.html` — the Tauri app's own entry already owns that name at the repo root — but Pages needs `index.html` specifically to serve the bare directory URL (`/jacqueline-house-simulator/`) instead of 404ing while `/jacqueline-house-simulator/viewer.html` works fine.
+
+### iOS (sideloaded, personal use — `src-tauri/gen/apple/`)
+
+This repo was already on **Tauri 2** (`tauri = "2"` in `Cargo.toml`, `@tauri-apps/cli@^2`) when mobile support was added, and `src-tauri/src/lib.rs`'s `run()` already had `#[cfg_attr(mobile, tauri::mobile_entry_point)]` from the original `create-tauri-app` scaffold — so there was no Tauri 1→2 migration to do, and nothing about "the desktop app is a thin WebSocket client" (see "The five things in this repo" above) needed to change for iOS: the same `dist/` build, the same connection-form-on-first-launch flow, runs as-is inside the iOS webview.
+
+**One-time machine setup** (already done on Jacqueline's Mac as of this writing, documented here for a future reinstall or a second machine):
+```bash
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
+brew install cocoapods   # `tauri ios init` tries to install this via `gem`, which needs sudo — brew doesn't
+npx tauri ios init --ci  # generates src-tauri/gen/apple/ (an xcodegen-driven Xcode project), also brew-installs xcodegen + libimobiledevice
+```
+`--ci` skips the interactive prompts (team selection, etc.) — fine for this generation step since signing is set up later, by hand, in Xcode itself (see "Remaining manual steps" below).
+
+**Gotcha: `xcode-select`'s active developer directory defaulting to the Command Line Tools, not Xcode.app itself**, even with a full Xcode install present in `/Applications`. `xcodebuild -version` fails outright until this is fixed for the current shell — and setting `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` alone wasn't sufficient, because `tauri ios build`'s own `xcodebuild` invocation resolves the `xcodebuild` binary via `PATH` first rather than consistently deferring to `DEVELOPER_DIR`. The fix that actually works is putting Xcode's own toolchain directory *ahead* of everything else on `PATH`, in addition to `DEVELOPER_DIR`:
+```bash
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+export PATH="/Applications/Xcode.app/Contents/Developer/usr/bin:$HOME/.cargo/bin:$PATH"
+```
+(`$HOME/.cargo/bin` is there too since a fresh shell doesn't have `rustc`/`cargo` on `PATH` either unless `rustup`'s own shell init has run — same two-line export needed before any `cargo`/`tauri` iOS command.) Permanently fixing `xcode-select` system-wide (`sudo xcode-select -s /Applications/Xcode.app`) would also work but needs an interactive sudo password, so the per-shell export is the repeatable, non-interactive path.
+
+**Building for the Simulator** (no Apple ID / code signing needed at all — this is the resumable, fully-automatable half of iOS support):
+```bash
+npx tauri ios build --debug -t aarch64-sim --no-sign --ci
+```
+Produces `src-tauri/gen/apple/build/arm64-sim/House Simulator.app`. Confirmed working end-to-end: `xcrun simctl boot <device-id>` → `xcrun simctl install <device-id> ".../House Simulator.app"` → `xcrun simctl launch <device-id> com.jacqueline.housesimulator` → `xcrun simctl io <device-id> screenshot out.png` showed the real app running — the mobile-breakpoint UI (see "Mobile: a separate UI tree" above) and the "Connect to House Simulator server" form (`src/client/remoteState.ts`) rendering correctly, same as a phone-width browser window. Getting past that form needs the real `lan_secret` (hand-set in `server_config`, not something to guess or commit), so actually reaching the rendered house scene is the one thing left for Jacqueline to do interactively — everything about the iOS *shell* itself (Rust binary, webview, JS bundle, asset loading, mobile layout) is already proven working.
+
+**`src-tauri/gen/apple/` is meant to be committed**, not regenerated per-machine — `src-tauri/.gitignore` already excluded `/gen/schemas` (auto-regenerated capability schemas) from before any mobile work started, but deliberately left `/gen` itself untouched, so `/gen/apple` — the actual Xcode project, including signing-relevant files like `project.pbxproj` — is tracked. The generated project has its own narrower `gen/apple/.gitignore` (`xcuserdata/`, `build/`, `Externals/`) that keeps user-specific Xcode state and build output out, which is the right split: commit the project, not its build artifacts or Jacqueline's personal Xcode UI state.
+
+**Remaining manual steps (Jacqueline, on her own Mac, in Xcode — not scriptable, needs her Apple ID):**
+1. Open `src-tauri/gen/apple/tauri-app.xcodeproj` in Xcode.
+2. Xcode → Settings → Accounts → sign in with her personal Apple ID (a free account is enough for local sideloading, no paid Developer Program needed).
+3. Select the `tauri-app_iOS` target → Signing & Capabilities tab → under "Team," pick her personal team (created automatically once she's signed in) → let Xcode auto-manage signing.
+4. Connect her iPhone via USB (or same-WiFi if she's set up wireless debugging) → on the phone, trust the computer if prompted, and enable Developer Mode under Settings → Privacy & Security → Developer Mode if this is its first-ever sideloaded app.
+5. In Xcode's device/scheme picker (top toolbar), select her iPhone as the run destination instead of a Simulator.
+6. Hit Run (▶). First launch on-device will show an "Untrusted Developer" prompt on the phone — Settings → General → VPN & Device Management → trust her Apple ID's developer profile, then relaunch from the Home Screen.
+7. On the connection form (same one shown in the Simulator screenshot above), enter her LAN server address (`ws://<mac-lan-ip>:4000`) and the `server_config.lan_secret` value.
+
+After that first Xcode-driven run, reinstalling updates can go back to the headless `tauri ios build` path (now with signing available, so without `--no-sign`) if she ever wants to script future rebuilds — the manual steps above are a one-time trust/signing setup, not a per-build requirement.
