@@ -1,13 +1,48 @@
-# One-command home-server stack: the Node server (this repo) + a headless
-# aw-server. wger is deliberately NOT included here — see the comment above
-# `networks` below for why, and DOCKER.md for the full writeup.
+# One-command home-server stack: wger (via the `wger/` submodule's own
+# compose file) + a headless aw-server + the Node server (this repo).
+#
+# First-time setup: `git submodule update --init` (or clone this repo with
+# `--recurse-submodules` in the first place) before `docker compose up`,
+# so the `wger/` directory actually has wger's own docker-compose.yml in
+# it — `include:` below fails fast with a clear "no such file" otherwise.
 #
 # Bring up: docker compose up -d --build
 # Tear down: docker compose down            (add -v to also wipe the named volumes)
 #
-# First-run secrets: server_config (broadcast_url/broadcast_secret/admin_secret)
-# lives in SQLite, not an env var — see DOCKER.md's "First run" section for
-# the exact `sqlite3`/docker exec command to set it once the stack is up.
+# First-run secrets:
+# - House Simulator's own server_config (broadcast_url/broadcast_secret/
+#   admin_secret) lives in SQLite, not an env var — see DOCKER.md's "First
+#   run" section for the exact `sqlite3`/docker exec command to set it
+#   once the stack is up.
+# - wger's own secrets (SECRET_KEY, POSTGRES_PASSWORD, ...) live in
+#   `wger/config/prod.env`, committed upstream with wger's own quickstart
+#   placeholder values (NOT unique to this install) — edit that file in
+#   the submodule checkout before a real deployment, same as wger's own
+#   docs recommend for anyone using their quickstart compose. This repo
+#   never copies those values anywhere else, so there's nothing of ours to
+#   keep in sync when you change them.
+# - Once everything is up, link each House Simulator character to their
+#   own wger account via the admin tool's Characters tab (wger API
+#   token) — `wger_base_url` should be `http://web:8000` (wger's own
+#   `web` service, reachable by name on the shared network below), not
+#   `http://localhost:80` the way a non-Docker/same-machine install would
+#   use. See "wger integration" in CLAUDE.md for the full picture.
+
+include:
+  # wger's own docker-compose.yml defines web/celery_worker/celery_beat/
+  # nginx/db(postgres)/cache(redis)/powersync (the last three via its own
+  # further `include:`s under wger/services/) — see that file and
+  # wger/README.md for the full breakdown. Pulled in as a git submodule
+  # (not vendored/copied) specifically so `git submodule update --remote`
+  # can pick up wger's own upstream changes later without us having to
+  # hand-maintain a second copy of their compose structure — the exact
+  # "reuse, don't duplicate" reasoning CLAUDE.md's guiding principle
+  # already states for code in this repo, applied to an external stack
+  # instead. Compose resolves every relative path INSIDE wger's own
+  # compose files (../config/prod.env, ./config-powersync, ...) relative
+  # to where those files actually live, not relative to this file — i.e.
+  # the submodule works exactly the same included as it would standalone.
+  - path: ./wger/docker-compose.yml
 
 services:
   aw-server:
@@ -78,26 +113,18 @@ services:
       # if 4000 collides with something else on your home server; leave the
       # container side (right of the colon) matching PORT above.
       - "4000:4000"
+    # No explicit `networks:` needed — wger's own compose renames this
+    # whole project's default network to "wger_network" (see
+    # wger/docker-compose.yml's own `networks: default: name:` override,
+    # which `include:` merges into this project's model as-is), so
+    # aw-server/house-simulator-server land on it automatically just by
+    # being part of this project at all, same as wger's own services do.
+    # Confirmed via `docker compose config`: every service here resolves
+    # to the one network literally named "wger_network" with no further
+    # configuration — house-simulator-server can reach wger's `web`
+    # service by name (http://web:8000) for each character's
+    # wger_base_url for free.
 
 volumes:
   aw-server-data:
   house-simulator-data:
-
-# wger is intentionally absent from this file. Per CLAUDE.md's "mock
-# workout mirror" note, nothing in this codebase talks to a real wger
-# instance yet (server/workouts.ts is hand-seeded mock data) — there's
-# nothing here for wger to connect to, so bundling its own ~8-service
-# compose stack (web/celery_worker/celery_beat/nginx/db/cache/powersync,
-# per https://github.com/wger-project/wger's own docker-compose.yml) into
-# this file would just duplicate a stack Jacqueline already has running
-# independently (confirmed live: `docker ps` shows it as the "docker-*"
-# project, defined at ~/Programming/docker/docker-compose.yml, on its own
-# `wger_network` bridge network, nginx published on host port 80).
-#
-# If/when real wger polling is built (see wger_gamification_implementation_
-# plan.md), the straightforward way to reach it from here without exposing
-# wger to the whole LAN is to mark `wger_network` as an external network
-# and attach house-simulator-server to it — Compose can then resolve wger's
-# own `web` service by name (http://web:8000) the same way AW_HOST above
-# resolves aw-server. Until that integration exists, there's nothing to
-# wire up, so it's left out rather than guessed at.

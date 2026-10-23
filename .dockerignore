@@ -11,3 +11,10 @@ server/data
 src-tauri/target
 *.log
 *.local
+# wger's own submodule — docker-compose.yml's `include:` references it
+# directly from the filesystem (not copied into our image at all), and
+# this directory alone is sizable (a full git checkout of its own repo)
+# — excluding it keeps house-simulator-server's own build context small
+# and fast, same as every other thing above that our Dockerfile never
+# actually needs inside its own image.
+wger
