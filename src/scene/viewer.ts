@@ -1,15 +1,9 @@
-import { Application, Container, Graphics, Polygon, Text } from "pixi.js";
+import { Application, Container, Polygon } from "pixi.js";
 import { findActivityById } from "./activities";
-import { findObjectForActivityLabel, gridToScreen, ObjectAction, ObjectDef, RoomDef } from "./rooms";
+import { findObjectForActivityLabel, gridToScreen, ObjectDef, RoomDef } from "./rooms";
 import { OverlayAttribution, SceneRenderer } from "./renderer";
-import { describeAction } from "./actionDispatch";
-import { openActionPicker } from "../ui/actionPicker";
 
 export { preloadRoomAssets } from "./renderer";
-
-const LABEL_PADDING_X = 6;
-const LABEL_PADDING_Y = 3;
-const LABEL_GAP = 4; // above the object's own top edge
 
 export interface ViewerCharacterStatus {
   characterId: string;
@@ -20,22 +14,18 @@ export interface ViewerCharacterStatus {
 
 /**
  * Read-only house view for the public status page. Every click recenters
- * and shows a floating name label (e.g. "Piano") — there's no "view"
- * action to opt into, it's just what clicking does, same baseline as
- * House.ts. A lone `goTo` action is the one exception (navigates, no
- * self-pan/label first). For an `activity` action, if someone's currently
- * attributed to it, the click also switches the viewer straight to them
- * (desktop width only) via onCharacterClick — the viewer's own equivalent
- * of House.ts's peek click, except there's no "mine" to protect (the
- * viewer never starts/stops tracking) and no separate "View" menu entry
- * needed: a bare activity action and "look at whoever's doing it" are the
- * same thing here, unlike House.ts where running the activity yourself is
- * a real, distinct alternative. Mobile keeps the label-only behavior (no
- * character switch, no camera pan) — it already has its own switcher via
- * the mobile title button (see viewer-main.ts).
+ * the camera on whatever was clicked, period — no menu, ever: the viewer
+ * never executes anything, so there's nothing to choose between the way
+ * House.ts's picker lets you choose between running an activity yourself
+ * or peeking at who's already doing it. If any of the clicked object's
+ * activity actions is currently attributed to someone, the click ALSO
+ * switches the viewer straight to them (desktop width only) via
+ * onCharacterClick. A lone `goTo` action is the one exception — it
+ * navigates to the TARGET room instead of recentering on this object.
+ * Mobile only ever recenters, never switches character — it already has
+ * its own switcher via the mobile title button (see viewer-main.ts).
  */
 export class HouseViewer extends SceneRenderer {
-  private activeLabel: Container | null = null;
   private allStatuses = new Map<string, ViewerCharacterStatus>();
 
   constructor(
@@ -105,89 +95,33 @@ export class HouseViewer extends SceneRenderer {
     container.cursor = "pointer";
     container.interactiveChildren = false;
 
-    // The name label is informational, not navigation — keep it working
-    // on mobile even though the camera itself won't move (same as the
-    // decorative/no-action case).
-    const recenterAndLabel = () => {
-      if (!this.isMobileLayout()) this.setViewedRoom(roomId, obj.id);
-      this.toggleLabel(container, obj);
-    };
-
-    const runAction = (action: ObjectAction) => {
-      if (action.kind === "goTo") {
-        if (!this.isMobileLayout()) this.setViewedRoom(action.roomId);
-        return;
-      }
-      // Desktop-width only (same reasoning House.ts's own peek click uses
-      // isMobileLayout for): if someone's actually doing this right now,
-      // jump the whole viewer to them — there's nothing else "running"
-      // this activity could mean here, unlike House.ts's own distinct
-      // run-it-yourself alternative, so no separate "View" choice exists.
-      if (this.isMobileLayout()) return;
-      const label = findActivityById(action.activityId)?.label;
-      const attribution = label ? this.attributionFor(label) : null;
-      if (attribution) this.onCharacterClick(attribution);
-    };
-
     container.on("pointertap", (e) => {
       e.stopPropagation(); // otherwise this bubbles to the room's own click handler too
 
+      // A lone goTo is the one exception that doesn't recenter on THIS
+      // object — it navigates to the target room instead.
       if (actions.length === 1 && actions[0].kind === "goTo") {
-        runAction(actions[0]);
+        if (!this.isMobileLayout()) this.setViewedRoom(actions[0].roomId);
         return;
       }
 
-      recenterAndLabel();
-      if (actions.length === 0) return;
+      if (!this.isMobileLayout()) this.setViewedRoom(roomId, obj.id);
 
-      if (actions.length === 1) {
-        runAction(actions[0]);
-        return;
+      // Desktop-width only (same reasoning House.ts's own peek click uses
+      // isMobileLayout for) — switch to whoever's attributed to any of
+      // this object's activity actions, if anyone. First match wins; an
+      // object is never expected to have two activity actions both "in
+      // use" by different people at once.
+      if (this.isMobileLayout()) return;
+      for (const action of actions) {
+        if (action.kind !== "activity") continue;
+        const label = findActivityById(action.activityId)?.label;
+        const attribution = label ? this.attributionFor(label) : null;
+        if (attribution) {
+          this.onCharacterClick(attribution);
+          break;
+        }
       }
-
-      const native = e.nativeEvent as MouseEvent;
-      openActionPicker(
-        native.clientX,
-        native.clientY,
-        actions.map((action) => ({ label: describeAction(action), onclick: () => runAction(action) })),
-      );
     });
-  }
-
-  private toggleLabel(container: Container, obj: ObjectDef) {
-    if (this.activeLabel?.parent === container) {
-      container.removeChild(this.activeLabel);
-      this.activeLabel = null;
-      return;
-    }
-    this.activeLabel?.parent?.removeChild(this.activeLabel);
-
-    // The label sits inside `world`, which the current zoom scales up — a
-    // text texture rendered at the default 1x resolution then gets stretched
-    // by that transform, which is what was reading as blurry. Rendering it
-    // at a resolution matching the zoom (and the display's own pixel ratio)
-    // keeps it crisp at any scale.
-    const text = new Text({
-      text: obj.name,
-      style: { fontSize: 12, fill: 0xffffff, fontFamily: "sans-serif" },
-      resolution: this.scale * (window.devicePixelRatio || 1),
-    });
-    text.anchor.set(0.5, 0.5);
-
-    const background = new Graphics()
-      .roundRect(
-        -text.width / 2 - LABEL_PADDING_X,
-        -text.height / 2 - LABEL_PADDING_Y,
-        text.width + LABEL_PADDING_X * 2,
-        text.height + LABEL_PADDING_Y * 2,
-        4,
-      )
-      .fill({ color: 0x000000, alpha: 0.6 });
-
-    const label = new Container();
-    label.addChild(background, text);
-    label.position.set(obj.width / 2, -(text.height / 2 + LABEL_PADDING_Y + LABEL_GAP));
-    container.addChild(label);
-    this.activeLabel = label;
   }
 }
