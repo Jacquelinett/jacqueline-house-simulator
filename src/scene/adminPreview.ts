@@ -1,6 +1,6 @@
-import { Container, FederatedPointerEvent, Graphics, Polygon } from "pixi.js";
+import { AlphaFilter, Container, FederatedPointerEvent, Graphics, Polygon } from "pixi.js";
 import { gridToScreen, ObjectDef, RoomDef, screenToGrid } from "./rooms";
-import { buildLayer, SceneRenderer } from "./renderer";
+import { buildLayer, DIM_ALPHA, SceneRenderer } from "./renderer";
 
 /**
  * Read-only-except-for-placement preview renderer for the admin tool —
@@ -69,6 +69,13 @@ export class AdminPreviewRenderer extends SceneRenderer {
   private placingRoomContainer: Container | null = null;
   private placingGhost: Container | null = null;
   private placingObjectId: number | null = null;
+  // One whole-room AlphaFilter per room, keyed here rather than reusing
+  // the base class's walls-only roomWallAlphaFilters — the admin tool's
+  // focus is purely on editing one room at a time, so a non-viewed room
+  // (e.g. a synthesized neighbor in the connections preview) dims
+  // entirely, not just its walls, unlike the real game/viewer (see
+  // applyRoomDim below and renderer.ts's own comment on why those differ).
+  private roomAlphaFilters = new Map<number, AlphaFilter>();
 
   constructor(
     app: ConstructorParameters<typeof SceneRenderer>[0],
@@ -105,6 +112,19 @@ export class AdminPreviewRenderer extends SceneRenderer {
       e.stopPropagation();
       this.onObjectClick(roomId, obj.id);
     });
+  }
+
+  /** Gives every room its own whole-room AlphaFilter (see roomAlphaFilters' own comment) — walls already got their own from the base class's buildRoom, this just adds a second one wrapping the WHOLE room container on top. */
+  protected onRoomContainerBuilt(roomId: number, container: Container): void {
+    const filter = new AlphaFilter();
+    container.filters = [filter];
+    this.roomAlphaFilters.set(roomId, filter);
+  }
+
+  /** Dims the whole room (not just walls, unlike the base class's default) — the admin tool's focus is purely on editing one room at a time. */
+  protected applyRoomDim(roomId: number, isViewed: boolean): void {
+    const filter = this.roomAlphaFilters.get(roomId);
+    if (filter) filter.alpha = isViewed ? 1 : DIM_ALPHA;
   }
 
   /** Moves one object's own sprite directly — no scene rebuild, so this never blips. Only valid for an already-built object (same type/size as when the scene was last built). */

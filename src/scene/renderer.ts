@@ -4,7 +4,10 @@ import { findActivityById } from "./activities";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./characterSprites";
 import { TileOverride, TileRect } from "./tileset";
 
-const DIM_ALPHA = 0.4;
+// Exported for AdminPreviewRenderer (adminPreview.ts), which reuses this
+// same dim level for its own whole-room dimming instead of a separately
+// hand-picked value.
+export const DIM_ALPHA = 0.4;
 const PAN_EASE = 0.15;
 // Exported for the admin tool's object-type preview (admin-main.ts),
 // which simulates the overlay layer too now (defaulting to Jacqueline's
@@ -357,8 +360,12 @@ export class SceneRenderer {
     this.devOutlines.push(outline);
     container.addChild(outline);
 
+    this.onRoomContainerBuilt(room.id, container);
     return container;
   }
+
+  /** Override point for a subclass that wants to wrap/instrument a room's whole container right after it's built — e.g. AdminPreviewRenderer attaching its own whole-room dim filter (see applyRoomDim). No-op by default. */
+  protected onRoomContainerBuilt(_roomId: number, _container: Container): void {}
 
   protected buildObject(roomId: number, obj: ObjectDef): Container {
     const container = new Container();
@@ -599,7 +606,6 @@ export class SceneRenderer {
     const viewedLevel = roomDefs.find((r) => r.id === this.viewedRoomId)!.level;
     for (const [id, container] of this.roomContainers) {
       const room = roomDefs.find((r) => r.id === id)!;
-      const wallsFilter = this.roomWallAlphaFilters.get(id)!;
       if (room.level !== viewedLevel) {
         // A different floor entirely — hide rather than dim, since it's not
         // spatially related to what's in view the way a same-floor
@@ -611,12 +617,8 @@ export class SceneRenderer {
         container.visible = false;
         container.eventMode = "none";
       } else {
-        // Same floor: the whole room is always fully visible now — only
-        // its walls dim when it isn't the one actually being viewed, so
-        // floor/objects in a neighboring room stay clearly visible (and
-        // clickable, see interactiveObjects below) at a glance.
         container.visible = true;
-        wallsFilter.alpha = id === this.viewedRoomId ? 1 : DIM_ALPHA;
+        this.applyRoomDim(id, id === this.viewedRoomId);
         container.eventMode = "static";
       }
     }
@@ -631,6 +633,12 @@ export class SceneRenderer {
       const room = roomDefs.find((r) => r.id === roomId)!;
       container.eventMode = room.level === viewedLevel ? "static" : "none";
     }
+  }
+
+  /** Default (the real game/viewer): only the room's walls dim when it isn't the one actually being viewed — see roomWallAlphaFilters' own comment on why, and onRoomContainerBuilt for how a subclass overriding this can supply a different filter entirely. Overridden by AdminPreviewRenderer to dim the WHOLE room instead, since the admin tool's focus is purely on editing one room at a time, not glancing at a live neighboring room's floor/objects the way the real game wants to. */
+  protected applyRoomDim(roomId: number, isViewed: boolean) {
+    const wallsFilter = this.roomWallAlphaFilters.get(roomId)!;
+    wallsFilter.alpha = isViewed ? 1 : DIM_ALPHA;
   }
 
   protected computeCameraTarget() {
