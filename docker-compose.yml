@@ -1,0 +1,103 @@
+# One-command home-server stack: the Node server (this repo) + a headless
+# aw-server. wger is deliberately NOT included here — see the comment above
+# `networks` below for why, and DOCKER.md for the full writeup.
+#
+# Bring up: docker compose up -d --build
+# Tear down: docker compose down            (add -v to also wipe the named volumes)
+#
+# First-run secrets: server_config (broadcast_url/broadcast_secret/admin_secret)
+# lives in SQLite, not an env var — see DOCKER.md's "First run" section for
+# the exact `sqlite3`/docker exec command to set it once the stack is up.
+
+services:
+  aw-server:
+    # Headless aw-server (the Rust data server ActivityWatch's desktop tray
+    # app — aw-qt — normally launches for you). aw-qt itself is just a tray
+    # launcher/watcher-manager; the actual API server underneath is a plain
+    # binary that runs fine standalone. Rather than build our own image from
+    # ActivityWatch's official `scripts/Dockerfile` (which requires checking
+    # out aw-server-rust + its aw-webui submodule and compiling Rust), this
+    # uses an existing community image that already does exactly that and
+    # already binds to 0.0.0.0 (not aw-server's own 127.0.0.1-only default)
+    # and already stores its data under one /config volume:
+    #   https://github.com/GraphicHealer/aw-server-docker
+    # Confirmed via that repo's Dockerfile: CMD is
+    # `aw-server --host 0.0.0.0 --cors-origins "*"`, EXPOSE 5600, VOLUME /config.
+    image: ghcr.io/graphichealer/aw-server-docker:latest
+    # That image only publishes an amd64 manifest (confirmed via `docker
+    # manifest inspect` — no arm64 entry at all), so on an arm64 host
+    # (Apple Silicon Docker Desktop, a Raspberry Pi, ...) Docker refuses to
+    # pull it without this. Delete this line entirely if your home server
+    # is a plain x86_64 box (most "spare PC in the closet" home servers
+    # are) — amd64 is then its native architecture already, no emulation
+    # involved. On arm64 this runs under Rosetta/qemu emulation instead of
+    # natively — fine for a lightweight Rust binary like aw-server, but if
+    # that ever becomes a real problem, the alternative is building
+    # aw-server-rust's own official multi-stage `scripts/Dockerfile` from
+    # source instead (naturally multi-arch since it compiles per-platform,
+    # see DOCKER.md), at the cost of a much slower Rust build.
+    platform: linux/amd64
+    restart: unless-stopped
+    volumes:
+      - aw-server-data:/config
+    ports:
+      # Exposed to the host too (not just the house-simulator-server
+      # container) purely for debugging via aw-server's own web UI at
+      # http://<host>:5600 — not required for the Node server, which reaches
+      # it over the Compose network below instead. Comment out if you don't
+      # want AW's own UI reachable from the LAN at all.
+      - "5600:5600"
+
+  house-simulator-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - aw-server
+    environment:
+      # Overrides src/aw/client.ts's localhost default — see that file's own
+      # comment. "aw-server" below is this compose file's service name,
+      # resolved via Compose's built-in DNS; there is no loopback between
+      # separate containers the way CLAUDE.md's "stays on loopback relative
+      # to the Node server" assumed for the non-Docker install.
+      - AW_HOST=aw-server
+      - AW_PORT=5600
+      - PORT=4000
+    volumes:
+      # server/db.ts resolves its SQLite file + WAL to <this dir>/data —
+      # named volume so `docker compose down && docker compose up` (without
+      # -v) keeps every goal/todo/character/room/activity and the
+      # hand-edited server_config row (val.town + admin + lan secrets).
+      - house-simulator-data:/app/server/data
+    ports:
+      # This is the one port that actually needs to reach the LAN — every
+      # device (Tauri build or plain browser) connects here over WebSocket/
+      # HTTP, same as CLAUDE.md's "every device on the home network ... gets
+      # full read/write access". Change the host side (left of the colon)
+      # if 4000 collides with something else on your home server; leave the
+      # container side (right of the colon) matching PORT above.
+      - "4000:4000"
+
+volumes:
+  aw-server-data:
+  house-simulator-data:
+
+# wger is intentionally absent from this file. Per CLAUDE.md's "mock
+# workout mirror" note, nothing in this codebase talks to a real wger
+# instance yet (server/workouts.ts is hand-seeded mock data) — there's
+# nothing here for wger to connect to, so bundling its own ~8-service
+# compose stack (web/celery_worker/celery_beat/nginx/db/cache/powersync,
+# per https://github.com/wger-project/wger's own docker-compose.yml) into
+# this file would just duplicate a stack Jacqueline already has running
+# independently (confirmed live: `docker ps` shows it as the "docker-*"
+# project, defined at ~/Programming/docker/docker-compose.yml, on its own
+# `wger_network` bridge network, nginx published on host port 80).
+#
+# If/when real wger polling is built (see wger_gamification_implementation_
+# plan.md), the straightforward way to reach it from here without exposing
+# wger to the whole LAN is to mark `wger_network` as an external network
+# and attach house-simulator-server to it — Compose can then resolve wger's
+# own `web` service by name (http://web:8000) the same way AW_HOST above
+# resolves aw-server. Until that integration exists, there's nothing to
+# wire up, so it's left out rather than guessed at.

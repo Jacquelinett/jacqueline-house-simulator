@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-ssr
+dist-viewer
+dist-admin
+server/data
+.git
+.github
+.vscode
+.claude
+src-tauri/target
+*.log
+*.local

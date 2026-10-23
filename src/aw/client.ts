@@ -17,7 +17,24 @@ const APP_NAME = "House Simulator";
 
 const REFRESH_INTERVAL_SEC = 10;
 
-const client = new AWClient("house-simulator");
+// aw-client defaults to http://127.0.0.1:5600 when no baseURL is given — correct
+// for the non-Docker dev flow (`npm run server` on the same machine as a
+// locally-installed aw-server, per CLAUDE.md's "stays on loopback relative to
+// the Node server"). Once this server and aw-server run as separate Docker
+// Compose containers, loopback no longer reaches aw-server at all — Compose's
+// service-name DNS (e.g. `http://aw-server:5600`) is needed instead. AW_HOST/
+// AW_PORT let docker-compose.yml override this per-deployment without
+// touching the default behavior anyone running `npm run server` directly
+// still gets when the env vars are unset.
+//
+// `process` is read off `globalThis` (cast through `any`) rather than typed
+// directly — this file lives under src/, so the desktop app's own root
+// tsconfig.json (DOM lib, no @types/node) typechecks it too even though
+// nothing under src/ actually imports it anymore; a direct `process.env`
+// reference would fail that build with "Cannot find name 'process'".
+const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+const awHost = env?.AW_HOST;
+const client = new AWClient("house-simulator", awHost ? { baseURL: `http://${awHost}:${env?.AW_PORT ?? 5600}` } : undefined);
 
 export interface RunningActivity {
   id: number;
