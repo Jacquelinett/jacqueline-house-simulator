@@ -301,12 +301,26 @@ export class SceneRenderer {
     app.stage.addChild(this.world);
     this.world.scale.set(this.scale);
 
-    // Depth-sort back-to-front by screen Y so a room further back (e.g.
-    // DDR, which sits behind-and-left of the office) paints first and a
+    // Depth-sort back-to-front so a room further back paints first and a
     // room in front of it paints on top — matters once rooms dim/overlap:
     // without this, whichever happened to be later in roomDefs always
     // rendered above the other regardless of which is actually behind.
-    const depthSorted = [...roomDefs].sort((a, b) => a.y - b.y);
+    //
+    // Sorted by each room's FARTHEST corner (y + height), not its origin's
+    // own y — room.y is only the origin tile's screen Y (see
+    // resolveRooms()), which ignores the room's own footprint size
+    // entirely. Two differently-sized adjacent rooms can have their origin
+    // Ys ordered opposite to how their actual footprints should paint: a
+    // small room's origin can sit further "south" (larger y) than a big
+    // room's origin even though the big room's own extent reaches
+    // further south overall — sorting by origin alone then always paints
+    // the small room on top, no matter which edge they're connected from.
+    // y + height is exactly that farthest corner's own resolved depth
+    // (height is (cols+rows)*TILE_HEIGHT/2 — the same u+v-based quantity
+    // gridToScreen's y already is, just spanning the room's full footprint
+    // instead of one point), so this fixes that without needing a real
+    // per-pixel overlap test.
+    const depthSorted = [...roomDefs].sort((a, b) => a.y + a.height - (b.y + b.height));
     for (const room of depthSorted) {
       const container = this.buildRoom(room);
       container.position.set(room.x, room.y);
