@@ -207,10 +207,14 @@ function totalWallHeight(room: RoomDef): number {
  * alone; exactly 2 uses `part.top` + `part.bottom`, no mid). This is the
  * same reusable-middle-piece trick used widthwise along a wall run (one
  * stack per grid step) applied heightwise instead — see WallPart's own
- * comment. `xOffset` (default 0) shifts the whole stack sideways by that
- * many pixels without touching its (u,v) grid position at all — used only
- * by placeCorner below, to lay a second half-width stack immediately to
- * the right of the first.
+ * comment. `xOffset`/`yOffset` (default 0) shift the whole stack by that
+ * many pixels without touching its (u,v) grid position (and therefore its
+ * override lookup, see placeWallWithOverrides) at all. `xOffset` is used
+ * by placeCorner, to lay a second half-width stack immediately to the
+ * right of the first, and by buildBackWalls' right-wall run, to make room
+ * for that same extra half-width (see its own comment). `yOffset` is used
+ * by buildBackWalls' end caps, to anchor a cap to its last regular panel's
+ * own height instead of continuing the per-step stagger one step further.
  */
 function placeWallStack(
   container: Container,
@@ -221,10 +225,11 @@ function placeWallStack(
   groundOffset: number,
   wallHeightUnits: number,
   xOffset = 0,
+  yOffset = 0,
 ) {
   const { x, y } = gridToScreen(u, v);
   const baseX = x - TILE_WIDTH / 2 + xOffset;
-  const baseY = y - groundOffset;
+  const baseY = y - groundOffset + yOffset;
   for (let i = 0; i < wallHeightUnits; i++) {
     const rect = i === 0 ? part.top : i === wallHeightUnits - 1 ? part.bottom : part.mid;
     const sprite = new Sprite(tileTexture(texturePath, rect));
@@ -243,6 +248,9 @@ function placeWallStack(
  * top/mid/bottom shape). Falls through to placeWallStack only when
  * there's no override and `renderDefault` is true, same gating
  * placeTileWithOverrides already uses for showLeftWall/showRightWall etc.
+ * `xOffset`/`yOffset` just forward to placeWallStack — the override
+ * lookup itself always stays keyed by the logical (u,v), never the
+ * shifted pixel position.
  */
 function placeWallWithOverrides(
   container: Container,
@@ -254,6 +262,8 @@ function placeWallWithOverrides(
   groundOffset: number,
   wallHeightUnits: number,
   renderDefault = true,
+  xOffset = 0,
+  yOffset = 0,
 ) {
   const override = overrides?.find((o) => o.u === u && o.v === v);
   if (override) {
@@ -261,7 +271,7 @@ function placeWallWithOverrides(
     return;
   }
   if (!renderDefault) return;
-  placeWallStack(container, texturePath, part, u, v, groundOffset, wallHeightUnits);
+  placeWallStack(container, texturePath, part, u, v, groundOffset, wallHeightUnits, xOffset, yOffset);
 }
 
 /**
@@ -338,12 +348,7 @@ export function buildBackWalls(room: RoomDef): Container {
   // each back edge, capped with an edge tile at the far end — the cap
   // takes the very next grid step right after the last regular panel
   // (room.rows/room.cols, never touched by the loops below), same
-  // groundOffset as everything else. The old 32px-wide art placed its cap
-  // a further step out still (room.rows+1/room.cols+1) with an extra
-  // +TILE_HEIGHT pulled back in — a correction that only made sense for
-  // that wider, half-blank art; these honestly-16px-wide autotile pieces
-  // don't need it and visibly gapped/floated away from the run when it
-  // was still applied (confirmed live, see commit history).
+  // groundOffset as everything else EXCEPT for capRise below.
   // showLeftWall/showRightWall (default true when unset) gate the DEFAULT
   // tile only — a wallOverrides entry on a hidden side still renders (see
   // placeWallWithOverrides's own comment). If only one side renders, that
@@ -356,14 +361,42 @@ export function buildBackWalls(room: RoomDef): Container {
   const showRight = room.showRightWall !== false;
   placeCorner(container, wo, wall, 0, 0, groundOffset, wallHeightUnits, showLeft, showRight);
 
+  // An end cap sits at the very next grid step past the last regular
+  // panel — but that step's OWN natural per-step stagger would drop it
+  // TILE_HEIGHT/2 further down than the last panel, continuing the run's
+  // diagonal recession one step past where the wall actually ends. A cap
+  // isn't a continuation of that recession, it's the flat end of the
+  // run, so it's pulled back up by that same half-step to land flush
+  // with the last panel's own height instead (confirmed live: without
+  // this, the cap visibly sagged below the run and undershot its own top).
+  const capRise = TILE_HEIGHT / 2;
+
   for (let v = 1; v < room.rows; v++) {
     placeWallWithOverrides(container, wo, wall.texture, wall.left, 0, v, groundOffset, wallHeightUnits, showLeft);
   }
-  placeWallWithOverrides(container, wo, wall.texture, wall.edgeLeft, 0, room.rows, groundOffset, wallHeightUnits, showLeft);
+  placeWallWithOverrides(container, wo, wall.texture, wall.edgeLeft, 0, room.rows, groundOffset, wallHeightUnits, showLeft, 0, -capRise);
+
+  // The right run needs one more correction the left run doesn't: when
+  // the corner draws a true two-stack joint (see placeCorner), its
+  // `connection` half occupies a second half-width slot immediately
+  // after the corner's own (xOffset=WALL_PART_SIZE) — space the old
+  // single 32px-wide corner tile never needed, since one tile covered
+  // the whole joint. The left side doesn't have this problem: the
+  // corner's own left half uses wall.left at xOffset=0, the exact same
+  // alignment every regular left panel already uses, so v=1 picks up
+  // right where it left off with nothing extra to account for. But
+  // without this shift, the right run's regular panels/cap landed at
+  // the SAME x as the corner's connection half (confirmed by computing
+  // both: u=1's own gridToScreen position and the connection half's
+  // xOffset=WALL_PART_SIZE position are numerically identical), directly
+  // overlapping it instead of continuing past it — which is what made
+  // the whole right run (and therefore its cap) read as one tile short
+  // of where it should actually end.
+  const rightWallShift = showLeft && showRight ? WALL_PART_SIZE : 0;
   for (let u = 1; u < room.cols; u++) {
-    placeWallWithOverrides(container, wo, wall.texture, wall.right, u, 0, groundOffset, wallHeightUnits, showRight);
+    placeWallWithOverrides(container, wo, wall.texture, wall.right, u, 0, groundOffset, wallHeightUnits, showRight, rightWallShift);
   }
-  placeWallWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols, 0, groundOffset, wallHeightUnits, showRight);
+  placeWallWithOverrides(container, wo, wall.texture, wall.edgeRight, room.cols, 0, groundOffset, wallHeightUnits, showRight, rightWallShift, -capRise);
 
   return container;
 }
