@@ -207,6 +207,16 @@ function placeTileWithOverrides(
  */
 export function buildBackWalls(room: RoomDef): Container {
   const container = new Container();
+  // Purely decorative — only the room itself (attachRoomInteraction) and
+  // its objects (attachObjectInteraction) are ever meant to be clickable.
+  // Pixi's own default eventMode ("passive") already shouldn't block a
+  // click from reaching a sibling underneath, but this makes that a
+  // guarantee rather than an assumption riding on an unset default —
+  // confirmed live as the fix for a reported case of the bottom-right
+  // wall (painted in FRONT of objects, see buildBottomWalls below)
+  // appearing to steal clicks meant for an object sitting close to that
+  // edge, regardless of what Pixi version/render-order changes later.
+  container.eventMode = "none";
   const { floor, wall } = room;
 
   // Walls sit on the same ground level as the floor, just drawn taller: their
@@ -272,6 +282,12 @@ export function buildBackWalls(room: RoomDef): Container {
  */
 export function buildBottomWalls(room: RoomDef): Container {
   const container = new Container();
+  // See buildBackWalls' own comment — same explicit non-interactivity
+  // guarantee, just more important here specifically: this is the wall
+  // that paints IN FRONT of objects (the whole point of this function),
+  // so it's the one actually positioned to visually sit between the
+  // camera and an object's sprite for an object placed near this edge.
+  container.eventMode = "none";
   const { floor, wall } = room;
   const groundOffset = wall.left.h - floor.mid.h;
 
@@ -306,6 +322,10 @@ export function buildBottomWalls(room: RoomDef): Container {
 /** Builds just the floor for a room, tiled per its chosen floor variant — see buildBackWalls's own comment on why walls are split out separately. */
 export function buildFloor(room: RoomDef): Container {
   const container = new Container();
+  // Same "purely decorative, never clickable" guarantee as the walls/
+  // glow/dev-outline — see buildBackWalls' own comment for the full
+  // reasoning.
+  container.eventMode = "none";
   const { floor } = room;
 
   // Drawn back-to-front (painter's algorithm) so each tile's visible
@@ -524,6 +544,11 @@ export class SceneRenderer {
       .fill({ color: GLOW_COLOR, alpha: GLOW_ALPHA });
     glow.filters = [new BlurFilter({ strength: GLOW_BLUR_STRENGTH })];
     glow.visible = false;
+    // Same "purely decorative" guarantee as buildBackWalls/buildBottomWalls/
+    // the dev outline above — this already sits behind the floor/objects
+    // in paint order so it's unlikely to matter in practice, but explicit
+    // beats relying on z-order alone, same reasoning throughout this fix.
+    glow.eventMode = "none";
     this.roomGlows.set(room.id, glow);
     container.addChild(glow);
 
@@ -550,6 +575,12 @@ export class SceneRenderer {
       .poly([back.x, back.y + dy, right.x, right.y + dy, front.x, front.y + dy, left.x, left.y + dy])
       .stroke({ width: 2, color: 0xff0000 });
     outline.visible = this.devMode;
+    // Dev-only visualization, painted last/on top of everything in the
+    // room — same "purely decorative, never clickable" guarantee as
+    // buildBackWalls/buildBottomWalls above, so toggling dev mode on
+    // can't introduce its own click-stealing on top of whatever the
+    // walls already don't do anymore.
+    outline.eventMode = "none";
     this.devOutlines.push(outline);
     container.addChild(outline);
 
