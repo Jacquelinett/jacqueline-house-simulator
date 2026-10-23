@@ -10,7 +10,7 @@ import { setViewingCharacter } from "../dashboard/viewingCharacter";
 export { preloadRoomAssets } from "./renderer";
 
 // Mobile has no floor buttons and nowhere obvious to go otherwise — used
-// only when toggleActivity() (the mobile Pick Action list) starts an
+// only when pickActivity() (the mobile Pick Action list) starts an
 // activity with no object of its own to focus instead.
 const FALLBACK_ROOM_ID = 1; // Jacqueline's Office
 
@@ -239,8 +239,8 @@ export class House extends SceneRenderer {
    * Renamed from the old toggleActivity() now that tapping the
    * already-running row is a no-op (just recenters) rather than stopping
    * it — same "stop is only the dedicated red button" change as
-   * runActivity() above, applied here so the Pick Action list's own ☑/☐
-   * checkbox styling doesn't keep implying it's still a toggle.
+   * runActivity() above. The list's own ☑/☐ marks are purely informational
+   * now (what's running right now), not a checkbox you can uncheck.
    */
   public pickActivity(label: string): void {
     const current = getRemoteStatus();
