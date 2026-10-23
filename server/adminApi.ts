@@ -20,6 +20,10 @@ import { getBroadcastHealthInfo, pushHouseLayout } from "./broadcast";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OBJECT_ASSETS_DIR = resolve(__dirname, "../public/objects");
+// Separate from OBJECT_ASSETS_DIR — overlay/character-sprite art lives
+// under public/characters/ (e.g. playing_piano.png, jacqueline_playPiano.png),
+// a different directory from below/above's furniture art under public/objects/.
+const CHARACTER_ASSETS_DIR = resolve(__dirname, "../public/characters");
 
 function readJsonBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -126,10 +130,19 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
       }
     }
 
-    // /api/admin/object-assets — texture picker source list
+    // /api/admin/object-assets — below/above texture picker source list
     if (parts[2] === "object-assets" && method === "GET") {
       const files = readdirSync(OBJECT_ASSETS_DIR).filter((f) => f.endsWith(".png"));
       return sendJson(res, 200, files.map((f) => `/objects/${f}`)), true;
+    }
+
+    // /api/admin/character-assets — overlay texture picker source list
+    // (a shared-default fallback texture, e.g. playing_piano.png — a
+    // specific character's own <spriteName>_<spriteKey>.png isn't meant
+    // to be picked here, just typed as a spriteKey; see openObjectTypeEditModal)
+    if (parts[2] === "character-assets" && method === "GET") {
+      const files = readdirSync(CHARACTER_ASSETS_DIR).filter((f) => f.endsWith(".png"));
+      return sendJson(res, 200, files.map((f) => `/characters/${f}`)), true;
     }
 
     // /api/admin/rooms[/:id][/objects[/:objectId]]

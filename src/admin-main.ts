@@ -551,20 +551,190 @@ async function ensureTextureLoaded(path: string | undefined): Promise<void> {
 }
 
 /**
- * Edits one object type's name/size/primary sprite/anchor point. Only
- * `below[0]` is editable here (a texture picked from existing files under
- * public/objects/, or a solid-color placeholder) — every current type has
- * at most one `below` entry, so this doesn't lose anything for them;
- * `overlay`/`above`/`actions` are carried through unchanged from whatever
- * was loaded. The preview renders a real floor+wall room corner (sized to
- * the object's own footprint) and repositions the sprite so its anchor
- * point always lands exactly on that corner — so tuning the anchor via the
- * number inputs below shows, live, how the object will actually sit
- * relative to the wall. No click-to-set: a live Pixi canvas turned out to
- * be a fiddly, imprecise way to pick a specific pixel — the text inputs
- * are the only way to set it.
+ * One below/overlay/above layer's editor — texture-or-color-or-none, plus
+ * offsetX/offsetY, and (overlay only, via `spriteKeyFields`) a spriteKey
+ * and optional frame-animation fields. Below/above pick their texture
+ * from `assetPaths` (public/objects/ via /api/admin/object-assets);
+ * overlay's own call site passes the character-art list instead
+ * (public/characters/ via /api/admin/character-assets) — that's the
+ * shared-default FALLBACK texture a spriteKey falls back to, not a
+ * specific character's own art, which is never picked from a list here,
+ * only named via the spriteKey convention (see characterSprites.ts).
  */
-async function openObjectTypeEditModal(id: string | null, existing: ObjectTypeDef | null, assetPaths: string[], onSaved: () => void) {
+function buildLayerSection(
+  title: string,
+  initial: SpriteLayer | undefined,
+  assetPaths: string[],
+  spriteKeyFields: boolean,
+  onChange: () => void,
+): { element: HTMLElement; getLayer(): SpriteLayer | undefined } {
+  const section = document.createElement("div");
+  const heading = document.createElement("h3");
+  heading.textContent = title;
+  section.appendChild(heading);
+
+  const form = document.createElement("div");
+  form.className = "admin-form";
+  section.appendChild(form);
+
+  const textureSelect = document.createElement("select");
+  const noneOpt = document.createElement("option");
+  noneOpt.value = "__none__";
+  noneOpt.textContent = "(none)";
+  textureSelect.appendChild(noneOpt);
+  const colorOpt = document.createElement("option");
+  colorOpt.value = "__color__";
+  colorOpt.textContent = "(solid color)";
+  textureSelect.appendChild(colorOpt);
+  for (const path of assetPaths) {
+    const opt = document.createElement("option");
+    opt.value = path;
+    opt.textContent = path.replace(/^\/(objects|characters)\//, "");
+    textureSelect.appendChild(opt);
+  }
+  textureSelect.value = !initial ? "__none__" : initial.texture ?? "__color__";
+  form.append(document.createTextNode("Texture:"), textureSelect);
+
+  const colorInput = document.createElement("input");
+  colorInput.type = "color";
+  colorInput.value = `#${(initial?.color ?? 0x888888).toString(16).padStart(6, "0")}`;
+  colorInput.style.display = textureSelect.value === "__color__" ? "" : "none";
+  form.appendChild(colorInput);
+
+  const offsetXInput = document.createElement("input");
+  offsetXInput.type = "number";
+  offsetXInput.value = String(initial?.offsetX ?? 0);
+  offsetXInput.style.width = "60px";
+  const offsetYInput = document.createElement("input");
+  offsetYInput.type = "number";
+  offsetYInput.value = String(initial?.offsetY ?? 0);
+  offsetYInput.style.width = "60px";
+  form.append(document.createTextNode("Offset X:"), offsetXInput, document.createTextNode("Offset Y:"), offsetYInput);
+
+  let spriteKeyInput: HTMLInputElement | null = null;
+  let frameWidthInput: HTMLInputElement | null = null;
+  let frameHeightInput: HTMLInputElement | null = null;
+  let frameCountInput: HTMLInputElement | null = null;
+  let frameDurationInput: HTMLInputElement | null = null;
+  if (spriteKeyFields) {
+    const spriteRow = document.createElement("div");
+    spriteRow.className = "admin-form";
+    spriteKeyInput = document.createElement("input");
+    spriteKeyInput.placeholder = "e.g. playPiano";
+    spriteKeyInput.value = initial?.spriteKey ?? "";
+    spriteRow.append(document.createTextNode("Sprite key:"), spriteKeyInput);
+    section.appendChild(spriteRow);
+
+    const spriteHint = document.createElement("div");
+    spriteHint.className = "admin-hint";
+    spriteHint.textContent =
+      'Resolves per-character to "<their sprite name>_<key>.png" under public/characters/ (see the Characters tab\'s own "Sprite name" field) — falls back to the texture above when a character has no sprite name, or no matching file exists. Leave blank to always use the texture above.';
+    section.appendChild(spriteHint);
+
+    const frameRow = document.createElement("div");
+    frameRow.className = "admin-form";
+    frameWidthInput = document.createElement("input");
+    frameWidthInput.type = "number";
+    frameWidthInput.placeholder = "px";
+    frameWidthInput.value = initial?.frameWidth ? String(initial.frameWidth) : "";
+    frameWidthInput.style.width = "60px";
+    frameHeightInput = document.createElement("input");
+    frameHeightInput.type = "number";
+    frameHeightInput.placeholder = "px";
+    frameHeightInput.value = initial?.frameHeight ? String(initial.frameHeight) : "";
+    frameHeightInput.style.width = "60px";
+    frameCountInput = document.createElement("input");
+    frameCountInput.type = "number";
+    frameCountInput.placeholder = "1";
+    frameCountInput.value = initial?.frameCount ? String(initial.frameCount) : "";
+    frameCountInput.style.width = "50px";
+    frameDurationInput = document.createElement("input");
+    frameDurationInput.type = "number";
+    frameDurationInput.placeholder = "150";
+    frameDurationInput.value = initial?.frameDurationMs ? String(initial.frameDurationMs) : "";
+    frameDurationInput.style.width = "60px";
+    frameRow.append(
+      document.createTextNode("Frame W:"),
+      frameWidthInput,
+      document.createTextNode("Frame H:"),
+      frameHeightInput,
+      document.createTextNode("Frame count:"),
+      frameCountInput,
+      document.createTextNode("ms/frame:"),
+      frameDurationInput,
+    );
+    section.appendChild(frameRow);
+
+    const frameHint = document.createElement("div");
+    frameHint.className = "admin-hint";
+    frameHint.textContent =
+      "Only needed for animation: a frame count above 1 means the texture above is a spritesheet, sliced into that many equal-width frames left to right. Leave frame count blank (or 1) for a plain static image.";
+    section.appendChild(frameHint);
+  }
+
+  textureSelect.onchange = async () => {
+    colorInput.style.display = textureSelect.value === "__color__" ? "" : "none";
+    if (textureSelect.value !== "__none__" && textureSelect.value !== "__color__") await ensureTextureLoaded(textureSelect.value);
+    onChange();
+  };
+  colorInput.oninput = onChange;
+  offsetXInput.onchange = onChange;
+  offsetYInput.onchange = onChange;
+  spriteKeyInput?.addEventListener("change", onChange);
+  frameWidthInput?.addEventListener("change", onChange);
+  frameHeightInput?.addEventListener("change", onChange);
+  frameCountInput?.addEventListener("change", onChange);
+  frameDurationInput?.addEventListener("change", onChange);
+
+  function getLayer(): SpriteLayer | undefined {
+    if (textureSelect.value === "__none__") return undefined;
+    const layer: SpriteLayer = textureSelect.value === "__color__" ? { color: parseInt(colorInput.value.slice(1), 16) } : { texture: textureSelect.value };
+    const offsetX = Number(offsetXInput.value) || 0;
+    const offsetY = Number(offsetYInput.value) || 0;
+    if (offsetX) layer.offsetX = offsetX;
+    if (offsetY) layer.offsetY = offsetY;
+    if (spriteKeyInput?.value.trim()) layer.spriteKey = spriteKeyInput.value.trim();
+    const frameCount = frameCountInput ? Number(frameCountInput.value) || 0 : 0;
+    if (frameCount > 1) {
+      layer.frameCount = frameCount;
+      if (frameWidthInput?.value) layer.frameWidth = Number(frameWidthInput.value);
+      if (frameHeightInput?.value) layer.frameHeight = Number(frameHeightInput.value);
+      if (frameDurationInput?.value) layer.frameDurationMs = Number(frameDurationInput.value);
+    }
+    return layer;
+  }
+
+  return { element: section, getLayer };
+}
+
+/**
+ * Edits one object type's name/size/below+overlay+above layers/anchor
+ * point. Each of the three layers is editable via buildLayerSection
+ * (texture-or-color-or-none, offset, and — overlay only — a spriteKey
+ * plus optional frame-animation fields); every current type has at most
+ * one entry per slot, so one section per slot (not a dynamic array
+ * editor) doesn't lose anything for them. `actions` is no longer a type-
+ * level concern at all (see ObjectTypeDef's own comment in rooms.ts).
+ * The live preview only renders below+above (same as before this
+ * three-section rework) — overlay is conditionally visible during an
+ * actual activity in the real game/viewer, which this static anchor-
+ * tuning preview doesn't simulate, so showing it here would need its own
+ * "pretend it's active" toggle to mean anything; not built. The preview
+ * renders a real floor+wall room corner (sized to the object's own
+ * footprint) and repositions the sprite so its anchor point always lands
+ * exactly on that corner — so tuning the anchor via the number inputs
+ * below shows, live, how the object will actually sit relative to the
+ * wall. No click-to-set: a live Pixi canvas turned out to be a fiddly,
+ * imprecise way to pick a specific pixel — the text inputs are the only
+ * way to set it.
+ */
+async function openObjectTypeEditModal(
+  id: string | null,
+  existing: ObjectTypeDef | null,
+  assetPaths: string[],
+  characterAssetPaths: string[],
+  onSaved: () => void,
+) {
   const draftType: ObjectTypeDef = existing
     ? { ...existing, below: existing.below ? [...existing.below] : undefined }
     : makeDefaultObjectType();
@@ -597,28 +767,17 @@ async function openObjectTypeEditModal(id: string | null, existing: ObjectTypeDe
   heightInput.style.width = "60px";
   form.append(document.createTextNode("W:"), widthInput, document.createTextNode("H:"), heightInput);
 
-  const spriteSelect = document.createElement("select");
-  const colorOpt = document.createElement("option");
-  colorOpt.value = "__color__";
-  colorOpt.textContent = "(solid color)";
-  spriteSelect.appendChild(colorOpt);
-  for (const path of assetPaths) {
-    const opt = document.createElement("option");
-    opt.value = path;
-    opt.textContent = path.replace(/^\/objects\//, "");
-    spriteSelect.appendChild(opt);
-  }
-  const initialTexture = draftType.below?.[0]?.texture;
-  spriteSelect.value = initialTexture ?? "__color__";
-  form.append(document.createTextNode("Sprite:"), spriteSelect);
-
-  const colorInput = document.createElement("input");
-  colorInput.type = "color";
-  const initialColor = draftType.below?.[0]?.color;
-  colorInput.value = `#${(initialColor ?? 0x888888).toString(16).padStart(6, "0")}`;
-  colorInput.style.display = initialTexture ? "none" : "";
-  form.appendChild(colorInput);
   modal.body.appendChild(form);
+
+  // Three independent layer sections — below/above affect the live
+  // preview below (rebuildSprite, wired via onChange); overlay doesn't,
+  // see this function's own doc comment on why.
+  const belowSection = buildLayerSection("Below (base sprite)", draftType.below?.[0], assetPaths, false, () => rebuildSprite());
+  modal.body.appendChild(belowSection.element);
+  const overlaySection = buildLayerSection("Overlay (shown while in use)", draftType.overlay?.[0], characterAssetPaths, true, () => {});
+  modal.body.appendChild(overlaySection.element);
+  const aboveSection = buildLayerSection("Above (rendered on top)", draftType.above?.[0], assetPaths, false, () => rebuildSprite());
+  modal.body.appendChild(aboveSection.element);
 
   const anchorHint = document.createElement("div");
   anchorHint.className = "admin-hint";
@@ -704,10 +863,6 @@ async function openObjectTypeEditModal(id: string | null, existing: ObjectTypeDe
     .fill({ color: 0xff3366 });
   stage.addChild(crosshair);
 
-  function currentPrimaryLayer(): SpriteLayer {
-    return spriteSelect.value === "__color__" ? { color: parseInt(colorInput.value.slice(1), 16) } : { texture: spriteSelect.value };
-  }
-
   /** Mirrors the room editor's tile-mode display convention: shows anchorX/anchorY as raw pixels, or as the tile (u,v) they correspond to. */
   function syncAnchorInputs() {
     anchorXLabel.textContent = anchorTileModeCheckbox.checked ? "Anchor tile u:" : "Anchor X:";
@@ -734,7 +889,8 @@ async function openObjectTypeEditModal(id: string | null, existing: ObjectTypeDe
     spriteLayer = new Container();
     const width = Number(widthInput.value) || 1;
     const height = Number(heightInput.value) || 1;
-    for (const layer of [currentPrimaryLayer(), ...(draftType.above ?? [])]) {
+    const layers = [belowSection.getLayer(), aboveSection.getLayer()].filter((l): l is SpriteLayer => !!l);
+    for (const layer of layers) {
       spriteLayer.addChild(buildLayer(layer, width, height));
     }
     spriteLayer.position.set(-anchorX, -anchorY);
@@ -743,12 +899,6 @@ async function openObjectTypeEditModal(id: string | null, existing: ObjectTypeDe
     app.render();
   }
 
-  spriteSelect.onchange = async () => {
-    colorInput.style.display = spriteSelect.value === "__color__" ? "" : "none";
-    if (spriteSelect.value !== "__color__") await ensureTextureLoaded(spriteSelect.value);
-    rebuildSprite();
-  };
-  colorInput.oninput = () => rebuildSprite();
   function applyWidthHeight() {
     if (!anchorTouched) {
       anchorX = Math.round((Number(widthInput.value) || 0) / 2);
@@ -780,12 +930,17 @@ async function openObjectTypeEditModal(id: string | null, existing: ObjectTypeDe
       showError(new Error("Name is required"));
       return;
     }
+    const below = belowSection.getLayer();
+    const overlay = overlaySection.getLayer();
+    const above = aboveSection.getLayer();
     const payload: ObjectTypeDef = {
       ...draftType,
       name,
       width: Number(widthInput.value),
       height: Number(heightInput.value),
-      below: [currentPrimaryLayer()],
+      below: below ? [below] : undefined,
+      overlay: overlay ? [overlay] : undefined,
+      above: above ? [above] : undefined,
       anchorX,
       anchorY,
     };
@@ -804,16 +959,17 @@ async function openObjectTypeEditModal(id: string | null, existing: ObjectTypeDe
   cancelBtn.onclick = () => modal.close();
   modal.onClose(() => app.destroy());
 
-  await ensureTextureLoaded(initialTexture);
+  await ensureTextureLoaded(belowSection.getLayer()?.texture);
   rebuildSprite();
   modal.open();
 }
 
 async function renderObjectTypes(body: HTMLElement) {
   body.textContent = "";
-  const [types, assetPaths] = await Promise.all([
+  const [types, assetPaths, characterAssetPaths] = await Promise.all([
     adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
     adminFetch<string[]>("/api/admin/object-assets"),
+    adminFetch<string[]>("/api/admin/character-assets"),
   ]);
 
   const table = document.createElement("table");
@@ -826,7 +982,7 @@ async function renderObjectTypes(body: HTMLElement) {
     const actionCell = document.createElement("td");
     const editBtn = document.createElement("button");
     editBtn.textContent = "Edit";
-    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, () => renderObjectTypes(body));
+    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, characterAssetPaths, () => renderObjectTypes(body));
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {
@@ -847,7 +1003,7 @@ async function renderObjectTypes(body: HTMLElement) {
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.textContent = "Add Object Type";
-  addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, () => renderObjectTypes(body));
+  addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, characterAssetPaths, () => renderObjectTypes(body));
   body.appendChild(addBtn);
 }
 
