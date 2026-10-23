@@ -25,8 +25,8 @@ const PAN_EASE = 0.15;
 // not its visual center, so growth is slightly corner-weighted rather
 // than perfectly symmetric; at this small a scale it reads as a
 // negligible difference.
-const ROOM_RAISE_PX = -10;
-const ROOM_GROW_SCALE = 1.05;
+const ROOM_RAISE_PX = -15;
+const ROOM_GROW_SCALE = 1.1;
 const ROOM_FOCUS_EASE = 0.2;
 // A soft blurred glow sitting behind the viewed room's own floor
 // silhouette (see buildRoom) — not a crisp outline, a filled-then-blurred
@@ -499,6 +499,19 @@ export class SceneRenderer {
     const container = new Container();
     this.attachRoomInteraction(container, room);
 
+    // Floor tiles are top-aligned at their grid point and extend DOWN by
+    // their own canvas height (diamond + visible "thickness" below it), so
+    // the silhouette's true edge sits one tile-height lower than the raw
+    // grid corners used for camera/hit-area math. Computed up front (not
+    // just before the dev outline, which used to be the only thing that
+    // needed them) since the glow below needs the exact same silhouette
+    // points, just built into the paint order much earlier.
+    const dy = TILE_HEIGHT / 2;
+    const back = gridToScreen(0, 0);
+    const right = gridToScreen(room.cols, 0);
+    const front = gridToScreen(room.cols, room.rows);
+    const left = gridToScreen(0, room.rows);
+
     // Back walls get their own AlphaFilter (see roomWallAlphaFilters' own
     // comment) — floor has none, it's always full opacity whenever the
     // room itself is visible at all. Back walls paint BEFORE the floor
@@ -508,6 +521,22 @@ export class SceneRenderer {
     backWalls.filters = [wallsFilter];
     container.addChild(backWalls);
     this.roomWallAlphaFilters.set(room.id, wallsFilter);
+
+    // Same floor silhouette as the dev outline below, FILLED (not
+    // stroked) and blurred, toggled by applyFocus (isViewed) instead of
+    // devMode — the "this one's focused" ambient glow. Paints right after
+    // the back walls — confirmed live that painting it any earlier (e.g.
+    // behind everything) left it hidden under the back walls' own opaque
+    // tiles — so it still sits behind the floor/objects (reads as light
+    // coming from underneath them) while showing up in front of the back
+    // walls instead of being occluded by them.
+    const glow = new Graphics()
+      .poly([back.x, back.y + dy, right.x, right.y + dy, front.x, front.y + dy, left.x, left.y + dy])
+      .fill({ color: GLOW_COLOR, alpha: GLOW_ALPHA });
+    glow.filters = [new BlurFilter({ strength: GLOW_BLUR_STRENGTH })];
+    glow.visible = false;
+    this.roomGlows.set(room.id, glow);
+    container.addChild(glow);
 
     container.addChild(buildFloor(room));
 
@@ -528,37 +557,12 @@ export class SceneRenderer {
     container.addChild(bottomWalls);
     this.roomFrontWallAlphaFilters.set(room.id, frontWallsFilter);
 
-    // Floor tiles are top-aligned at their grid point and extend DOWN by
-    // their own canvas height (diamond + visible "thickness" below it), so
-    // the silhouette's true edge sits one tile-height lower than the raw
-    // grid corners used for camera/hit-area math.
-    const dy = TILE_HEIGHT / 2;
-    const back = gridToScreen(0, 0);
-    const right = gridToScreen(room.cols, 0);
-    const front = gridToScreen(room.cols, room.rows);
-    const left = gridToScreen(0, room.rows);
     const outline = new Graphics()
       .poly([back.x, back.y + dy, right.x, right.y + dy, front.x, front.y + dy, left.x, left.y + dy])
       .stroke({ width: 2, color: 0xff0000 });
     outline.visible = this.devMode;
     this.devOutlines.push(outline);
     container.addChild(outline);
-
-    // Same floor silhouette as the dev outline above, FILLED (not
-    // stroked) and blurred, toggled by applyFocus (isViewed) instead of
-    // devMode — the "this one's focused" ambient glow. Sits behind
-    // everything else in the room (index 0, inserted after the fact
-    // rather than built first, purely so it can reuse back/right/front/
-    // left/dy above instead of recomputing them) so it reads as light
-    // coming from underneath, not an overlay on top of the room's own
-    // content.
-    const glow = new Graphics()
-      .poly([back.x, back.y + dy, right.x, right.y + dy, front.x, front.y + dy, left.x, left.y + dy])
-      .fill({ color: GLOW_COLOR, alpha: GLOW_ALPHA });
-    glow.filters = [new BlurFilter({ strength: GLOW_BLUR_STRENGTH })];
-    glow.visible = false;
-    this.roomGlows.set(room.id, glow);
-    container.addChildAt(glow, 0);
 
     this.onRoomContainerBuilt(room.id, container);
     return container;
