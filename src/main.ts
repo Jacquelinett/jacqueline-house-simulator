@@ -4,7 +4,7 @@ import { setupGoalsPanel, setupJacquelineStatus } from "./goals/panel";
 import { setupGoalsManageModal } from "./goals/manageModal";
 import { setupTodosModal } from "./todos/modal";
 import { setupTimerModal } from "./timer/modal";
-import { setupWorkoutModal } from "./workout/modal";
+import { setupWorkoutModal, setupWorkoutContent } from "./workout/modal";
 import { setupSettingsModal, setupSettingsContent } from "./settings/modal";
 import { getSettings, onSettingsChange } from "./settings/state";
 import { setupMessagesModal } from "./broadcast/messagesModal";
@@ -135,12 +135,21 @@ function setupMobilePickAction(house: House): { open: () => void } {
 }
 
 /**
- * The mobile tab bar + its 4 pages. Built unconditionally alongside the
+ * The mobile tab bar + its 5 pages. Built unconditionally alongside the
  * desktop UI — shared-chrome.css's media query decides which is visible,
  * so this never needs to know whether it's actually on a small screen.
+ * "Workout" is app-only (the viewer passes its own, shorter tab list to
+ * setupMobileTabs() — see viewer-main.ts) since the Workout modal's real
+ * wger data has no viewer-facing equivalent.
  */
 function setupMobileUI(house: House): void {
-  const tabs = setupMobileTabs();
+  const tabs = setupMobileTabs([
+    { id: "home", label: "Home" },
+    { id: "dashboard", label: "Dashboard" },
+    { id: "statistic", label: "Statistic" },
+    { id: "workout", label: "Workout" },
+    { id: "settings", label: "Settings" },
+  ] as const);
 
   const mobileStatusEl = document.createElement("div");
   mobileStatusEl.className = "mobile-status";
@@ -157,10 +166,12 @@ function setupMobileUI(house: House): void {
 
   setupDashboardContent(tabs.pages.dashboard);
   const statistic = setupStatisticContent(tabs.pages.statistic);
+  const workout = setupWorkoutContent(tabs.pages.workout);
   setupSettingsContent(tabs.pages.settings);
 
   tabs.onTabChange((tab) => {
     if (tab === "statistic") statistic.refresh();
+    if (tab === "workout") workout.refresh();
   });
 }
 

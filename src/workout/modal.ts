@@ -21,6 +21,8 @@ function showEmpty(container: HTMLElement, text: string): void {
   container.appendChild(empty);
 }
 
+type WorkoutTab = "today" | "lifetime" | "records" | "log";
+
 /**
  * Read-only display of real wger workout data — four tabs, all backed by
  * server_config.wger_base_url/wger_api_token (server/wger.ts); every tab
@@ -30,32 +32,36 @@ function showEmpty(container: HTMLElement, text: string): void {
  * no activity-tracking tie-in. See also the Dashboard's "Lifted Today"
  * section (src/dashboard/panel.ts), which shows a coarser summary of the
  * Today tab's exact same data without needing this modal open.
+ *
+ * Split from setupWorkoutModal() below the same way setupStatisticContent
+ * is split from setupStatisticModal() — pure content, no modal chrome —
+ * so the exact same tabs can be reused as a mobile tab page instead of a
+ * second, drifting copy (see main.ts's setupMobileUI()).
  */
-export function setupWorkoutModal(): { open: () => void } {
-  const modal = buildModal("Workout", { size: "large", resizable: true });
+export function setupWorkoutContent(container: HTMLElement): { refresh(): void } {
+  let activeTab: WorkoutTab = "today";
 
   const tabsRow = document.createElement("div");
   tabsRow.className = "stat-tabs";
-  modal.body.appendChild(tabsRow);
+  container.appendChild(tabsRow);
 
   const todaySection = document.createElement("div");
-  modal.body.appendChild(todaySection);
+  container.appendChild(todaySection);
 
   const lifetimeSection = document.createElement("div");
   lifetimeSection.style.display = "none";
-  modal.body.appendChild(lifetimeSection);
+  container.appendChild(lifetimeSection);
 
   const recordsSection = document.createElement("div");
   recordsSection.style.display = "none";
-  modal.body.appendChild(recordsSection);
+  container.appendChild(recordsSection);
 
   const logSection = document.createElement("div");
   logSection.style.display = "none";
-  modal.body.appendChild(logSection);
+  container.appendChild(logSection);
 
-  type Tab = "today" | "lifetime" | "records" | "log";
-  const sections: Record<Tab, HTMLElement> = { today: todaySection, lifetime: lifetimeSection, records: recordsSection, log: logSection };
-  const renderers: Record<Tab, () => void> = {
+  const sections: Record<WorkoutTab, HTMLElement> = { today: todaySection, lifetime: lifetimeSection, records: recordsSection, log: logSection };
+  const renderers: Record<WorkoutTab, () => void> = {
     today: renderToday,
     lifetime: renderLifetime,
     records: renderRecords,
@@ -72,7 +78,8 @@ export function setupWorkoutModal(): { open: () => void } {
       ] as const,
       "today",
       (tab) => {
-        for (const [t, section] of Object.entries(sections) as [Tab, HTMLElement][]) section.style.display = t === tab ? "" : "none";
+        activeTab = tab;
+        for (const [t, section] of Object.entries(sections) as [WorkoutTab, HTMLElement][]) section.style.display = t === tab ? "" : "none";
         renderers[tab]();
       },
       "stat-tab",
@@ -310,9 +317,21 @@ export function setupWorkoutModal(): { open: () => void } {
   }
 
   return {
+    refresh() {
+      renderers[activeTab]();
+    },
+  };
+}
+
+/** Opened on demand from the Workout button, same "wrap the shared content in modal chrome" pattern setupStatisticModal() uses for the Statistic modal. */
+export function setupWorkoutModal(): { open: () => void } {
+  const modal = buildModal("Workout", { size: "large", resizable: true });
+  const content = setupWorkoutContent(modal.body);
+
+  return {
     open() {
       modal.open();
-      renderToday();
+      content.refresh();
     },
   };
 }

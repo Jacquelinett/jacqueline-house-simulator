@@ -18,6 +18,7 @@ import {
   pushStatus,
   pushTodayStreaks,
   pushWorkoutToday,
+  pushWgerSummary,
   pushYesterdayStats,
 } from "./broadcast";
 import { serveStatic } from "./staticServer";
@@ -140,6 +141,7 @@ async function main() {
     pushStatus(character.id).catch((err) => console.error(`[server] initial pushStatus failed for ${character.name}`, err));
     pushGoals(character.id).catch((err) => console.error(`[server] initial pushGoals failed for ${character.name}`, err));
     pushWorkoutToday(character.id).catch((err) => console.error(`[server] initial pushWorkoutToday failed for ${character.name}`, err));
+    pushWgerSummary(character.id).catch((err) => console.error(`[server] initial pushWgerSummary failed for ${character.name}`, err));
   }
 
   // Stats scan much more AW history (or, for streaks, more of the history
@@ -154,7 +156,10 @@ async function main() {
   // — only a poll can find out — but unlike pushYesterdayStats/
   // pushTodayStreaks, today's workout genuinely can still change through
   // the day, so it always re-fetches on every tick rather than
-  // self-skipping once "today" has already been pushed once.
+  // self-skipping once "today" has already been pushed once. pushWgerSummary
+  // (Lifetime Stats + Personal Records) rides along too — lifetime totals
+  // and PRs are about as static as pushStats's own activity totals, same
+  // "no separate cadence" reasoning.
   const runStatsPushes = () => {
     for (const character of getPublishedCharacters()) {
       pushStats(character.id).catch((err) => console.error(`[server] pushStats failed for ${character.name}`, err));
@@ -162,6 +167,7 @@ async function main() {
       pushYesterdayStats(character.id).catch((err) => console.error(`[server] pushYesterdayStats failed for ${character.name}`, err));
       pushTodayStreaks(character.id).catch((err) => console.error(`[server] pushTodayStreaks failed for ${character.name}`, err));
       pushWorkoutToday(character.id).catch((err) => console.error(`[server] pushWorkoutToday failed for ${character.name}`, err));
+      pushWgerSummary(character.id).catch((err) => console.error(`[server] pushWgerSummary failed for ${character.name}`, err));
     }
   };
   runStatsPushes();

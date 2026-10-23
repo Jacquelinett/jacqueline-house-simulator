@@ -17,7 +17,7 @@ import {
   renderGoalOutcomes,
   renderWorkoutToday,
 } from "./dashboard/render";
-import { WorkoutSession } from "./workout/types";
+import { WorkoutSession, WgerLifetimeStats, PersonalRecord } from "./workout/types";
 import { summarizeWorkoutSessions } from "./workout/format";
 import { CURRENT_USER_NAME, renderCurrentActivity, renderSyncStatus } from "./status/render";
 import type { ActivityStat } from "./dashboard/stats";
@@ -98,6 +98,8 @@ interface AllDataResponse {
   streaks: Record<string, Record<string, number>>;
   /** Absent on a val.town deployment not yet re-pasted with /api/workout-today support — see loadHouseLayout's own "fall back, don't break the page" reasoning. Missing or empty for a character just means "nothing to show," same contract the Dashboard's wger section has everywhere else (see dashboard/render.ts's renderWorkoutToday). */
   workoutToday?: Record<string, WorkoutSession[]>;
+  /** Same "absent means not yet re-pasted" contract as workoutToday above — Lifetime Stats + Personal Records only, see server/broadcast.ts's pushWgerSummary on why the Log tab's session detail is deliberately excluded. */
+  wgerSummary?: Record<string, { lifetimeStats: WgerLifetimeStats | null; personalRecords: PersonalRecord[] }>;
 }
 
 const SELECTED_CHARACTER_KEY = "houseSimulatorViewerCharacterId";
@@ -303,6 +305,7 @@ function buildDashboardBlock(container: HTMLElement): { render(input: DashboardR
 function buildStatisticBlock(container: HTMLElement): {
   renderAllTime(stats: ActivityStat[]): void;
   renderPeriod(periods: FixedPeriodStats[]): void;
+  renderWgerSummary(lifetimeStats: WgerLifetimeStats | null, personalRecords: PersonalRecord[]): void;
 } {
   let latestPeriods: FixedPeriodStats[] = [];
   let selectedKey: FixedPeriodKey = "thisWeek";
@@ -347,6 +350,32 @@ function buildStatisticBlock(container: HTMLElement): {
   const list = document.createElement("div");
   list.className = "dashboard-list";
   allTimeSection.appendChild(list);
+
+  // --- Lifetime Stats + Personal Records (real wger data, the wger-linked
+  // character only — see server/broadcast.ts's pushWgerSummary). Same
+  // row-building style as the desktop app's own Workout modal tabs
+  // (src/workout/modal.ts), just fed from the val.town blob instead of a
+  // live RPC query — the viewer has no WebSocket connection to ask wger
+  // directly. Hidden entirely (not an empty-state placeholder) when
+  // there's nothing wger-linked to show, same "pride glance" stance
+  // renderWorkoutToday already takes for the Dashboard's own wger section.
+  const lifetimeHeading = document.createElement("h3");
+  lifetimeHeading.className = "panel-section-heading";
+  lifetimeHeading.textContent = "Lifetime Stats";
+  allTimeSection.appendChild(lifetimeHeading);
+
+  const lifetimeList = document.createElement("div");
+  lifetimeList.className = "dashboard-list";
+  allTimeSection.appendChild(lifetimeList);
+
+  const recordsHeading = document.createElement("h3");
+  recordsHeading.className = "panel-section-heading";
+  recordsHeading.textContent = "Personal Records";
+  allTimeSection.appendChild(recordsHeading);
+
+  const recordsList = document.createElement("div");
+  recordsList.className = "dashboard-list";
+  allTimeSection.appendChild(recordsList);
 
   // --- Period: fixed buckets only, no date picker (see function comment). ---
 
@@ -422,6 +451,54 @@ function buildStatisticBlock(container: HTMLElement): {
     renderPeriod(periods) {
       latestPeriods = periods;
       renderSelectedPeriod();
+    },
+    renderWgerSummary(lifetimeStats, personalRecords) {
+      const hasAny = lifetimeStats != null || personalRecords.length > 0;
+      lifetimeHeading.style.display = hasAny ? "" : "none";
+      lifetimeList.style.display = hasAny ? "" : "none";
+      recordsHeading.style.display = hasAny ? "" : "none";
+      recordsList.style.display = hasAny ? "" : "none";
+      if (!hasAny) return;
+
+      lifetimeList.textContent = "";
+      if (lifetimeStats) {
+        const rows: [string, string][] = [
+          ["Total weight lifted", `${lifetimeStats.totalWeightLifted.toLocaleString()}${lifetimeStats.totalWeightLiftedUnit}`],
+          ["Total workouts", String(lifetimeStats.totalWorkouts)],
+          ["Current streak", `${lifetimeStats.currentStreak} day${lifetimeStats.currentStreak === 1 ? "" : "s"}`],
+          ["Longest streak", `${lifetimeStats.longestStreak} day${lifetimeStats.longestStreak === 1 ? "" : "s"}`],
+        ];
+        for (const [label, value] of rows) {
+          const row = document.createElement("div");
+          row.className = "dashboard-row workout-row";
+          const name = document.createElement("span");
+          name.className = "dashboard-text";
+          name.textContent = label;
+          row.appendChild(name);
+          const detail = document.createElement("span");
+          detail.className = "workout-sets-detail";
+          detail.textContent = value;
+          row.appendChild(detail);
+          lifetimeList.appendChild(row);
+        }
+      }
+
+      recordsList.textContent = "";
+      for (const record of personalRecords) {
+        const row = document.createElement("div");
+        row.className = "dashboard-row workout-row";
+        const name = document.createElement("span");
+        name.className = "dashboard-text";
+        name.textContent = record.exerciseName;
+        row.appendChild(name);
+        const detail = document.createElement("span");
+        detail.className = "workout-sets-detail";
+        const weightPart = `${record.weight}${record.weightUnit ?? "kg"} × ${record.reps}`;
+        const oneRm = record.oneRepMaxEstimate != null ? ` (1RM ~${record.oneRepMaxEstimate}${record.weightUnit ?? "kg"})` : "";
+        detail.textContent = `${weightPart}${oneRm}`;
+        row.appendChild(detail);
+        recordsList.appendChild(row);
+      }
     },
   };
 }
@@ -756,6 +833,7 @@ async function main() {
         statisticModal.open();
         statisticDesktop.renderAllTime(latestStats);
         statisticDesktop.renderPeriod(latestPeriodStats);
+        statisticDesktop.renderWgerSummary(latestWgerLifetimeStats, latestWgerPersonalRecords);
       },
     },
     { label: "Settings", onclick: settingsModal.open },
@@ -772,7 +850,12 @@ async function main() {
   // decides which is visible). Home has no panel chrome at all, just bare
   // status text + a FAB; Dashboard/Statistic/Settings mirror the floating
   // panel/modal content above into full-screen pages instead. ---
-  const mobileTabs = setupMobileTabs();
+  const mobileTabs = setupMobileTabs([
+    { id: "home", label: "Home" },
+    { id: "dashboard", label: "Dashboard" },
+    { id: "statistic", label: "Statistic" },
+    { id: "settings", label: "Settings" },
+  ] as const);
 
   const mobileStatus = document.createElement("div");
   mobileStatus.className = "mobile-status";
@@ -808,6 +891,7 @@ async function main() {
     if (tab === "statistic") {
       statisticMobile.renderAllTime(latestStats);
       statisticMobile.renderPeriod(latestPeriodStats);
+      statisticMobile.renderWgerSummary(latestWgerLifetimeStats, latestWgerPersonalRecords);
     }
   });
 
@@ -825,6 +909,8 @@ async function main() {
   let latestStreaksByGoalId: Record<string, number> = {};
   let latestGoals: Goal[] = [];
   let latestWorkoutSessions: WorkoutSession[] = [];
+  let latestWgerLifetimeStats: WgerLifetimeStats | null = null;
+  let latestWgerPersonalRecords: PersonalRecord[] = [];
   let lastSyncAt: Date | null = null;
   let lastSyncError: string | null = null;
 
@@ -888,6 +974,8 @@ async function main() {
     latestYesterdayMinutesByLabel = data?.yesterday[selectedCharacter.id] ?? {};
     latestStreaksByGoalId = data?.streaks[selectedCharacter.id] ?? {};
     latestWorkoutSessions = data?.workoutToday?.[selectedCharacter.id] ?? [];
+    latestWgerLifetimeStats = data?.wgerSummary?.[selectedCharacter.id]?.lifetimeStats ?? null;
+    latestWgerPersonalRecords = data?.wgerSummary?.[selectedCharacter.id]?.personalRecords ?? [];
     latestActivityLabel = status?.activityLabel ?? null;
     latestTodayMinutesByLabel = status?.todayMinutesByLabel ?? {};
     startedAtMs = status?.startedAt ? new Date(status.startedAt).getTime() : null;

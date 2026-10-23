@@ -11,7 +11,7 @@ import { getActivities } from "./activities";
 import { getObjectTypes } from "./objectTypes";
 import { getRoomSpecs } from "./rooms";
 import { getFloors } from "./floors";
-import { getWorkoutsForDate } from "./workouts";
+import { getWorkoutsForDate, getLifetimeStatsForCharacter, getPersonalRecordsForCharacter } from "./workouts";
 
 /**
  * Server-side home for src/broadcast/client.ts's push functions — same
@@ -168,20 +168,36 @@ export async function pushTodayStreaks(characterId: string): Promise<void> {
 }
 
 /**
- * Today's logged workout (real wger data when configured, mock mirror
- * otherwise — see server/workouts.ts's dispatch) — pushed every hourly
- * tick alongside pushStats/pushPeriodStats/etc. (see server/index.ts's
- * runStatsPushes and that call site's own comment on why this one never
- * self-skips the way pushYesterdayStats/pushTodayStreaks do). Always
- * pushes, even when there's nothing logged yet today (an empty `sessions`
- * array) — simpler than a separate "absent" vs "empty" distinction, and
- * the viewer already treats an empty array as "don't show this section"
- * (see dashboard/render.ts's renderWorkoutToday).
+ * Today's logged workout — real wger data for the wger-linked character,
+ * empty for everyone else (see server/workouts.ts's dispatch) — pushed
+ * every hourly tick alongside pushStats/pushPeriodStats/etc. (see
+ * server/index.ts's runStatsPushes and that call site's own comment on
+ * why this one never self-skips the way pushYesterdayStats/
+ * pushTodayStreaks do). Always pushes, even when there's nothing logged
+ * yet today (an empty `sessions` array) — simpler than a separate
+ * "absent" vs "empty" distinction, and the viewer already treats an empty
+ * array as "don't show this section" (see dashboard/render.ts's
+ * renderWorkoutToday).
  */
 export async function pushWorkoutToday(characterId: string): Promise<void> {
   const todayStr = localDateString(new Date());
   const sessions = await getWorkoutsForDate(characterId, todayStr);
   await pushWithHealth("/api/workout-today", { ...characterFields(characterId), sessions }, "workout today");
+}
+
+/**
+ * Lifetime Stats + Personal Records (the Workout modal's own two
+ * "pride"-worthy tabs — see CLAUDE.md's wger section) combined into one
+ * blob, same reasoning periodStats bundles its four windows together
+ * rather than four separate pushes. Deliberately excludes the Log tab —
+ * start/end times and session notes read as personal logistics, not
+ * something-to-brag-about, the same "pride glance, not a full log" stance
+ * pushWorkoutToday's own Today-only scope already takes. Empty/null for
+ * anyone not wger-linked, same as every other wger-backed push.
+ */
+export async function pushWgerSummary(characterId: string): Promise<void> {
+  const [lifetimeStats, personalRecords] = await Promise.all([getLifetimeStatsForCharacter(characterId), getPersonalRecordsForCharacter(characterId)]);
+  await pushWithHealth("/api/wger-summary", { ...characterFields(characterId), lifetimeStats, personalRecords }, "wger summary");
 }
 
 /**

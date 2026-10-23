@@ -16,8 +16,8 @@
  * carries `characterId`/`characterName` in the body (House Simulator
  * resolves both server-side before pushing).
  *
- *   GET  /api/all -> public JSON: { characters, status, goals, stats, periodStats, yesterday, streaks, workoutToday }
- *                    — everything above, for every published character at once, each of the latter seven
+ *   GET  /api/all -> public JSON: { characters, status, goals, stats, periodStats, yesterday, streaks, workoutToday, wgerSummary }
+ *                    — everything above, for every published character at once, each of the latter eight
  *                    keyed by character id. This is the ONLY endpoint the viewer itself calls on a
  *                    refresh (startup, the poll interval, or its manual refresh button) — one request
  *                    gets it everything, so switching which character it's showing is a pure
@@ -53,13 +53,20 @@
  *                        completion history to compute this; the viewer doesn't
  *   PUT  /api/streaks -> (secret required) House Simulator pushes this on the same cadence as /api/stats
  *   GET  /api/workout-today?character=<id> -> public JSON: that character's logged workout sessions for
- *                        the real current day (real wger data when House Simulator's server_config has
- *                        wger credentials set, else its own mock mirror — see server/workouts.ts) — an
- *                        empty array means "nothing logged (yet)," not "unavailable"
+ *                        the real current day (real wger data for the wger-linked character, empty for
+ *                        everyone else — see server/workouts.ts) — an empty array means "nothing logged
+ *                        (yet)," not "unavailable"
  *   PUT  /api/workout-today -> (secret required) House Simulator pushes this on the same cadence as
  *                        /api/stats (hourly) — unlike /api/yesterday or /api/streaks it never self-skips
  *                        once already pushed "for today," since a workout can still be logged later the
  *                        same day
+ *   GET  /api/wger-summary?character=<id> -> public JSON: { lifetimeStats, personalRecords } — wger's own
+ *                        computed lifetime totals/streaks and auto-detected personal records (1RM estimate
+ *                        included), for the wger-linked character; null/[] for everyone else. Deliberately
+ *                        excludes session-log detail (start/end times, notes) — see House Simulator's
+ *                        pushWgerSummary comment on why that stays desktop-only.
+ *   PUT  /api/wger-summary -> (secret required) House Simulator pushes this on the same cadence as
+ *                        /api/stats (hourly)
  *   GET  /api/messages  -> (secret required) your in-app inbox reads these
  *   POST /api/messages  -> public: a viewer leaves you a note
  *   DELETE /api/messages/:id -> (secret required) dismiss a message from your inbox
@@ -185,6 +192,16 @@ async function ensureSchema() {
       updated_at text not null
     )`,
   );
+  await migrateToPerCharacter(
+    "wger_summary_blob",
+    `create table if not exists wger_summary_blob (
+      character_id text primary key,
+      character_name text not null,
+      lifetime_stats_json text,
+      personal_records_json text not null,
+      updated_at text not null
+    )`,
+  );
   await sqlite.execute(`create table if not exists messages (
     id integer primary key autoincrement,
     author text,
@@ -223,7 +240,7 @@ async function handleGetCharacters(): Promise<Response> {
  * rather than being left out of that map entirely.
  */
 async function handleGetAll(): Promise<Response> {
-  const [statusRows, goalsRows, statsRows, periodStatsRows, yesterdayRows, streaksRows, workoutTodayRows] = await Promise.all([
+  const [statusRows, goalsRows, statsRows, periodStatsRows, yesterdayRows, streaksRows, workoutTodayRows, wgerSummaryRows] = await Promise.all([
     sqlite.execute("select * from status"),
     sqlite.execute("select character_id, goals_json from goals_blob"),
     sqlite.execute("select character_id, stats_json from stats_blob"),
@@ -231,6 +248,7 @@ async function handleGetAll(): Promise<Response> {
     sqlite.execute("select character_id, minutes_json from yesterday_blob"),
     sqlite.execute("select character_id, streaks_json from streaks_blob"),
     sqlite.execute("select character_id, sessions_json from workout_today_blob"),
+    sqlite.execute("select character_id, lifetime_stats_json, personal_records_json from wger_summary_blob"),
   ]);
 
   const characters: { id: string; name: string; spriteName: string | null }[] = [];
@@ -263,7 +281,15 @@ async function handleGetAll(): Promise<Response> {
   const workoutToday: Record<string, unknown> = {};
   for (const r of workoutTodayRows.rows as any[]) workoutToday[r.character_id] = JSON.parse(r.sessions_json);
 
-  return Response.json({ characters, status, goals, stats, periodStats, yesterday, streaks, workoutToday });
+  const wgerSummary: Record<string, { lifetimeStats: unknown; personalRecords: unknown }> = {};
+  for (const r of wgerSummaryRows.rows as any[]) {
+    wgerSummary[r.character_id] = {
+      lifetimeStats: r.lifetime_stats_json ? JSON.parse(r.lifetime_stats_json) : null,
+      personalRecords: JSON.parse(r.personal_records_json),
+    };
+  }
+
+  return Response.json({ characters, status, goals, stats, periodStats, yesterday, streaks, workoutToday, wgerSummary });
 }
 
 async function handleGetStatus(characterId: string | null): Promise<Response> {
@@ -515,6 +541,47 @@ async function handlePutWorkoutToday(req: Request): Promise<Response> {
   return Response.json({ ok: true });
 }
 
+async function handleGetWgerSummary(characterId: string | null): Promise<Response> {
+  const result = characterId
+    ? await sqlite.execute({
+        sql: "select lifetime_stats_json, personal_records_json from wger_summary_blob where character_id = :characterId",
+        args: { characterId },
+      })
+    : { rows: [] };
+  const row = result.rows[0] as { lifetime_stats_json: string | null; personal_records_json: string } | undefined;
+  if (!row) return Response.json({ lifetimeStats: null, personalRecords: [] });
+  return Response.json({
+    lifetimeStats: row.lifetime_stats_json ? JSON.parse(row.lifetime_stats_json) : null,
+    personalRecords: JSON.parse(row.personal_records_json),
+  });
+}
+
+async function handlePutWgerSummary(req: Request): Promise<Response> {
+  const body = await req.json().catch(() => null);
+  if (!body?.characterId || !body?.characterName || !Array.isArray(body.personalRecords)) {
+    return Response.json({ error: "expected { characterId, characterName, lifetimeStats, personalRecords: [...] }" }, { status: 400 });
+  }
+
+  await sqlite.execute({
+    sql: `insert into wger_summary_blob (character_id, character_name, lifetime_stats_json, personal_records_json, updated_at)
+          values (:characterId, :characterName, :lifetimeStatsJson, :personalRecordsJson, :updatedAt)
+          on conflict(character_id) do update set
+            character_name = excluded.character_name,
+            lifetime_stats_json = excluded.lifetime_stats_json,
+            personal_records_json = excluded.personal_records_json,
+            updated_at = excluded.updated_at`,
+    args: {
+      characterId: body.characterId,
+      characterName: body.characterName,
+      lifetimeStatsJson: body.lifetimeStats ? JSON.stringify(body.lifetimeStats) : null,
+      personalRecordsJson: JSON.stringify(body.personalRecords),
+      updatedAt: new Date().toISOString(),
+    },
+  });
+
+  return Response.json({ ok: true });
+}
+
 async function handleGetMessages(): Promise<Response> {
   const result = await sqlite.execute("select * from messages order by id desc limit 200");
   return Response.json(result.rows);
@@ -649,6 +716,15 @@ export default async function (req: Request): Promise<Response> {
   if (method === "PUT" && pathname === "/api/workout-today") {
     if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
     return handlePutWorkoutToday(req);
+  }
+
+  if (method === "GET" && pathname === "/api/wger-summary") {
+    return handleGetWgerSummary(characterId);
+  }
+
+  if (method === "PUT" && pathname === "/api/wger-summary") {
+    if (!isAuthorized(req)) return Response.json({ error: "unauthorized" }, { status: 401 });
+    return handlePutWgerSummary(req);
   }
 
   if (method === "GET" && pathname === "/api/messages") {
