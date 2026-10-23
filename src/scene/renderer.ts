@@ -8,6 +8,11 @@ import { TileOverride, TileRect } from "./tileset";
 // same dim level for its own whole-room dimming instead of a separately
 // hand-picked value.
 export const DIM_ALPHA = 0.4;
+// Floor/objects in a same-floor room you're not currently viewing dim
+// just slightly — enough to read as "not the focused room" at a glance,
+// without obscuring what's actually in there the way the walls' heavier
+// DIM_ALPHA deliberately does (see roomInteriorAlphaFilters' own comment).
+const FLOOR_DIM_ALPHA = 0.75;
 // How transparent a room's front (bottom) walls go once that room is the
 // one actually being viewed — lower than DIM_ALPHA, not just equal to
 // it, since they paint above objects/overlays there (see buildRoom), and
@@ -378,16 +383,23 @@ function compareRoomDepth(a: RoomDef, b: RoomDef): number {
 export class SceneRenderer {
   protected world = new Container();
   protected roomContainers = new Map<number, Container>();
-  // Only the WALLS dim for a same-floor room you're not currently viewing
-  // — floor/objects stay fully visible, so you can still see (and click)
-  // everything in a neighboring room at a glance. Dimming via AlphaFilter
-  // (rather than per-child alpha) lets overlapping/adjacent opaque wall
-  // tiles show through each other ("x-ray" look); AlphaFilter flattens the
-  // walls container to a texture first and applies alpha to that single
-  // result instead, so dimmed walls read as one solid translucent piece.
-  // A DIFFERENT floor entirely is still fully hidden room-wide (see
+  // The WALLS dim noticeably (DIM_ALPHA) for a same-floor room you're not
+  // currently viewing — floor/objects dim too, but only slightly (see
+  // roomInteriorAlphaFilters below), so you can still clearly see (and
+  // click) everything in a neighboring room at a glance while the walls
+  // read as "not the focused room." Dimming via AlphaFilter (rather than
+  // per-child alpha) lets overlapping/adjacent opaque wall tiles show
+  // through each other ("x-ray" look); AlphaFilter flattens the walls
+  // container to a texture first and applies alpha to that single result
+  // instead, so dimmed walls read as one solid translucent piece. A
+  // DIFFERENT floor entirely is still fully hidden room-wide (see
   // applyFocus) — that's a `container.visible` toggle, not this.
   protected roomWallAlphaFilters = new Map<number, AlphaFilter>();
+  // Floor + objects together (see buildRoom's own "interior" container) —
+  // a much lighter dim (FLOOR_DIM_ALPHA) than the walls above, just
+  // enough to read as "not the focused room" without actually obscuring
+  // what's in there.
+  protected roomInteriorAlphaFilters = new Map<number, AlphaFilter>();
   // Front (bottom) walls paint ABOVE objects/overlays (see buildRoom) —
   // unlike the back walls, they sit between the floor/objects and the
   // camera, so a real wall there would actually occlude whatever's behind
@@ -468,12 +480,20 @@ export class SceneRenderer {
     container.addChild(backWalls);
     this.roomWallAlphaFilters.set(room.id, wallsFilter);
 
-    container.addChild(buildFloor(room));
-
+    // Floor + objects share one AlphaFilter too (see roomInteriorAlphaFilters'
+    // own comment) — a single wrapping container rather than assigning the
+    // same filter instance to each object individually, since there can be
+    // any number of objects but only ever one floor.
+    const interiorFilter = new AlphaFilter();
+    const interior = new Container();
+    interior.filters = [interiorFilter];
+    interior.addChild(buildFloor(room));
     for (const obj of room.objects) {
       if (obj.enabled === false) continue;
-      container.addChild(this.buildObject(room.id, obj));
+      interior.addChild(this.buildObject(room.id, obj));
     }
+    container.addChild(interior);
+    this.roomInteriorAlphaFilters.set(room.id, interiorFilter);
 
     // Front (bottom) walls paint LAST — above objects/overlays, not just
     // the floor — since they sit between the room's interior and the
@@ -789,10 +809,10 @@ export class SceneRenderer {
     }
   }
 
-  /** Default (the real game/viewer): only the room's walls dim when it isn't the one actually being viewed — see roomWallAlphaFilters' own comment on why, and onRoomContainerBuilt for how a subclass overriding this can supply a different filter entirely. Overridden by AdminPreviewRenderer to dim the WHOLE room instead, since the admin tool's focus is purely on editing one room at a time, not glancing at a live neighboring room's floor/objects the way the real game wants to. */
+  /** Default (the real game/viewer): the room's walls dim noticeably and its floor/objects dim slightly when it isn't the one actually being viewed — see roomWallAlphaFilters'/roomInteriorAlphaFilters' own comments on why those are two different amounts, and onRoomContainerBuilt for how a subclass overriding this can supply a different filter entirely. Overridden by AdminPreviewRenderer to dim the WHOLE room uniformly instead, since the admin tool's focus is purely on editing one room at a time, not glancing at a live neighboring room's floor/objects the way the real game wants to. */
   protected applyRoomDim(roomId: number, isViewed: boolean) {
-    const wallsFilter = this.roomWallAlphaFilters.get(roomId)!;
-    wallsFilter.alpha = isViewed ? 1 : DIM_ALPHA;
+    this.roomWallAlphaFilters.get(roomId)!.alpha = isViewed ? 1 : DIM_ALPHA;
+    this.roomInteriorAlphaFilters.get(roomId)!.alpha = isViewed ? 1 : FLOOR_DIM_ALPHA;
   }
 
   protected computeCameraTarget() {
