@@ -165,6 +165,50 @@ already there.
   volumes, so `docker compose down` (without `-v`) keeps everything across
   a restart/rebuild.
 
+## Deploying an update
+
+`house-simulator-server` is the one service actually built from this
+repo's own source (`build: context: . / dockerfile: Dockerfile` in
+`docker-compose.yml`) — there's no pre-built image for it sitting in a
+registry anywhere, so getting new code onto the home server means
+rebuilding that image from a fresh checkout. `aw-server` and wger's own
+services are all `image:` references instead (pulled pre-built, e.g.
+`ghcr.io/graphichealer/aw-server-docker`, `docker.io/wger/server`) — they
+never need rebuilding for a House Simulator code change, only an explicit
+`docker compose pull` if you want *their* upstream's latest.
+
+Run on the home server itself (not a dev machine — it needs to be in the
+actual deployed checkout):
+```bash
+./scripts/deploy.sh
+```
+which is just:
+```bash
+git pull
+git submodule update --init   # or --remote wger, to also move wger's own
+                               # submodule pointer forward — see the
+                               # script's own --update-wger flag for that;
+                               # plain --init only re-checks-out whatever
+                               # commit THIS repo currently points wger/ at
+docker compose up -d --build
+```
+
+A few things worth knowing about what that last command actually does:
+- **Docker's build cache keeps most rebuilds fast.** The `Dockerfile` runs
+  `npm ci` before copying in source — if `package.json`/`package-lock.json`
+  haven't changed, that whole layer is reused from cache, so a routine code
+  update is really just "recompile + re-run the three Vite builds," not a
+  full dependency reinstall. A new/changed dependency invalidates that
+  layer and takes longer, same as any other Docker build.
+- **Only what actually changed gets touched.** Compose only rebuilds
+  services with a `build:` block that changed, and only *recreates*
+  containers whose image or config actually differs from what's running —
+  `aw-server`/wger's containers won't even restart from a House Simulator
+  code deploy, since nothing about their `image:` references changed.
+- **No data is anywhere near this.** `house-simulator-data`/`aw-server-data`/
+  wger's own volumes are all separate from the image entirely — rebuilding
+  never touches them, same as any other `docker compose up --build`.
+
 ## Migrating data to a new install
 
 Two independent databases, two independent procedures — there's no single
