@@ -48,7 +48,7 @@ import {
   SpriteLayer,
   TILE_WIDTH,
 } from "./scene/rooms";
-import { floor1, wall1 } from "./scene/tileset";
+import { floor1, FLOOR_VARIANTS, wall1, WALL_VARIANTS } from "./scene/tileset";
 import { Floor } from "./scene/floors";
 
 const ADMIN_SECRET_KEY = "houseSimulatorAdminSecret";
@@ -1333,6 +1333,19 @@ function buildActionsEditor(
   return container;
 }
 
+/** A plain `<select>` of variant names (floor1/floor2/wall1/...) from a FLOOR_VARIANTS/WALL_VARIANTS-shaped registry — used for both the Add Room form and the room edit modal's Floor/Wall pickers, so a new variant (another file dropped under public/floors/ or public/walls/, plus a tileset.ts entry) shows up in both without further admin-tool changes. */
+function buildVariantSelect(variants: Record<string, unknown>, selected: string): HTMLSelectElement {
+  const select = document.createElement("select");
+  for (const name of Object.keys(variants)) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    select.appendChild(opt);
+  }
+  select.value = selected;
+  return select;
+}
+
 /**
  * Edits one room in isolation: a local draft array of its objects, a
  * preview that re-renders from that draft on every change (never from the
@@ -1411,6 +1424,8 @@ async function openRoomEditModal(
     name: room.name,
     cols: room.cols,
     rows: room.rows,
+    floorVariant: room.floorVariant,
+    wallVariant: room.wallVariant,
     showLeftWall: room.showLeftWall !== false,
     showRightWall: room.showRightWall !== false,
     showBottomLeftWall: room.showBottomLeftWall === true,
@@ -1436,6 +1451,10 @@ async function openRoomEditModal(
   rowsInput.value = String(roomFields.rows);
   rowsInput.style.width = "60px";
   roomPropsForm.append(document.createTextNode("Cols:"), colsInput, document.createTextNode("Rows:"), rowsInput);
+
+  const floorVariantSelect = buildVariantSelect(FLOOR_VARIANTS, roomFields.floorVariant);
+  const wallVariantSelect = buildVariantSelect(WALL_VARIANTS, roomFields.wallVariant);
+  roomPropsForm.append(document.createTextNode("Floor:"), floorVariantSelect, document.createTextNode("Wall:"), wallVariantSelect);
 
   // Its own row, not crammed onto the Name/Cols/Rows line above — two
   // checkboxes read much easier with room to breathe.
@@ -1474,6 +1493,8 @@ async function openRoomEditModal(
     roomFields.rows = Math.max(1, Math.round(Number(rowsInput.value) || 1));
     colsInput.value = String(roomFields.cols);
     rowsInput.value = String(roomFields.rows);
+    roomFields.floorVariant = floorVariantSelect.value;
+    roomFields.wallVariant = wallVariantSelect.value;
     roomFields.showLeftWall = showLeftWallCheckbox.checked;
     roomFields.showRightWall = showRightWallCheckbox.checked;
     roomFields.showBottomLeftWall = showBottomLeftWallCheckbox.checked;
@@ -1484,6 +1505,8 @@ async function openRoomEditModal(
   nameInput.onchange = applyRoomFields;
   colsInput.onchange = applyRoomFields;
   rowsInput.onchange = applyRoomFields;
+  floorVariantSelect.onchange = applyRoomFields;
+  wallVariantSelect.onchange = applyRoomFields;
   showLeftWallCheckbox.onchange = applyRoomFields;
   showRightWallCheckbox.onchange = applyRoomFields;
   showBottomLeftWallCheckbox.onchange = applyRoomFields;
@@ -2500,10 +2523,12 @@ async function renderRooms(body: HTMLElement) {
     rowsInput.type = "number";
     rowsInput.placeholder = "rows";
     rowsInput.value = "10";
+    const floorVariantSelect = buildVariantSelect(FLOOR_VARIANTS, "floor1");
+    const wallVariantSelect = buildVariantSelect(WALL_VARIANTS, "wall1");
     const submitBtn = document.createElement("button");
     submitBtn.type = "submit";
-    submitBtn.textContent = "Add Room (floor1/wall1, unconnected)";
-    form.append(nameInput, colsInput, rowsInput, submitBtn);
+    submitBtn.textContent = "Add Room (unconnected)";
+    form.append(nameInput, colsInput, rowsInput, floorVariantSelect, wallVariantSelect, submitBtn);
     form.onsubmit = async (e) => {
       e.preventDefault();
       try {
@@ -2513,8 +2538,8 @@ async function renderRooms(body: HTMLElement) {
             name: nameInput.value,
             cols: Number(colsInput.value),
             rows: Number(rowsInput.value),
-            floorVariant: "floor1",
-            wallVariant: "wall1",
+            floorVariant: floorVariantSelect.value,
+            wallVariant: wallVariantSelect.value,
           }),
         });
         renderRooms(body);
@@ -2618,6 +2643,14 @@ async function main() {
   setActivities(activities);
   setObjectTypes(objectTypes);
   await preloadRoomAssets();
+  // preloadRoomAssets() only preloads textures actually referenced by
+  // whichever rooms are currently set (here, still just STATIC_ROOM_SPECS'
+  // defaults — real server room data is only ever set per-modal, scoped
+  // to the one room being edited, see openRoomEditModal). The Floor/Wall
+  // pickers there let the admin pick ANY registered variant though, not
+  // just ones some room already happens to use, so every variant's
+  // texture needs to be ready up front regardless of current usage.
+  await Promise.all([...Object.values(FLOOR_VARIANTS), ...Object.values(WALL_VARIANTS)].map((v) => ensureTextureLoaded(v.texture)));
 
   try {
     await Promise.all([

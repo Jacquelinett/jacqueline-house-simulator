@@ -40,32 +40,44 @@ export interface TileOverride {
   tile: PlacedTile | null;
 }
 
-const SHEET = "/tileset.png";
+// Each variant now lives in its own standalone sheet under public/floors/
+// or public/walls/ (pulled out of the old shared /tileset.png, which
+// packed floor1 at x=0..96 then wall1 at x=96..256 in one image) — so
+// every rect below is based at x=0 within its OWN file, not offset by
+// whatever else used to share the sheet with it.
 
 // Floor tiles are a 32x32 canvas rendered as a 32x16 iso diamond footprint
 // (TILE_WIDTH/HEIGHT in rooms.ts) — the extra canvas height is the tile's
 // visible "thickness" below the diamond, not part of the grid spacing.
 export const floor1: FloorVariant = {
-  texture: SHEET,
+  texture: "/floors/floor1.png",
+  mid: { x: 0, y: 0, w: 32, h: 32 },
+  edgeBottomRight: { x: 32, y: 0, w: 32, h: 32 },
+  edgeTopLeft: { x: 64, y: 0, w: 32, h: 32 },
+};
+
+export const floor2: FloorVariant = {
+  texture: "/floors/floor2.png",
   mid: { x: 0, y: 0, w: 32, h: 32 },
   edgeBottomRight: { x: 32, y: 0, w: 32, h: 32 },
   edgeTopLeft: { x: 64, y: 0, w: 32, h: 32 },
 };
 
 export const wall1: WallVariant = {
-  texture: SHEET,
-  edgeLeft: { x: 96, y: 0, w: 32, h: 64 },
-  left: { x: 128, y: 0, w: 32, h: 64 },
-  right: { x: 160, y: 0, w: 32, h: 64 },
-  edgeRight: { x: 192, y: 0, w: 32, h: 64 },
-  corner: { x: 224, y: 0, w: 32, h: 64 },
+  texture: "/walls/wall1.png",
+  edgeLeft: { x: 0, y: 0, w: 32, h: 64 },
+  left: { x: 32, y: 0, w: 32, h: 64 },
+  right: { x: 64, y: 0, w: 32, h: 64 },
+  edgeRight: { x: 96, y: 0, w: 32, h: 64 },
+  corner: { x: 128, y: 0, w: 32, h: 64 },
 };
 
 // Named registries so a room spec can reference a variant by string name
-// (what the server stores/sends, and what an admin-tool dropdown would
-// pick from) instead of the full tile-rect object — resolved back to the
-// real object client-side before calling resolveRooms(). Only one variant
-// of each exists today; adding floor2/wall2 later just means a new entry
-// here, nothing structural.
-export const FLOOR_VARIANTS: Record<string, FloorVariant> = { floor1 };
+// (what the server stores/sends, and what the admin tool's Floor/Wall
+// dropdowns pick from — see admin-main.ts's openRoomEditModal/
+// buildAddRoomForm) instead of the full tile-rect object — resolved back
+// to the real object client-side before calling resolveRooms(). Adding a
+// further floor3/wall2/etc. later is just one more entry here (plus the
+// new file under public/floors//public/walls/), nothing structural.
+export const FLOOR_VARIANTS: Record<string, FloorVariant> = { floor1, floor2 };
 export const WALL_VARIANTS: Record<string, WallVariant> = { wall1 };
