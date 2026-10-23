@@ -1,7 +1,12 @@
-// Tile variants: each is a named, reusable group of tile rects within some
-// sheet. A room picks one floor variant + one wall variant (see rooms.ts).
-// Adding a new style later (floor2/wall2) is just a new object in the same
-// shape below — doesn't have to live in the same sheet as these.
+// Tile variants: a floor/wall "variant" is just a texture file path now —
+// every floor sheet (public/floors/*.png) shares one fixed tile layout,
+// and every wall sheet (public/walls/*.png) shares a separate fixed
+// layout, so the only thing that actually differs between e.g. floor1 and
+// floor2 is which file supplies the pixels (see resolveFloorVariant/
+// resolveWallVariant below). A room picks one floor file + one wall file
+// (see rooms.ts) — the admin tool's Floor/Wall dropdowns list whatever's
+// in those two folders, the same way an object's below/above texture
+// picker lists public/objects/ (see admin-main.ts).
 export interface TileRect {
   x: number;
   y: number;
@@ -40,31 +45,21 @@ export interface TileOverride {
   tile: PlacedTile | null;
 }
 
-// Each variant now lives in its own standalone sheet under public/floors/
-// or public/walls/ (pulled out of the old shared /tileset.png, which
-// packed floor1 at x=0..96 then wall1 at x=96..256 in one image) — so
-// every rect below is based at x=0 within its OWN file, not offset by
-// whatever else used to share the sheet with it.
-
-// Floor tiles are a 32x32 canvas rendered as a 32x16 iso diamond footprint
-// (TILE_WIDTH/HEIGHT in rooms.ts) — the extra canvas height is the tile's
-// visible "thickness" below the diamond, not part of the grid spacing.
-export const floor1: FloorVariant = {
-  texture: "/floors/floor1.png",
+// Every floor sheet is 3 side-by-side 32x32 tiles (mid, edgeBottomRight,
+// edgeTopLeft) — confirmed against floor1.png/floor2.png's own pixel
+// dimensions (96x32). Every wall sheet is 5 side-by-side 32x64 tiles
+// (edgeLeft, left, right, edgeRight, corner) — confirmed against
+// wall1.png (160x64). Each sheet is its own standalone file under
+// public/floors/ or public/walls/ (no longer packed alongside anything
+// else), so these layouts are always based at x=0 within whichever file
+// is actually picked.
+const FLOOR_LAYOUT: Omit<FloorVariant, "texture"> = {
   mid: { x: 0, y: 0, w: 32, h: 32 },
   edgeBottomRight: { x: 32, y: 0, w: 32, h: 32 },
   edgeTopLeft: { x: 64, y: 0, w: 32, h: 32 },
 };
 
-export const floor2: FloorVariant = {
-  texture: "/floors/floor2.png",
-  mid: { x: 0, y: 0, w: 32, h: 32 },
-  edgeBottomRight: { x: 32, y: 0, w: 32, h: 32 },
-  edgeTopLeft: { x: 64, y: 0, w: 32, h: 32 },
-};
-
-export const wall1: WallVariant = {
-  texture: "/walls/wall1.png",
+const WALL_LAYOUT: Omit<WallVariant, "texture"> = {
   edgeLeft: { x: 0, y: 0, w: 32, h: 64 },
   left: { x: 32, y: 0, w: 32, h: 64 },
   right: { x: 64, y: 0, w: 32, h: 64 },
@@ -72,12 +67,21 @@ export const wall1: WallVariant = {
   corner: { x: 128, y: 0, w: 32, h: 64 },
 };
 
-// Named registries so a room spec can reference a variant by string name
-// (what the server stores/sends, and what the admin tool's Floor/Wall
-// dropdowns pick from — see admin-main.ts's openRoomEditModal/
-// buildAddRoomForm) instead of the full tile-rect object — resolved back
-// to the real object client-side before calling resolveRooms(). Adding a
-// further floor3/wall2/etc. later is just one more entry here (plus the
-// new file under public/floors//public/walls/), nothing structural.
-export const FLOOR_VARIANTS: Record<string, FloorVariant> = { floor1, floor2 };
-export const WALL_VARIANTS: Record<string, WallVariant> = { wall1 };
+/** Combines a texture path (a room's own floorVariant string, e.g. "/floors/floor1.png") with the one shared floor layout into the full shape renderer.ts's buildFloor expects. */
+export function resolveFloorVariant(texture: string): FloorVariant {
+  return { texture, ...FLOOR_LAYOUT };
+}
+
+/** Same idea as resolveFloorVariant, for wallVariant/buildBackWalls+buildBottomWalls. */
+export function resolveWallVariant(texture: string): WallVariant {
+  return { texture, ...WALL_LAYOUT };
+}
+
+// Convenience constants for seed data (STATIC_ROOM_SPECS in rooms.ts) and
+// admin-tool previews that want an actual FloorVariant/WallVariant object
+// rather than a bare path string — not a registry to look names up in
+// anymore (see roomSpecsFromWire, which calls resolveFloorVariant/
+// resolveWallVariant directly on whatever path a room's own data has).
+export const floor1: FloorVariant = resolveFloorVariant("/floors/floor1.png");
+export const floor2: FloorVariant = resolveFloorVariant("/floors/floor2.png");
+export const wall1: WallVariant = resolveWallVariant("/walls/wall1.png");

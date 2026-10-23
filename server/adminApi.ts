@@ -25,6 +25,13 @@ const OBJECT_ASSETS_DIR = resolve(__dirname, "../public/objects");
 // under public/characters/ (e.g. playing_piano.png, jacqueline_playPiano.png),
 // a different directory from below/above's furniture art under public/objects/.
 const CHARACTER_ASSETS_DIR = resolve(__dirname, "../public/characters");
+// Floor/wall tile sheets — each a standalone file (public/floors/floor1.png,
+// public/walls/wall1.png, ...) sharing one fixed tile layout per kind (see
+// scene/tileset.ts's FLOOR_LAYOUT/WALL_LAYOUT) — a room's floorVariant/
+// wallVariant is just one of these paths now, picked from this listing the
+// same way an object's below/above texture is picked from object-assets.
+const FLOOR_ASSETS_DIR = resolve(__dirname, "../public/floors");
+const WALL_ASSETS_DIR = resolve(__dirname, "../public/walls");
 
 function readJsonBody(req: IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -163,6 +170,18 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
     if (parts[2] === "character-assets" && method === "GET") {
       const files = readdirSync(CHARACTER_ASSETS_DIR).filter((f) => f.endsWith(".png"));
       return sendJson(res, 200, files.map((f) => `/characters/${f}`)), true;
+    }
+
+    // /api/admin/floor-assets, /api/admin/wall-assets — Floor/Wall
+    // picker source lists for the room editor (see Add Room form /
+    // openRoomEditModal in admin-main.ts).
+    if (parts[2] === "floor-assets" && method === "GET") {
+      const files = readdirSync(FLOOR_ASSETS_DIR).filter((f) => f.endsWith(".png"));
+      return sendJson(res, 200, files.map((f) => `/floors/${f}`)), true;
+    }
+    if (parts[2] === "wall-assets" && method === "GET") {
+      const files = readdirSync(WALL_ASSETS_DIR).filter((f) => f.endsWith(".png"));
+      return sendJson(res, 200, files.map((f) => `/walls/${f}`)), true;
     }
 
     // /api/admin/rooms[/:id][/objects[/:objectId]]

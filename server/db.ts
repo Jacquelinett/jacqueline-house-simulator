@@ -294,6 +294,24 @@ function migrateNavigateActionKind(): void {
 }
 
 /**
+ * One-time content migration: rooms.floor_variant/wall_variant used to
+ * store a short registry-key name ("floor1", "wall1", ...) looked up in
+ * src/scene/tileset.ts's old FLOOR_VARIANTS/WALL_VARIANTS maps — now that
+ * a "variant" is just the texture file path directly (resolveFloorVariant/
+ * resolveWallVariant), those bare names need to become real paths
+ * ("/floors/floor1.png", "/walls/wall1.png"). Every historical value was
+ * exactly a bare name with no leading slash, so this is a safe,
+ * deterministic rewrite — gated on NOT already looking like a path, so
+ * it's naturally idempotent (nothing matches once migrated) and can run
+ * unconditionally every startup, same spirit as migrateNavigateActionKind.
+ */
+function migrateVariantNamesToPaths(): void {
+  if (!tableExists("rooms")) return;
+  db.prepare(`UPDATE rooms SET floor_variant = '/floors/' || floor_variant || '.png' WHERE floor_variant NOT LIKE '/%'`).run();
+  db.prepare(`UPDATE rooms SET wall_variant = '/walls/' || wall_variant || '.png' WHERE wall_variant NOT LIKE '/%'`).run();
+}
+
+/**
  * One-time migration: object types no longer have default actions at
  * all (src/scene/rooms.ts's ObjectTypeDef) — what an object does is
  * purely a per-placement concern now, no type-level fallback. Any
@@ -429,6 +447,7 @@ function migrateOverlayOffsetToObjectType(): void {
 export function migrate(): void {
   migrateIdsToSerial();
   migrateNavigateActionKind();
+  migrateVariantNamesToPaths();
   migrateTypeDefaultActionsToPlacements();
 
   // Captured BEFORE the CREATE TABLE/ALTER TABLE below — `characters` not

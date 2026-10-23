@@ -112,7 +112,7 @@ export function seedRoomsIfEmpty(): void {
 
   const insertRoom = db.prepare(`
     INSERT INTO rooms (id, name, cols, rows, floor_variant, wall_variant, floor_overrides_json, wall_overrides_json, show_left_wall, show_right_wall, show_bottom_left_wall, show_bottom_right_wall)
-    VALUES (@id, @name, @cols, @rows, 'floor1', 'wall1', @floorOverridesJson, @wallOverridesJson, @showLeftWall, @showRightWall, @showBottomLeftWall, @showBottomRightWall)
+    VALUES (@id, @name, @cols, @rows, '/floors/floor1.png', '/walls/wall1.png', @floorOverridesJson, @wallOverridesJson, @showLeftWall, @showRightWall, @showBottomLeftWall, @showBottomRightWall)
   `);
   const insertObject = db.prepare(`
     INSERT INTO objects (id, room_id, type_id, x, y, enabled, action_json)

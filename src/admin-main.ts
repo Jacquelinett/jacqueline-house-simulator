@@ -48,7 +48,7 @@ import {
   SpriteLayer,
   TILE_WIDTH,
 } from "./scene/rooms";
-import { floor1, FLOOR_VARIANTS, wall1, WALL_VARIANTS } from "./scene/tileset";
+import { floor1, wall1 } from "./scene/tileset";
 import { Floor } from "./scene/floors";
 
 const ADMIN_SECRET_KEY = "houseSimulatorAdminSecret";
@@ -1333,13 +1333,13 @@ function buildActionsEditor(
   return container;
 }
 
-/** A plain `<select>` of variant names (floor1/floor2/wall1/...) from a FLOOR_VARIANTS/WALL_VARIANTS-shaped registry — used for both the Add Room form and the room edit modal's Floor/Wall pickers, so a new variant (another file dropped under public/floors/ or public/walls/, plus a tileset.ts entry) shows up in both without further admin-tool changes. */
-function buildVariantSelect(variants: Record<string, unknown>, selected: string): HTMLSelectElement {
+/** A plain `<select>` of asset paths (e.g. "/floors/floor1.png") — same convention as the below/above texture picker in buildLayerSection, just without the "(none)"/"(solid color)" options a floor/wall variant has no equivalent of (a room always has exactly one floor file and one wall file). Used for both the Add Room form and the room edit modal's Floor/Wall pickers, so a new variant (just another file dropped under public/floors/ or public/walls/, nothing else) shows up in both automatically. */
+function buildVariantSelect(assetPaths: string[], selected: string): HTMLSelectElement {
   const select = document.createElement("select");
-  for (const name of Object.keys(variants)) {
+  for (const path of assetPaths) {
     const opt = document.createElement("option");
-    opt.value = name;
-    opt.textContent = name;
+    opt.value = path;
+    opt.textContent = path.replace(/^\/(floors|walls)\//, "");
     select.appendChild(opt);
   }
   select.value = selected;
@@ -1359,6 +1359,8 @@ async function openRoomEditModal(
   activities: ActivityDef[],
   allRooms: RoomSpecWire[],
   floors: Floor[],
+  floorAssetPaths: string[],
+  wallAssetPaths: string[],
   onSaved: () => void,
 ) {
   const typeIds = Object.keys(objectTypes);
@@ -1452,8 +1454,8 @@ async function openRoomEditModal(
   rowsInput.style.width = "60px";
   roomPropsForm.append(document.createTextNode("Cols:"), colsInput, document.createTextNode("Rows:"), rowsInput);
 
-  const floorVariantSelect = buildVariantSelect(FLOOR_VARIANTS, roomFields.floorVariant);
-  const wallVariantSelect = buildVariantSelect(WALL_VARIANTS, roomFields.wallVariant);
+  const floorVariantSelect = buildVariantSelect(floorAssetPaths, roomFields.floorVariant);
+  const wallVariantSelect = buildVariantSelect(wallAssetPaths, roomFields.wallVariant);
   roomPropsForm.append(document.createTextNode("Floor:"), floorVariantSelect, document.createTextNode("Wall:"), wallVariantSelect);
 
   // Its own row, not crammed onto the Name/Cols/Rows line above — two
@@ -2451,11 +2453,13 @@ let roomsRenderGeneration = 0;
 
 async function renderRooms(body: HTMLElement) {
   const myGeneration = ++roomsRenderGeneration;
-  const [rooms, objectTypes, floors, activities] = await Promise.all([
+  const [rooms, objectTypes, floors, activities, floorAssetPaths, wallAssetPaths] = await Promise.all([
     adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
     adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
     adminFetch<Floor[]>("/api/admin/floors"),
     adminFetch<ActivityDef[]>("/api/admin/activities"),
+    adminFetch<string[]>("/api/admin/floor-assets"),
+    adminFetch<string[]>("/api/admin/wall-assets"),
   ]);
   if (myGeneration !== roomsRenderGeneration) return; // superseded by a newer call while this one was fetching
 
@@ -2477,7 +2481,7 @@ async function renderRooms(body: HTMLElement) {
       const actionCell = document.createElement("td");
       const editBtn = document.createElement("button");
       editBtn.textContent = "Edit";
-      editBtn.onclick = () => openRoomEditModal(room, objectTypes, activities, rooms, floors, () => renderRooms(body));
+      editBtn.onclick = () => openRoomEditModal(room, objectTypes, activities, rooms, floors, floorAssetPaths, wallAssetPaths, () => renderRooms(body));
       const buttons = [editBtn];
       if (showConnectionsButton) {
         const connectionsBtn = document.createElement("button");
@@ -2523,8 +2527,8 @@ async function renderRooms(body: HTMLElement) {
     rowsInput.type = "number";
     rowsInput.placeholder = "rows";
     rowsInput.value = "10";
-    const floorVariantSelect = buildVariantSelect(FLOOR_VARIANTS, "floor1");
-    const wallVariantSelect = buildVariantSelect(WALL_VARIANTS, "wall1");
+    const floorVariantSelect = buildVariantSelect(floorAssetPaths, floorAssetPaths[0]);
+    const wallVariantSelect = buildVariantSelect(wallAssetPaths, wallAssetPaths[0]);
     const submitBtn = document.createElement("button");
     submitBtn.type = "submit";
     submitBtn.textContent = "Add Room (unconnected)";
@@ -2647,10 +2651,12 @@ async function main() {
   // whichever rooms are currently set (here, still just STATIC_ROOM_SPECS'
   // defaults — real server room data is only ever set per-modal, scoped
   // to the one room being edited, see openRoomEditModal). The Floor/Wall
-  // pickers there let the admin pick ANY registered variant though, not
-  // just ones some room already happens to use, so every variant's
-  // texture needs to be ready up front regardless of current usage.
-  await Promise.all([...Object.values(FLOOR_VARIANTS), ...Object.values(WALL_VARIANTS)].map((v) => ensureTextureLoaded(v.texture)));
+  // pickers there let the admin pick ANY file under public/floors//
+  // public/walls/ though, not just ones some room already happens to use,
+  // so every one of those needs to be ready up front regardless of
+  // current usage.
+  const [allFloorAssets, allWallAssets] = await Promise.all([adminFetch<string[]>("/api/admin/floor-assets"), adminFetch<string[]>("/api/admin/wall-assets")]);
+  await Promise.all([...allFloorAssets, ...allWallAssets].map((path) => ensureTextureLoaded(path)));
 
   try {
     await Promise.all([

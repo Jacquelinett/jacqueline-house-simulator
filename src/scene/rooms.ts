@@ -7,7 +7,7 @@
 // a per-room background image. Object sprite layers still use individual
 // files: public/objects/<object-id>.png, referenced via `texture` in
 // `below`/`overlay`/`above`.
-import { FLOOR_VARIANTS, FloorVariant, TileOverride, WALL_VARIANTS, WallVariant, floor1, wall1 } from "./tileset";
+import { FloorVariant, resolveFloorVariant, resolveWallVariant, TileOverride, WallVariant, floor1, wall1 } from "./tileset";
 import { ACTIVITIES, findActivityById } from "./activities";
 import { Floor, STATIC_FLOORS } from "./floors";
 
@@ -431,8 +431,8 @@ export function roomSpecsFromWire(wire: RoomSpecWire[]): RoomSpec[] {
     name: w.name,
     cols: w.cols,
     rows: w.rows,
-    floor: FLOOR_VARIANTS[w.floorVariant],
-    wall: WALL_VARIANTS[w.wallVariant],
+    floor: resolveFloorVariant(w.floorVariant),
+    wall: resolveWallVariant(w.wallVariant),
     floorOverrides: w.floorOverrides,
     wallOverrides: w.wallOverrides,
     showLeftWall: w.showLeftWall,
