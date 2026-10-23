@@ -910,6 +910,15 @@ export class SceneRenderer {
       container.addChild(buildLayer(layer, obj.width, obj.height));
     }
 
+    // Name tags are UI, not world geometry — collected here and added to
+    // the container only after the `above` loop below, so they always
+    // paint on top of every other layer this object has (below/overlay/
+    // above), regardless of which overlay layer they belong to. Adding
+    // each one inline in the loop below (the previous behavior) put it
+    // BEFORE `above`'s own children in paint order, so an `above` layer
+    // (e.g. a case-color overlay) could visually cover the tag.
+    const nameTags: Container[] = [];
+
     for (const layer of obj.overlay ?? []) {
       // No texture loaded yet -> Pixi's own blank/empty texture, stays
       // invisible (see below) until the first updateActiveOverlays call
@@ -923,7 +932,7 @@ export class SceneRenderer {
       container.addChild(overlay);
       const nameTag = new Container();
       nameTag.visible = false;
-      container.addChild(nameTag);
+      nameTags.push(nameTag);
       const labels = (obj.actions ?? [])
         .filter((a) => a.kind === "activity")
         .map((a) => findActivityById(a.activityId)?.label)
@@ -946,6 +955,8 @@ export class SceneRenderer {
     for (const layer of obj.above ?? []) {
       container.addChild(buildLayer(layer, obj.width, obj.height));
     }
+
+    for (const nameTag of nameTags) container.addChild(nameTag);
 
     // Every object is hit-testable now, even with no actions of its own —
     // actionDispatch.ts treats a missing/empty actions array as an
@@ -997,31 +1008,54 @@ export class SceneRenderer {
     }
   }
 
-  /** Updates (building fresh only if the name actually changed — see nameTagText's own comment) the small floating tag above an overlay sprite showing who's attributed to it. Positioned off the sprite's own offsetX/offsetY + rendered size, not the object's whole bounding box — same "label floats above the thing it's labeling, not the furniture it's sitting on" idea viewer.ts's own object-name label already uses, just anchored to the sprite instead of the object. */
+  /** Updates (rebuilding the actual text/background only if the name changed — see nameTagText's own comment) the small floating tag above an overlay sprite showing who's attributed to it. Always repositions regardless (see repositionOverlayNameTag), since that's cheap and depends on the sprite's current rendered size, not just the name. */
   private setOverlayNameTag(overlay: ActiveOverlay, name: string) {
-    if (overlay.nameTagText === name) return;
-    overlay.nameTagText = name;
-    overlay.nameTag.removeChildren();
+    if (overlay.nameTagText !== name) {
+      overlay.nameTagText = name;
+      overlay.nameTag.removeChildren();
 
-    const text = new Text({
-      text: name,
-      style: { fontSize: 11, fill: 0xffffff, fontFamily: "sans-serif" },
-      resolution: this.scale * (window.devicePixelRatio || 1),
-    });
-    text.anchor.set(0.5, 0.5);
+      const text = new Text({
+        text: name,
+        style: { fontSize: 11, fill: 0xffffff, fontFamily: "sans-serif" },
+        resolution: this.scale * (window.devicePixelRatio || 1),
+      });
+      text.anchor.set(0.5, 0.5);
 
-    const background = new Graphics()
-      .roundRect(
-        -text.width / 2 - NAME_TAG_PADDING_X,
-        -text.height / 2 - NAME_TAG_PADDING_Y,
-        text.width + NAME_TAG_PADDING_X * 2,
-        text.height + NAME_TAG_PADDING_Y * 2,
-        4,
-      )
-      .fill({ color: 0x000000, alpha: 0.6 });
+      const background = new Graphics()
+        .roundRect(
+          -text.width / 2 - NAME_TAG_PADDING_X,
+          -text.height / 2 - NAME_TAG_PADDING_Y,
+          text.width + NAME_TAG_PADDING_X * 2,
+          text.height + NAME_TAG_PADDING_Y * 2,
+          4,
+        )
+        .fill({ color: 0x000000, alpha: 0.6 });
 
-    overlay.nameTag.addChild(background, text);
+      overlay.nameTag.addChild(background, text);
+    }
+    this.repositionOverlayNameTag(overlay);
+  }
 
+  /**
+   * Centers the tag horizontally on the overlay SPRITE's own current
+   * rendered width (offsetX + half that width), not the object's whole
+   * bounding box — the sprite can sit anywhere within it (e.g. the
+   * piano's overlay is offset well into the object), same "label floats
+   * above the thing it's labeling" idea viewer.ts's own object-name label
+   * already uses, just anchored to the sprite instead of the object.
+   * Called both right after (re)building the tag's content (setOverlayNameTag)
+   * and every time the sprite's texture actually changes (applyOverlayTexture)
+   * — the latter matters because resolveOverlayTexture's own Assets.load()
+   * can resolve asynchronously: if a name tag gets set before that texture
+   * finishes loading, overlay.sprite.width is still the blank placeholder
+   * Sprite's width (0) at that moment, which would otherwise leave the tag
+   * stuck off-center indefinitely once the real texture (and its real
+   * width) does arrive, since setOverlayNameTag's own rebuild is skipped
+   * for an unchanged name.
+   */
+  private repositionOverlayNameTag(overlay: ActiveOverlay): void {
+    const text = overlay.nameTag.children[1] as Text | undefined;
+    if (!text) return; // tag not built yet
     const offsetX = overlay.layer.offsetX ?? 0;
     const offsetY = overlay.layer.offsetY ?? 0;
     overlay.nameTag.position.set(offsetX + overlay.sprite.width / 2, offsetY - (text.height / 2 + NAME_TAG_PADDING_Y + NAME_TAG_GAP));
@@ -1039,6 +1073,10 @@ export class SceneRenderer {
       overlay.frames = null;
       overlay.sprite.texture = baseTexture;
     }
+    // The sprite's rendered width (what the name tag centers on) just
+    // changed — see repositionOverlayNameTag's own comment on why this
+    // needs to run here too, not just when the tag's text first gets set.
+    if (overlay.nameTagText !== null) this.repositionOverlayNameTag(overlay);
   }
 
   /**
