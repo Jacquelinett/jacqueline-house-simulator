@@ -1688,6 +1688,19 @@ async function openRoomEditModal(
       // doesn't exist in this one-room array, throwing inside setRooms()
       // before the Pixi app ever got far enough to render anything.
       setRooms(roomSpecsFromWire([{ ...room, ...roomFields, objects: draft, connectedTo: undefined }]), []);
+      // Only NOW does roomDefs reflect this room's own real objects —
+      // preloadRoomAssets() at startup only ever saw STATIC_ROOM_SPECS'
+      // seed data (setRooms() is never called with real server data until
+      // a room editor is actually opened), so an object type whose own
+      // texture was never separately touched via the Object Types editor
+      // (the only other thing that calls ensureTextureLoaded for an
+      // object's own art) would never have been loaded at all — buildObject
+      // below calls Assets.get() synchronously, which warns/fails for
+      // anything that was never Assets.load()-ed first. Safe to call on
+      // every render (not just the first): Assets.load() is itself
+      // idempotent, so already-loaded textures resolve instantly from
+      // cache rather than re-fetching.
+      await preloadRoomAssets();
 
       currentApp = new Application();
       await currentApp.init({ width: 420, height: 320, background: 0x222228 });
@@ -2218,6 +2231,12 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
       // of that filtering entirely (see resolveRooms's own comment) so this
       // intentionally-partial subset still resolves.
       setRooms(roomSpecsFromWire(buildPreviewRoomSet()), []);
+      // Same gap/fix as the object editor's own renderPreview() — see its
+      // own comment. This preview shows room + its real neighbors, so it
+      // needs every one of their objects' own textures loaded too, not
+      // just whatever STATIC_ROOM_SPECS' seed data happened to reference
+      // at startup.
+      await preloadRoomAssets();
       currentApp = new Application();
       await currentApp.init({ width: 480, height: 380, background: 0x222228 });
       previewContainer.appendChild(currentApp.canvas);
