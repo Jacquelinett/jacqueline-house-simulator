@@ -210,6 +210,16 @@ async function ensureSchema() {
       updated_at text not null
     )`,
   );
+  // recent_days_json added after this table already existed on the live
+  // val (it shipped with just lifetime_stats_json/personal_records_json
+  // first) — same gotcha as character_sprite_name above: CREATE TABLE IF
+  // NOT EXISTS is a no-op once the table's already there, so the new
+  // column needs an explicit ADD COLUMN too. SQLite backfills a non-NULL
+  // DEFAULT onto every existing row when adding a NOT NULL column (unlike
+  // some other databases), so every row — old or new — gets a real '[]'
+  // here, not NULL; the next pushWgerSummary() call overwrites it with
+  // the real recent-days data regardless.
+  await sqlite.execute("alter table wger_summary_blob add column recent_days_json text not null default '[]'").catch(() => {});
   await sqlite.execute(`create table if not exists messages (
     id integer primary key autoincrement,
     author text,
