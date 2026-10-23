@@ -268,19 +268,24 @@ function migrateIdsToSerial(): void {
 
 /**
  * One-time content migration: `ObjectAction`'s "navigate" kind was renamed
- * to "goTo" (src/scene/rooms.ts) when the "view" kind was introduced,
- * leaving any already-persisted actions_json/action_json blob with the old
- * literal string embedded in it. A plain text substitution is safe here
- * (not a JSON.parse/stringify round-trip like migrateIdsToSerial's
- * remapActionsJson) because JSON.stringify never puts a space after a
- * colon, so `"kind":"navigate"` only ever appears as that exact substring
- * — confirmed against this app's own live data before relying on it.
- * Naturally idempotent (nothing matches once renamed), so unlike
- * migrateIdsToSerial this runs unconditionally every startup rather than
- * needing its own gate.
+ * to "goTo" (src/scene/rooms.ts), leaving any already-persisted
+ * actions_json/action_json blob with the old literal string embedded in
+ * it. A plain text substitution is safe here (not a JSON.parse/stringify
+ * round-trip like migrateIdsToSerial's remapActionsJson) because
+ * JSON.stringify never puts a space after a colon, so `"kind":"navigate"`
+ * only ever appears as that exact substring — confirmed against this
+ * app's own live data before relying on it. Naturally idempotent (nothing
+ * matches once renamed), so unlike migrateIdsToSerial this runs
+ * unconditionally every startup rather than needing its own gate —
+ * except the object_types.actions_json half, which DOES need a gate now:
+ * migrateTypeDefaultActionsToPlacements() below drops that column
+ * entirely, and this function runs BEFORE it every startup, so a bare
+ * `tableExists` check isn't enough once that column is actually gone —
+ * confirmed live (SqliteError: no such column: actions_json on the
+ * second startup after that migration shipped).
  */
 function migrateNavigateActionKind(): void {
-  if (tableExists("object_types")) {
+  if (tableExists("object_types") && columnType("object_types", "actions_json") !== undefined) {
     db.prepare(`UPDATE object_types SET actions_json = replace(actions_json, '"kind":"navigate"', '"kind":"goTo"') WHERE actions_json LIKE '%"kind":"navigate"%'`).run();
   }
   if (tableExists("objects")) {
