@@ -1,18 +1,28 @@
 import { formatMinutes } from "../goals/format";
 import { toCssColor } from "../scene/activities";
 import type { ActivityStat } from "./stats";
+import type { WorkoutTodayEntry } from "../workout/format";
 
 /**
- * Builds the "Today's Goals" / divider / "Today's Activity" skeleton
- * shared by the desktop Dashboard panel and the viewer's equivalent
- * section — the heading text and layout only need to be right in one
- * place instead of two copies silently drifting apart.
+ * Builds the "Today's Goals" / divider / "Today's Activity" / "Lifted
+ * Today" skeleton shared by the desktop Dashboard panel and the viewer's
+ * equivalent section — the heading text and layout only need to be right
+ * in one place instead of two copies silently drifting apart.
+ *
+ * `workoutSection` wraps its own divider + heading + list as one unit so
+ * renderWorkoutToday() (below) can hide all three together with one
+ * `display` toggle — unlike Goals/Activity, this section is meant to
+ * disappear entirely (no heading, no "nothing logged" placeholder row)
+ * when there's nothing to show, since it's a "pride" callout, not an
+ * always-present status area.
  */
 export function buildDashboardSections(container: HTMLElement): {
   goalHeading: HTMLElement;
   goalList: HTMLElement;
   activityHeading: HTMLElement;
   activityList: HTMLElement;
+  workoutSection: HTMLElement;
+  workoutList: HTMLElement;
 } {
   const goalHeading = document.createElement("h3");
   goalHeading.className = "panel-section-heading";
@@ -36,7 +46,25 @@ export function buildDashboardSections(container: HTMLElement): {
   activityList.className = "dashboard-list";
   container.appendChild(activityList);
 
-  return { goalHeading, goalList, activityHeading, activityList };
+  const workoutSection = document.createElement("div");
+  workoutSection.className = "workout-today-section";
+  workoutSection.style.display = "none";
+  container.appendChild(workoutSection);
+
+  const workoutDivider = document.createElement("div");
+  workoutDivider.className = "panel-divider";
+  workoutSection.appendChild(workoutDivider);
+
+  const workoutHeading = document.createElement("h3");
+  workoutHeading.className = "panel-section-heading";
+  workoutHeading.textContent = "Lifted Today";
+  workoutSection.appendChild(workoutHeading);
+
+  const workoutList = document.createElement("div");
+  workoutList.className = "dashboard-list";
+  workoutSection.appendChild(workoutList);
+
+  return { goalHeading, goalList, activityHeading, activityList, workoutSection, workoutList };
 }
 
 export interface DashboardGoalEntry {
@@ -86,6 +114,42 @@ export function renderGoalList(container: HTMLElement, entries: DashboardGoalEnt
 
       container.appendChild(subRow);
     }
+  }
+}
+
+/**
+ * "Lifted Today" — real logged wger sets (or [] for a mock/no-data day),
+ * already grouped-by-exercise via src/workout/format.ts's
+ * summarizeWorkoutSessions() by the caller. Hides `section` entirely
+ * (heading, divider, list, all of it) when there's nothing to show,
+ * rather than rendering an empty-state placeholder the way
+ * renderGoalList/renderActivityList do — see buildDashboardSections's own
+ * comment on why this section behaves differently.
+ */
+export function renderWorkoutToday(section: HTMLElement, list: HTMLElement, entries: WorkoutTodayEntry[]): void {
+  if (entries.length === 0) {
+    section.style.display = "none";
+    list.textContent = "";
+    return;
+  }
+
+  section.style.display = "";
+  list.textContent = "";
+  for (const entry of entries) {
+    const row = document.createElement("div");
+    row.className = "dashboard-row workout-row";
+
+    const name = document.createElement("span");
+    name.className = "dashboard-text";
+    name.textContent = entry.exerciseName;
+    row.appendChild(name);
+
+    const detail = document.createElement("span");
+    detail.className = "workout-sets-detail";
+    detail.textContent = entry.detail;
+    row.appendChild(detail);
+
+    list.appendChild(row);
   }
 }
 

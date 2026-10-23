@@ -6,8 +6,10 @@ import { describeScheduleForDate } from "../goals/goalGroups";
 import { describeStreak, getGoalHistory } from "../goals/history";
 import { localDateString, parseDateString } from "../goals/recurrence";
 import { formatMinutes } from "../goals/format";
-import { buildDashboardSections, renderActivityList, renderGoalList } from "./render";
+import { buildDashboardSections, renderActivityList, renderGoalList, renderWorkoutToday } from "./render";
 import { getViewingCharacter, onViewingCharacterChange } from "./viewingCharacter";
+import { fetchWorkoutsForDate } from "../workout/client";
+import { summarizeWorkoutSessions } from "../workout/format";
 
 const REFRESH_INTERVAL_MS = 30_000;
 
@@ -39,7 +41,7 @@ export function setupDashboardContent(container: HTMLElement, providedDateInput?
     container.appendChild(dateRow);
   }
 
-  const { goalHeading, goalList, activityHeading, activityList } = buildDashboardSections(container);
+  const { goalHeading, goalList, activityHeading, activityList, workoutSection, workoutList } = buildDashboardSections(container);
 
   function isViewingToday(): boolean {
     return dateInput.value === localDateString(new Date());
@@ -101,10 +103,30 @@ export function setupDashboardContent(container: HTMLElement, providedDateInput?
     renderActivityList(activityList, stats, isViewingToday() ? "Nothing tracked today" : "Nothing tracked that day");
   }
 
+  /**
+   * "Lifted Today" is always about the real current day, regardless of
+   * what the date picker above is set to — it's a pride/bragging callout
+   * about real logged lifting (see CLAUDE.md's wger section), not part of
+   * the date-scoped Goals/Activity sections. Still respects a "peek at
+   * another character" switch (getViewingCharacter()), since showing
+   * Jacqueline's workout while looking at Kevin's dashboard would be
+   * confusing — getWorkoutsForDate() just no-ops (empty array) for any
+   * character that isn't the one wger-linked account anyway.
+   */
+  async function renderWorkout() {
+    const viewingId = getViewingCharacter()?.id;
+    const sessions = await fetchWorkoutsForDate(localDateString(new Date()), viewingId).catch((err) => {
+      console.error("[dashboard] failed to load today's workout", err);
+      return [];
+    });
+    renderWorkoutToday(workoutSection, workoutList, summarizeWorkoutSessions(sessions));
+  }
+
   function renderAll() {
     updateHeadings();
     renderGoals();
     renderActivity();
+    renderWorkout();
   }
 
   dateInput.onchange = renderAll;
@@ -113,13 +135,17 @@ export function setupDashboardContent(container: HTMLElement, providedDateInput?
   renderAll();
 
   // A past/future day's data never changes once rendered — only keep
-  // re-ticking on an interval while the picker is actually showing today,
-  // same as the live-refresh behavior this had before the date picker.
+  // re-ticking Goals/Activity on an interval while the picker is actually
+  // showing today, same as the live-refresh behavior this had before the
+  // date picker. renderWorkout() is NOT gated on isViewingToday() here —
+  // unlike Goals/Activity it's always about today regardless of the
+  // picker, and today's own logged workout can keep changing all day.
   setInterval(() => {
     if (isViewingToday()) {
       renderGoals();
       renderActivity();
     }
+    renderWorkout();
   }, REFRESH_INTERVAL_MS);
 }
 

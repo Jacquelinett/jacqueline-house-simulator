@@ -1,29 +1,18 @@
 import { buildModal } from "../ui/modal";
-import { sendQuery } from "../client/remoteState";
 import { localDateString } from "../goals/recurrence";
-
-interface WorkoutSet {
-  id: string;
-  exerciseName: string;
-  weight: number | null;
-  reps: number;
-  setOrder: number;
-}
-
-interface WorkoutSession {
-  id: string;
-  date: string;
-  notes: string | null;
-  sets: WorkoutSet[];
-}
+import { fetchWorkoutsForDate } from "./client";
+import { WorkoutSession } from "./types";
+import { formatSetDetail, groupSetsByExercise } from "./format";
 
 /**
- * Read-only display of today's workout data — a mirror of whatever a real
- * wger server would eventually be polled for (see
- * wger_gamification_implementation_plan.md), currently mock-seeded
- * server-side (server/workouts.ts) since no real wger instance exists yet.
- * Deliberately independent of AW/goals entirely — just "what did I lift
- * today," no activity-tracking tie-in.
+ * Read-only display of today's workout data — backed by the real wger
+ * instance when server_config.wger_base_url/wger_api_token are set
+ * (server/wger.ts), falling back to the mock SQLite mirror otherwise (see
+ * server/workouts.ts's own comment on this dispatch). Deliberately
+ * independent of AW/goals entirely — just "what did I lift today," no
+ * activity-tracking tie-in. See also the Dashboard's "Lifted Today"
+ * section (src/dashboard/panel.ts), which shows a coarser summary of the
+ * exact same data without needing this modal open.
  */
 export function setupWorkoutModal(): { open: () => void } {
   const modal = buildModal("Workout");
@@ -41,7 +30,7 @@ export function setupWorkoutModal(): { open: () => void } {
 
     let sessions: WorkoutSession[];
     try {
-      sessions = await sendQuery<WorkoutSession[]>("getWorkoutsForDate", { dateStr: localDateString(new Date()) });
+      sessions = await fetchWorkoutsForDate(localDateString(new Date()));
     } catch (err) {
       console.error("[workout] failed to load", err);
       list.textContent = "";
@@ -69,17 +58,7 @@ export function setupWorkoutModal(): { open: () => void } {
         list.appendChild(notes);
       }
 
-      // Group sets by exercise, in the order each exercise first appears —
-      // same reasoning as a wger routine's own log view, not a flat list
-      // of 8 individual sets.
-      const byExercise = new Map<string, WorkoutSet[]>();
-      for (const set of session.sets) {
-        const group = byExercise.get(set.exerciseName) ?? [];
-        group.push(set);
-        byExercise.set(set.exerciseName, group);
-      }
-
-      for (const [exerciseName, sets] of byExercise) {
+      for (const [exerciseName, sets] of groupSetsByExercise(session.sets)) {
         const row = document.createElement("div");
         row.className = "dashboard-row workout-row";
 
@@ -90,7 +69,7 @@ export function setupWorkoutModal(): { open: () => void } {
 
         const detail = document.createElement("span");
         detail.className = "workout-sets-detail";
-        detail.textContent = sets.map((s) => (s.weight != null ? `${s.weight}kg × ${s.reps}` : `${s.reps} reps`)).join(", ");
+        detail.textContent = formatSetDetail(sets);
         row.appendChild(detail);
 
         list.appendChild(row);

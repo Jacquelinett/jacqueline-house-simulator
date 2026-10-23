@@ -90,7 +90,10 @@ export function migrate(): void {
       broadcast_url TEXT,
       broadcast_secret TEXT,
       lan_secret TEXT,
-      admin_secret TEXT
+      admin_secret TEXT,
+      wger_base_url TEXT,
+      wger_api_token TEXT,
+      wger_character_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS workout_sessions (
@@ -106,6 +109,7 @@ export function migrate(): void {
       session_id TEXT NOT NULL,
       exercise_name TEXT NOT NULL,
       weight REAL,
+      weight_unit TEXT,
       reps INTEGER NOT NULL,
       set_order INTEGER NOT NULL
     );
@@ -217,6 +221,25 @@ export function migrate(): void {
       base_room_id INTEGER NOT NULL
     );
   `);
+
+  // wger_base_url/wger_api_token/wger_character_id (server_config) and
+  // workout_sets.weight_unit are new as of this column set — CREATE TABLE
+  // above already has them for a fresh install, but the one real existing
+  // install needs an explicit ALTER once. Per this function's own doc
+  // comment: fold into CREATE TABLE (already done) and delete this block
+  // once it's actually run against that install — don't let it linger.
+  for (const stmt of [
+    "ALTER TABLE server_config ADD COLUMN wger_base_url TEXT",
+    "ALTER TABLE server_config ADD COLUMN wger_api_token TEXT",
+    "ALTER TABLE server_config ADD COLUMN wger_character_id TEXT",
+    "ALTER TABLE workout_sets ADD COLUMN weight_unit TEXT",
+  ]) {
+    try {
+      db.exec(stmt);
+    } catch {
+      // column already exists
+    }
+  }
 
   seedJacquelineCharacter();
 }

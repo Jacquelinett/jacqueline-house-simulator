@@ -493,6 +493,20 @@
   font-size: 13px;
 }
 
+/* Dashboard's "Lifted Today" section (dashboard/render.ts's
+   renderWorkoutToday) and the Workout modal's own per-session rows share
+   these two — moved here once the Dashboard section gave the viewer a
+   real equivalent (the modal itself stays app-only; see
+   src/styles.css's .workout-session-notes). */
+.workout-row {
+  justify-content: space-between;
+}
+
+.workout-sets-detail {
+  opacity: 0.75;
+  font-size: 12px;
+}
+
 /* Layout only — the app's Dashboard date input and the viewer's own
    Today/Yesterday toggle both sit in one of these, above the goal/activity
    sections built by buildDashboardSections(); what's actually inside it

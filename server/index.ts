@@ -10,10 +10,20 @@ import { settleGoalHistory } from "./goalHistory";
 import { ensureStopwatchBucket, resumeActivity } from "../src/aw/client";
 import { setupRpc, stopOrphanedActivities } from "./rpc";
 import { getServerConfig } from "./serverConfig";
-import { pushGoals, pushHouseLayout, pushPeriodStats, pushStats, pushStatus, pushTodayStreaks, pushYesterdayStats } from "./broadcast";
+import {
+  pushGoals,
+  pushHouseLayout,
+  pushPeriodStats,
+  pushStats,
+  pushStatus,
+  pushTodayStreaks,
+  pushWorkoutToday,
+  pushYesterdayStats,
+} from "./broadcast";
 import { serveStatic } from "./staticServer";
 import { listCharacters } from "./characters";
 import { seedMockWorkoutsIfEmpty } from "./workouts";
+import { isWgerLinkedCharacter } from "./wger";
 import { localDateString } from "../src/goals/recurrence";
 import { seedActivitiesIfEmpty } from "./activities";
 import { seedObjectTypesIfEmpty } from "./objectTypes";
@@ -88,10 +98,18 @@ async function main() {
 
   // Mock wger data (see server/workouts.ts's own comment) — only for
   // Jacqueline specifically (unrelated to val.town publishing below — a
-  // separate, not-yet-multi-character feature), and only if today has
-  // nothing yet, so this doesn't overwrite anything on every restart.
+  // separate, not-yet-multi-character feature), only if today has nothing
+  // yet (so this doesn't overwrite anything on every restart), and only
+  // if she isn't actually wger-linked — once server_config.wger_base_url/
+  // wger_api_token are set for her, getWorkoutsForDate() reads live wger
+  // data instead and this mock seed would just be unused dead rows.
   const jacqueline = characters.find((c) => c.name === "Jacqueline");
-  if (jacqueline) seedMockWorkoutsIfEmpty(jacqueline.id, localDateString(new Date()));
+  if (jacqueline && !isWgerLinkedCharacter(jacqueline.id)) {
+    seedMockWorkoutsIfEmpty(jacqueline.id, localDateString(new Date()));
+  }
+  if (!getServerConfig().wgerBaseUrl) {
+    console.warn("[server] no wger_base_url set in server_config — the wger integration will silently no-op (mock workout data instead).");
+  }
 
   // Re-queried fresh at each use (not captured once here) so an admin
   // toggling a character's "Publish to viewer" checkbox takes effect at
@@ -135,6 +153,7 @@ async function main() {
     // change (see rpc.ts), pushGoals on every goal change (above).
     pushStatus(character.id).catch((err) => console.error(`[server] initial pushStatus failed for ${character.name}`, err));
     pushGoals(character.id).catch((err) => console.error(`[server] initial pushGoals failed for ${character.name}`, err));
+    pushWorkoutToday(character.id).catch((err) => console.error(`[server] initial pushWorkoutToday failed for ${character.name}`, err));
   }
 
   // Stats scan much more AW history (or, for streaks, more of the history
@@ -143,12 +162,20 @@ async function main() {
   // get their own separate cadence even though some are static between
   // boundary crossings. One shared timer for every published character,
   // re-queried fresh each tick (see getPublishedCharacters's own comment).
+  // pushWorkoutToday rides along on this same timer too: like pushStatus,
+  // nothing in this app ever learns synchronously that a new set got
+  // logged in wger (that happens on her phone, outside this app entirely)
+  // — only a poll can find out — but unlike pushYesterdayStats/
+  // pushTodayStreaks, today's workout genuinely can still change through
+  // the day, so it always re-fetches on every tick rather than
+  // self-skipping once "today" has already been pushed once.
   const runStatsPushes = () => {
     for (const character of getPublishedCharacters()) {
       pushStats(character.id).catch((err) => console.error(`[server] pushStats failed for ${character.name}`, err));
       pushPeriodStats(character.id).catch((err) => console.error(`[server] pushPeriodStats failed for ${character.name}`, err));
       pushYesterdayStats(character.id).catch((err) => console.error(`[server] pushYesterdayStats failed for ${character.name}`, err));
       pushTodayStreaks(character.id).catch((err) => console.error(`[server] pushTodayStreaks failed for ${character.name}`, err));
+      pushWorkoutToday(character.id).catch((err) => console.error(`[server] pushWorkoutToday failed for ${character.name}`, err));
     }
   };
   runStatsPushes();
