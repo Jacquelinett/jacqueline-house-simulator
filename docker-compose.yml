@@ -1,6 +1,7 @@
 # One-command home-server stack: the Node server (this repo) + a headless
 # aw-server. wger is deliberately NOT included here — see the comment above
-# `networks` below for why, and DOCKER.md for the full writeup.
+# `volumes` below for why (and how to reach an existing wger instance from
+# in here), and DOCKER.md for the full writeup.
 #
 # Bring up: docker compose up -d --build
 # Tear down: docker compose down            (add -v to also wipe the named volumes)
@@ -64,6 +65,19 @@ services:
       - AW_HOST=aw-server
       - AW_PORT=5600
       - PORT=4000
+    extra_hosts:
+      # Lets server_config.wger_base_url be set to http://host.docker.internal:80
+      # to reach a wger instance running on the HOST machine (outside this
+      # compose stack entirely — see the wger comment at the bottom of this
+      # file) from inside this container. host.docker.internal already
+      # resolves for free on Docker Desktop (Mac/Windows); on Linux it needs
+      # this explicit mapping to the host gateway, which is harmless to leave
+      # in on Docker Desktop too (ignored there). wger_base_url is still a
+      # hand-edited server_config row either way (see DOCKER.md) — this just
+      # makes "localhost" (what you'd use for a non-Docker install, per
+      # CLAUDE.md's wger section) actually unreachable-by-design from in here,
+      # and host.docker.internal the thing to use instead.
+      - "host.docker.internal:host-gateway"
     volumes:
       # server/db.ts resolves its SQLite file + WAL to <this dir>/data —
       # named volume so `docker compose down && docker compose up` (without
@@ -83,21 +97,28 @@ volumes:
   aw-server-data:
   house-simulator-data:
 
-# wger is intentionally absent from this file. Per CLAUDE.md's "mock
-# workout mirror" note, nothing in this codebase talks to a real wger
-# instance yet (server/workouts.ts is hand-seeded mock data) — there's
-# nothing here for wger to connect to, so bundling its own ~8-service
-# compose stack (web/celery_worker/celery_beat/nginx/db/cache/powersync,
-# per https://github.com/wger-project/wger's own docker-compose.yml) into
-# this file would just duplicate a stack Jacqueline already has running
-# independently (confirmed live: `docker ps` shows it as the "docker-*"
-# project, defined at ~/Programming/docker/docker-compose.yml, on its own
-# `wger_network` bridge network, nginx published on host port 80).
+# wger is intentionally absent from this file, even though server/wger.ts
+# now DOES talk to a real wger instance (see CLAUDE.md's "wger integration"
+# section — the old hand-seeded mock mirror is gone). It's still left out of
+# this compose file specifically because Jacqueline already has her own
+# wger stack running independently (confirmed live: `docker ps` shows it as
+# the "docker-*" project, defined at ~/Programming/docker/docker-compose.yml,
+# on its own `wger_network` bridge network, nginx published on host port
+# 80) — bundling wger's own ~8-service compose stack
+# (web/celery_worker/celery_beat/nginx/db/cache/powersync, per
+# https://github.com/wger-project/wger's own docker-compose.yml) in here
+# too would just duplicate that.
 #
-# If/when real wger polling is built (see wger_gamification_implementation_
-# plan.md), the straightforward way to reach it from here without exposing
-# wger to the whole LAN is to mark `wger_network` as an external network
-# and attach house-simulator-server to it — Compose can then resolve wger's
-# own `web` service by name (http://web:8000) the same way AW_HOST above
-# resolves aw-server. Until that integration exists, there's nothing to
-# wire up, so it's left out rather than guessed at.
+# What reaching her existing wger instance from house-simulator-server
+# actually needs: set server_config.wger_base_url (see DOCKER.md) to
+# http://host.docker.internal:80 — NOT http://localhost:80, which is what
+# CLAUDE.md's wger section shows as the example for a non-Docker install,
+# where the Node server and wger share one real network namespace. Once
+# house-simulator-server is its OWN container, "localhost" means the
+# container itself; extra_hosts above is what makes host.docker.internal
+# resolve to the actual host machine instead (automatic on Docker Desktop,
+# needs that explicit mapping on Linux). The alternative — marking
+# `wger_network` external and attaching house-simulator-server to it, then
+# using wger's own `web` service name (http://web:8000) the same way
+# AW_HOST does for aw-server — stays an option if host-network routing ever
+# becomes a problem, but isn't needed for the common case above.

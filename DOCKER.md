@@ -19,16 +19,28 @@ sections:
   (confirmed via its own Dockerfile: `CMD aw-server --host 0.0.0.0
   --cors-origins "*"`, `EXPOSE 5600`, `VOLUME /config`).
 
-**wger is intentionally not part of this stack.** It's already running
-independently (confirmed on this machine: `docker ps` shows a `wger/server`
-stack defined at `~/Programming/docker/docker-compose.yml`, on its own
-`wger_network`, nginx published on host port 80) and nothing in this
-codebase talks to it yet — `server/workouts.ts` is hand-seeded mock data,
-not a real wger poller (see `wger_gamification_implementation_plan.md` for
-the eventual real-integration plan). Bundling wger's own ~8-service compose
-stack into this file would just duplicate work already done. If/when real
-wger polling gets built, see `docker-compose.yml`'s own closing comment for
-how to attach this stack to `wger_network` at that point.
+**wger is intentionally not part of this stack**, even though `server/wger.ts`
+now talks to a real wger instance for real (the old hand-seeded mock mirror
+in `server/workouts.ts` is gone — see CLAUDE.md's "wger integration"
+section). It's already running independently (confirmed on this machine:
+`docker ps` shows a `wger/server` stack defined at
+`~/Programming/docker/docker-compose.yml`, on its own `wger_network`, nginx
+published on host port 80), so bundling wger's own ~8-service compose stack
+into this file would just duplicate work already done.
+
+To actually reach that existing wger instance from inside the
+`house-simulator-server` container, set `server_config.wger_base_url` (see
+step 6 below) to `http://host.docker.internal:80` — **not**
+`http://localhost:80`, which is what CLAUDE.md's wger section shows as the
+example for a non-Docker install where the Node server and wger share one
+real network namespace. Once the Node server is its own container,
+`localhost` means the container itself; `docker-compose.yml`'s
+`extra_hosts: host.docker.internal:host-gateway` on the
+`house-simulator-server` service is what makes `host.docker.internal`
+actually resolve to the real host machine instead (automatic on Docker
+Desktop, needed explicitly on Linux). See that file's own closing comment
+for the alternative (attaching to `wger_network` directly) if host-network
+routing ever becomes a problem.
 
 ## First-time setup on a fresh machine
 
@@ -59,7 +71,15 @@ how to attach this stack to `wger_network` at that point.
    val.town HTTP val running (see `valtown/houseSimulatorStatus.ts` and the
    main `README.md`'s "Public status broadcast" section — unrelated to
    Docker, still a one-time manual paste-into-val.town step either way).
-6. Point every device (the Tauri desktop app via `npm run tauri dev`/build,
+6. **Set the wger base URL**, if you have a self-hosted wger instance you
+   want linked (optional — null leaves the integration disabled for every
+   character regardless of their own token): same `UPDATE server_config SET
+   wger_base_url = 'http://host.docker.internal:80' WHERE id = 1` pattern as
+   step 4/5 (see the wger paragraph above for why `host.docker.internal`,
+   not `localhost`, from inside this container). Each character's own DRF
+   API token is then set per-character through the admin tool's Characters
+   tab (`characters.wger_api_token`), not here.
+7. Point every device (the Tauri desktop app via `npm run tauri dev`/build,
    or a plain browser) at `http://<home-server-ip>:4000`. The admin tool is
    at `http://<home-server-ip>:4000/admin/`.
 
