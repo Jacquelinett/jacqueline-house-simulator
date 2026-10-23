@@ -1441,6 +1441,26 @@ async function openRoomEditModal(
   previewContainer.id = "admin-preview-canvas";
   modal.body.appendChild(previewContainer);
 
+  // Same control as the room connections modal (openRoomConnectionsModal) —
+  // identical range/default/step, just wired to this modal's own
+  // currentRenderer/renderPreview below.
+  const zoomRow = document.createElement("div");
+  zoomRow.className = "admin-form";
+  const zoomInput = document.createElement("input");
+  zoomInput.type = "range";
+  zoomInput.min = "0.5";
+  zoomInput.max = "2.5";
+  zoomInput.step = "0.1";
+  zoomInput.value = "1.5"; // matches AdminPreviewRenderer's own default scale
+  const zoomValueLabel = document.createElement("span");
+  zoomValueLabel.textContent = `${zoomInput.value}x`;
+  zoomRow.append(document.createTextNode("Zoom:"), zoomInput, zoomValueLabel);
+  modal.body.appendChild(zoomRow);
+  zoomInput.oninput = () => {
+    zoomValueLabel.textContent = `${zoomInput.value}x`;
+    currentRenderer?.setScale(Number(zoomInput.value));
+  };
+
   const hint = document.createElement("div");
   hint.className = "admin-hint";
   hint.textContent = "Preview reflects unsaved changes below — nothing is written until you press Save.";
@@ -1673,6 +1693,7 @@ async function openRoomEditModal(
       await currentApp.init({ width: 420, height: 320, background: 0x222228 });
       previewContainer.appendChild(currentApp.canvas);
       currentRenderer = new AdminPreviewRenderer(currentApp, () => {}, highlightRow);
+      currentRenderer.setScale(Number(zoomInput.value));
       console.log("[admin] renderPreview rebuilt OK, currentRenderer set:", !!currentRenderer);
       // renderPreview() tears down and rebuilds the whole canvas on every
       // field change (including the ones wall edit mode's own menu makes),
