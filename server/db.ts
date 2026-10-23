@@ -45,7 +45,8 @@ export function migrate(): void {
       created_at TEXT NOT NULL,
       publish_to_viewer INTEGER NOT NULL DEFAULT 0,
       sprite_name TEXT,
-      wger_api_token TEXT
+      wger_api_token TEXT,
+      activity_grace_period_seconds INTEGER NOT NULL DEFAULT 30
     );
 
     CREATE TABLE IF NOT EXISTS goals (
@@ -207,6 +208,20 @@ export function migrate(): void {
       base_room_id INTEGER NOT NULL
     );
   `);
+
+  // activity_grace_period_seconds added after characters already existed on
+  // the one real live install — CREATE TABLE IF NOT EXISTS is a no-op for an
+  // existing table (see this file's own header comment), so the live row(s)
+  // need an explicit ADD COLUMN too. SQLite backfills a non-NULL DEFAULT onto
+  // every existing row when adding a NOT NULL column, so Jacqueline/Kevin's
+  // existing characters get the real default (30s) here, not NULL.
+  // better-sqlite3 is synchronous, so (unlike val.town's own .catch(() => {})
+  // version of this same pattern) the no-op-once-applied guard is a try/catch.
+  try {
+    db.exec("ALTER TABLE characters ADD COLUMN activity_grace_period_seconds INTEGER NOT NULL DEFAULT 30");
+  } catch {
+    // already applied
+  }
 
   seedJacquelineCharacter();
 }

@@ -9,6 +9,8 @@ export interface Character {
   spriteName: string | null;
   /** This character's own wger DRF API token, or null if they don't have a linked wger account — see server/wger.ts, which resolves this per-character now rather than through one global server_config singleton. */
   wgerApiToken: string | null;
+  /** How long a switch to a different activity sits "pending" (shown as current right away, but not yet sent to AW) before it actually commits — see src/aw/client.ts's own comment on the grace-period design. 0 disables it (old immediate-commit behavior). Per-character since it governs that character's own AW bucket, same as wgerApiToken/spriteName. */
+  activityGracePeriodSeconds: number;
 }
 
 interface CharacterRow {
@@ -19,9 +21,11 @@ interface CharacterRow {
   publish_to_viewer: number;
   sprite_name: string | null;
   wger_api_token: string | null;
+  activity_grace_period_seconds: number;
 }
 
-const SELECT_COLUMNS = "id, name, secret, aw_bucket_id, publish_to_viewer, sprite_name, wger_api_token";
+const SELECT_COLUMNS =
+  "id, name, secret, aw_bucket_id, publish_to_viewer, sprite_name, wger_api_token, activity_grace_period_seconds";
 
 function fromRow(row: CharacterRow): Character {
   return {
@@ -32,6 +36,7 @@ function fromRow(row: CharacterRow): Character {
     publishToViewer: !!row.publish_to_viewer,
     spriteName: row.sprite_name,
     wgerApiToken: row.wger_api_token,
+    activityGracePeriodSeconds: row.activity_grace_period_seconds,
   };
 }
 
@@ -67,7 +72,16 @@ export function createCharacter(name: string): Character {
   db.prepare(
     "INSERT INTO characters (id, name, secret, aw_bucket_id, created_at) VALUES (?, ?, ?, ?, ?)",
   ).run(id, name, secret, bucketId, new Date().toISOString());
-  return { id, name, secret, awBucketId: bucketId, publishToViewer: false, spriteName: null, wgerApiToken: null };
+  return {
+    id,
+    name,
+    secret,
+    awBucketId: bucketId,
+    publishToViewer: false,
+    spriteName: null,
+    wgerApiToken: null,
+    activityGracePeriodSeconds: 30,
+  };
 }
 
 export function renameCharacter(id: string, name: string): void {
@@ -97,6 +111,14 @@ export function updateCharacterSpriteName(id: string, spriteName: string | null)
 /** This character's own wger DRF API token — see server/wger.ts's header comment on why this moved here from the old single-row server_config.wger_api_token/wger_character_id singleton: each character can now have their own wger account on the shared instance (server_config.wger_base_url), not just one account attributed to whichever one character it happened to belong to. An empty string from the admin form is normalized to null (no linked account), same convention updateCharacterSpriteName already uses. */
 export function updateCharacterWgerApiToken(id: string, wgerApiToken: string | null): void {
   db.prepare("UPDATE characters SET wger_api_token = ? WHERE id = ?").run(wgerApiToken || null, id);
+}
+
+/** See Character.activityGracePeriodSeconds's own comment. Takes effect on the next activity switch — doesn't retroactively change a grace period already in flight. */
+export function updateCharacterActivityGracePeriod(id: string, activityGracePeriodSeconds: number): void {
+  db.prepare("UPDATE characters SET activity_grace_period_seconds = ? WHERE id = ?").run(
+    Math.max(0, Math.round(activityGracePeriodSeconds)),
+    id,
+  );
 }
 
 export function deleteCharacter(id: string): void {

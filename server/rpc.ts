@@ -37,7 +37,7 @@ import { getFloors } from "./floors";
  * by deviceId, not characterId.
  */
 const commands: Record<string, (characterId: string, args: any) => Promise<void>> = {
-  startActivity: (characterId, { label }) => startActivity(bucketIdFor(characterId), label),
+  startActivity: (characterId, { label }) => startActivity(bucketIdFor(characterId), label, gracePeriodFor(characterId)),
   stopActivity: (characterId) => stopActivity(bucketIdFor(characterId)),
   addGoal: (characterId, { activityLabel, targetMinutes, recurrence }) =>
     addGoal(characterId, activityLabel, targetMinutes, recurrence),
@@ -84,6 +84,12 @@ function bucketIdFor(characterId: string): string {
   const character = characterCache.get(characterId);
   if (!character) throw new Error(`unknown character: ${characterId}`);
   return character.awBucketId;
+}
+
+function gracePeriodFor(characterId: string): number {
+  const character = characterCache.get(characterId);
+  if (!character) throw new Error(`unknown character: ${characterId}`);
+  return character.activityGracePeriodSeconds;
 }
 
 function currentStatus(bucketId: string) {

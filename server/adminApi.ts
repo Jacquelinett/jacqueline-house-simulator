@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname } from "node:path";
 import { getServerConfig } from "./serverConfig";
 import { createActivity, deleteActivity, getActivities, updateActivity } from "./activities";
-import { createCharacter, deleteCharacter, listCharacters, renameCharacter, updateCharacterBucket, updateCharacterPublishToViewer, updateCharacterSecret, updateCharacterSpriteName, updateCharacterWgerApiToken } from "./characters";
+import { createCharacter, deleteCharacter, listCharacters, renameCharacter, updateCharacterActivityGracePeriod, updateCharacterBucket, updateCharacterPublishToViewer, updateCharacterSecret, updateCharacterSpriteName, updateCharacterWgerApiToken } from "./characters";
 import {
   createObjectType,
   deleteObjectType,
@@ -88,13 +88,14 @@ export async function handleAdminApi(req: IncomingMessage, res: ServerResponse):
         return sendJson(res, 200, createCharacter(name)), true;
       }
       if (parts.length === 4 && method === "PATCH") {
-        const { name, secret, awBucketId, publishToViewer, spriteName, wgerApiToken } = await readJsonBody(req);
+        const { name, secret, awBucketId, publishToViewer, spriteName, wgerApiToken, activityGracePeriodSeconds } = await readJsonBody(req);
         if (name !== undefined) renameCharacter(parts[3], name);
         if (secret !== undefined) updateCharacterSecret(parts[3], secret);
         if (awBucketId !== undefined) updateCharacterBucket(parts[3], awBucketId);
         if (publishToViewer !== undefined) updateCharacterPublishToViewer(parts[3], publishToViewer);
         if (spriteName !== undefined) updateCharacterSpriteName(parts[3], spriteName);
         if (wgerApiToken !== undefined) updateCharacterWgerApiToken(parts[3], wgerApiToken);
+        if (activityGracePeriodSeconds !== undefined) updateCharacterActivityGracePeriod(parts[3], activityGracePeriodSeconds);
         return sendJson(res, 200, { ok: true }), true;
       }
       if (parts.length === 4 && method === "DELETE") {

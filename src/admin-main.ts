@@ -61,6 +61,7 @@ interface Character {
   publishToViewer: boolean;
   spriteName: string | null;
   wgerApiToken: string | null;
+  activityGracePeriodSeconds: number;
 }
 
 interface ActivityDef {
@@ -324,6 +325,7 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
   let publishCheckbox: HTMLInputElement | null = null;
   let spriteNameInput: HTMLInputElement | null = null;
   let wgerApiTokenInput: HTMLInputElement | null = null;
+  let gracePeriodInput: HTMLInputElement | null = null;
   if (existing) {
     secretInput = document.createElement("input");
     secretInput.value = existing.secret;
@@ -358,6 +360,17 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
     wgerHint.textContent =
       "This character's own DRF API token from their wger account (generated from wger's web UI: Preferences > API key > Generate new API key), on the shared wger instance configured in server_config.wger_base_url. Leave blank for no linked wger account.";
     form.appendChild(wgerHint);
+
+    gracePeriodInput = document.createElement("input");
+    gracePeriodInput.type = "number";
+    gracePeriodInput.min = "0";
+    gracePeriodInput.value = String(existing.activityGracePeriodSeconds);
+    form.append(document.createTextNode("Activity switch grace period (seconds):"), gracePeriodInput);
+    const graceHint = document.createElement("div");
+    graceHint.className = "admin-hint";
+    graceHint.textContent =
+      "Switching activities doesn't reach AW until this many seconds pass with no further switch — lets testing something brief (an animation, an accidental tap) not clutter the AW bucket. Switching back to whatever was actually still running before the grace period is up resumes it uninterrupted. 0 disables this (every switch commits immediately, the old behavior).";
+    form.appendChild(graceHint);
   }
 
   const footer = document.createElement("div");
@@ -387,6 +400,7 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
             publishToViewer: publishCheckbox!.checked,
             spriteName: spriteNameInput!.value.trim() || null,
             wgerApiToken: wgerApiTokenInput!.value.trim() || null,
+            activityGracePeriodSeconds: Number(gracePeriodInput!.value) || 0,
           }),
         });
       } else {

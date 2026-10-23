@@ -47,6 +47,20 @@ export interface RunningActivity {
 const currentByBucket = new Map<string, RunningActivity | null>();
 const refreshTimerByBucket = new Map<string, ReturnType<typeof setInterval>>();
 
+/**
+ * A switch the user just made that hasn't reached AW yet — see
+ * startActivity's own comment for the full grace-period design. At most one
+ * per bucket; staging a new one (or reverting to whatever's still actually
+ * committed) always discards whichever was already pending first, since an
+ * abandoned pending switch was never sent to AW to begin with.
+ */
+interface PendingSwitch {
+  label: string;
+  startedAt: Date;
+  timer: ReturnType<typeof setTimeout>;
+}
+const pendingByBucket = new Map<string, PendingSwitch>();
+
 export async function getServerInfo() {
   return client.getInfo();
 }
@@ -55,7 +69,19 @@ export async function ensureStopwatchBucket(bucketId: string): Promise<void> {
   await client.ensureBucket(bucketId, BUCKET_TYPE, BUCKET_HOSTNAME);
 }
 
+/**
+ * The activity to actually SHOW as current — a pending (not-yet-committed-
+ * to-AW) switch if one is mid-grace-period, otherwise whatever's really
+ * running in AW. Display-only: nothing that writes to AW ever reads this
+ * (internal control flow below reads currentByBucket directly), since a
+ * pending entry's startedAt may not correspond to any real AW event yet —
+ * that's the whole point, see startActivity. `id` is meaningless for a
+ * pending entry (no AW event exists for it yet) and is never read by any
+ * caller of this function; -1 is just a placeholder.
+ */
 export function getCurrentActivity(bucketId: string): RunningActivity | null {
+  const pending = pendingByBucket.get(bucketId);
+  if (pending) return { id: -1, label: pending.label, startedAt: pending.startedAt };
   return currentByBucket.get(bucketId) ?? null;
 }
 
@@ -97,11 +123,14 @@ function beginRefreshing(bucketId: string, label: string) {
  * entry should keep accruing time with the app shut), so a *different*
  * activity being started is the actual point something earlier needs to be
  * closed out, and it may not be reflected in our in-memory state (e.g. after
- * a restart).
+ * a restart). `at` is the real moment the old activity actually stopped —
+ * "now" for an immediate switch, or a grace-period switch's original
+ * pending.startedAt when backdating a delayed commit (see commitPendingSwitch).
  */
-async function stopWhateverIsRunning(bucketId: string): Promise<void> {
-  if (currentByBucket.get(bucketId)) {
-    await stopActivity(bucketId);
+async function stopWhateverIsRunning(bucketId: string, at: Date): Promise<void> {
+  const current = currentByBucket.get(bucketId);
+  if (current) {
+    await closeRunningEvent(bucketId, current, at);
     return;
   }
   const [latest] = await client.getEvents(bucketId, { limit: 1 });
@@ -109,25 +138,105 @@ async function stopWhateverIsRunning(bucketId: string): Promise<void> {
   await client.replaceEvent(bucketId, {
     id: latest.id!,
     timestamp: latest.timestamp,
-    duration: (Date.now() - latest.timestamp.getTime()) / 1000,
+    duration: (at.getTime() - latest.timestamp.getTime()) / 1000,
     data: { ...latest.data, running: false },
   });
 }
 
-export async function startActivity(bucketId: string, label: string): Promise<void> {
-  if (currentByBucket.get(bucketId)?.label === label) return;
-  await stopWhateverIsRunning(bucketId);
+/** Shared tail end of both the explicit stopActivity() and a grace-period commit's "stop the old activity" step — closes `current`'s AW event out at `at`. */
+async function closeRunningEvent(bucketId: string, current: RunningActivity, at: Date): Promise<void> {
+  const refreshTimer = refreshTimerByBucket.get(bucketId);
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimerByBucket.delete(bucketId);
+  }
+  const duration = (at.getTime() - current.startedAt.getTime()) / 1000;
+  await client.replaceEvent(bucketId, {
+    id: current.id,
+    timestamp: current.startedAt,
+    duration,
+    data: { running: false, label: current.label, title: current.label, app: APP_NAME },
+  });
+  currentByBucket.set(bucketId, null);
+}
 
-  const timestamp = new Date();
+/** Opens a new AW event for `label`, backdated to `startedAt` — "now" for an immediate switch (duration starts at ~0), or a grace period's original switch moment for a delayed commit (duration seeded to the elapsed grace period instead of 0, so AW reflects the real elapsed time immediately rather than waiting for the next 10s refresh tick to catch up). */
+async function insertRunningEvent(bucketId: string, label: string, startedAt: Date): Promise<void> {
   await client.insertEvent(bucketId, {
-    timestamp,
-    duration: 0,
+    timestamp: startedAt,
+    duration: (Date.now() - startedAt.getTime()) / 1000,
     data: { running: true, label, title: label, app: APP_NAME },
   });
 
   const [latest] = await client.getEvents(bucketId, { limit: 1 });
   currentByBucket.set(bucketId, { id: latest.id!, label, startedAt: latest.timestamp });
   beginRefreshing(bucketId, label);
+}
+
+/**
+ * Actually commits a pending switch to AW once its grace period has fully
+ * elapsed with no further switch — backdates both the old activity's stop
+ * and the new one's start to the exact moment the user originally switched
+ * (pending.startedAt), not to "now" (now is gracePeriodSeconds later), so
+ * AW's own event durations reflect when things really happened rather than
+ * when this app got around to telling AW about it.
+ */
+async function commitPendingSwitch(bucketId: string): Promise<void> {
+  const pending = pendingByBucket.get(bucketId);
+  if (!pending) return; // already cancelled (switched again, or switched back) before the timer fired
+  pendingByBucket.delete(bucketId);
+  await stopWhateverIsRunning(bucketId, pending.startedAt);
+  await insertRunningEvent(bucketId, pending.label, pending.startedAt);
+}
+
+/**
+ * Switches to `label`, but doesn't touch AW right away — stages it as a
+ * pending switch, shown as the current activity immediately (see
+ * getCurrentActivity), and only actually commits it to AW (closing out
+ * whatever was running, starting this one, both backdated to the moment of
+ * this call) if `gracePeriodSeconds` passes with no further switch. This is
+ * what lets testing something brief (an animation, an accidental tap) not
+ * clutter the AW bucket with a flurry of tiny events: switching BACK to
+ * whatever was actually still running in AW before the grace period is up
+ * just discards the pending switch outright — that AW event was never
+ * touched in the first place, so it resumes with its own timer
+ * uninterrupted, not stopped-and-restarted. `gracePeriodSeconds` <= 0
+ * disables this entirely (commits immediately, the pre-grace-period
+ * behavior) — see Character.activityGracePeriodSeconds.
+ */
+export async function startActivity(bucketId: string, label: string, gracePeriodSeconds: number): Promise<void> {
+  const pending = pendingByBucket.get(bucketId);
+  const committed = currentByBucket.get(bucketId);
+
+  // Already the effective current activity — a no-op, same as re-clicking
+  // an already-running action elsewhere in this app.
+  if ((pending?.label ?? committed?.label) === label) return;
+
+  // Switching back to whatever's actually still open in AW cancels the
+  // pending detour outright — nothing to undo, since it was never sent.
+  if (pending && committed?.label === label) {
+    clearTimeout(pending.timer);
+    pendingByBucket.delete(bucketId);
+    return;
+  }
+
+  // An earlier in-flight pending switch (to something else) never reached
+  // AW either — just discard it in favor of this new one.
+  if (pending) clearTimeout(pending.timer);
+
+  if (gracePeriodSeconds <= 0) {
+    pendingByBucket.delete(bucketId);
+    const startedAt = new Date();
+    await stopWhateverIsRunning(bucketId, startedAt);
+    await insertRunningEvent(bucketId, label, startedAt);
+    return;
+  }
+
+  const startedAt = new Date();
+  const timer = setTimeout(() => {
+    commitPendingSwitch(bucketId).catch((err) => console.error("[aw] committing pending activity switch failed", err));
+  }, gracePeriodSeconds * 1000);
+  pendingByBucket.set(bucketId, { label, startedAt, timer });
 }
 
 /**
@@ -196,22 +305,24 @@ export async function getTodayDurationMinutes(
   return totalSeconds / 60;
 }
 
+/**
+ * The explicit "Stop Activity" button — always a full, immediate stop,
+ * bypassing the grace period entirely: discards any pending (not-yet-
+ * committed) switch outright (nothing to send to AW for it) and closes out
+ * whatever's actually still running in AW right now. Unlike startActivity,
+ * there's no "stop pending, stop later" concept — stopping is already the
+ * dedicated, deliberate action (see CLAUDE.md's "Stopping is a dedicated
+ * button" section), so it takes effect immediately rather than itself being
+ * subject to a grace period.
+ */
 export async function stopActivity(bucketId: string): Promise<void> {
-  const current = currentByBucket.get(bucketId);
-  if (!current) return;
-  const refreshTimer = refreshTimerByBucket.get(bucketId);
-  if (refreshTimer) {
-    clearInterval(refreshTimer);
-    refreshTimerByBucket.delete(bucketId);
+  const pending = pendingByBucket.get(bucketId);
+  if (pending) {
+    clearTimeout(pending.timer);
+    pendingByBucket.delete(bucketId);
   }
 
-  const stoppedAt = new Date();
-  const duration = (stoppedAt.getTime() - current.startedAt.getTime()) / 1000;
-  await client.replaceEvent(bucketId, {
-    id: current.id,
-    timestamp: current.startedAt,
-    duration,
-    data: { running: false, label: current.label, title: current.label, app: APP_NAME },
-  });
-  currentByBucket.set(bucketId, null);
+  const current = currentByBucket.get(bucketId);
+  if (!current) return;
+  await closeRunningEvent(bucketId, current, new Date());
 }
