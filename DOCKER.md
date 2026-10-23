@@ -69,7 +69,7 @@ routing ever becomes a problem.
    work — same `UPDATE server_config SET broadcast_url = '...',
    broadcast_secret = '...' WHERE id = 1` pattern, once you have a
    val.town HTTP val running (see `valtown/houseSimulatorStatus.ts` and the
-   main `README.md`'s "Public status broadcast" section — unrelated to
+   main `README.md`'s "Public viewer (optional)" section — unrelated to
    Docker, still a one-time manual paste-into-val.town step either way).
 6. **Set the wger base URL**, if you have a self-hosted wger instance you
    want linked (optional — null leaves the integration disabled for every

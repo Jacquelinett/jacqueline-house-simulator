@@ -109,10 +109,14 @@ export async function pushGoals(characterId: string): Promise<void> {
  * not per-character (unlike every other push function above) — one blob,
  * not scoped to Jacqueline specifically.
  *
- * Called from adminApi.ts after every mutation that changes any of the
- * four tables, and once at server startup — admin-tool edits are rare
- * enough that push-on-change is simpler and fresher than any polling
- * interval would be, same reasoning pushGoals already uses.
+ * Called once at server startup (see server/index.ts) and otherwise only
+ * from adminApi.ts's dedicated POST /api/admin/sync-house-layout endpoint
+ * — the admin tool's own "Sync to viewer" button — NOT after every
+ * individual mutation to any of the four tables. Admin edits usually come
+ * in a burst of several fields/rooms in a row, so an explicit sync once
+ * the admin is actually done beats either polling or re-pushing after
+ * every single change (unlike pushGoals, which really is push-on-change —
+ * see CLAUDE.md's "Broadcasting" section for the full reasoning).
  */
 export async function pushHouseLayout(): Promise<void> {
   await pushWithHealth(

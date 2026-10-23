@@ -1,5 +1,22 @@
 # Claude Code brief: wger integration for my gamification app
 
+> **Status note (added during pre-production review):** what actually got
+> built (`server/wger.ts`, see CLAUDE.md's "wger integration" section) is a
+> much smaller slice of this brief than the full plan below describes —
+> read-only, direct-to-wger-API reads on every request (no local mirror
+> table, no polling/reconciliation job, no sync-run bookkeeping — Phases
+> 1-2 below were never built that way), and no XP/quests/achievements/
+> reward system at all (Phase 4+ below). It's "pride glance" display data
+> only: today's logged sets, wger's own computed lifetime stats, wger's
+> own auto-detected personal records, and a recent-sessions log — all
+> fetched live per-request with simple in-memory caching for static
+> metadata (exercise names, weight units), not ingested/normalized into
+> this app's own database. Left this file as-is below (historical
+> record of the original ambition) rather than editing it to match what
+> shipped — if a bigger integration along these lines is ever actually
+> pursued, this is still the right starting brief for phases beyond what
+> exists today.
+
 ## Product goal
 
 I use the official wger app to plan and log workouts against my own self-hosted wger server. My personal productivity/gamification app must consume those records, award progress, and show workout summaries and trends. Keep the official mobile app unchanged. Build an integration, not another workout logger.
