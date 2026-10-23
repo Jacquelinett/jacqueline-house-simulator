@@ -22,9 +22,10 @@
 // a snapped, single-click placement rather than continuous drag-and-drop,
 // since there's no browser available in this environment to visually
 // verify continuous pointer-drag math well enough to trust.
-import { Application, Assets, Container, Graphics, Texture } from "pixi.js";
+import { Application, Assets, Container, Graphics, Sprite, Texture } from "pixi.js";
 import { buildModal } from "./ui/modal";
-import { assetUrl, buildFloorAndWalls, buildLayer, preloadRoomAssets } from "./scene/renderer";
+import { assetUrl, buildFloorAndWalls, buildLayer, DEFAULT_OVERLAY_FRAME_DURATION_MS, preloadRoomAssets, sliceFrames } from "./scene/renderer";
+import { characterSpritePath } from "./scene/characterSprites";
 import { AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
 import {
@@ -715,12 +716,15 @@ function buildLayerSection(
  * one entry per slot, so one section per slot (not a dynamic array
  * editor) doesn't lose anything for them. `actions` is no longer a type-
  * level concern at all (see ObjectTypeDef's own comment in rooms.ts).
- * The live preview only renders below+above (same as before this
- * three-section rework) — overlay is conditionally visible during an
- * actual activity in the real game/viewer, which this static anchor-
- * tuning preview doesn't simulate, so showing it here would need its own
- * "pretend it's active" toggle to mean anything; not built. The preview
- * renders a real floor+wall room corner (sized to the object's own
+ * The preview always shows the overlay too (unlike the real game, where
+ * it's only visible while someone's actually doing the activity) —
+ * there's no "who's doing this" to attribute in a static authoring
+ * preview, so it simulates Jacqueline's own art specifically
+ * (PREVIEW_CHARACTER_SPRITE_NAME below), falling back to the layer's
+ * plain texture exactly like the real per-character resolution does when
+ * no matching file exists. Animated (frameCount > 1) overlays actually
+ * animate here too, via the same sliceFrames the real renderer uses. The
+ * preview renders a real floor+wall room corner (sized to the object's own
  * footprint) and repositions the sprite so its anchor point always lands
  * exactly on that corner — so tuning the anchor via the number inputs
  * below shows, live, how the object will actually sit relative to the
@@ -774,7 +778,7 @@ async function openObjectTypeEditModal(
   // see this function's own doc comment on why.
   const belowSection = buildLayerSection("Below (base sprite)", draftType.below?.[0], assetPaths, false, () => rebuildSprite());
   modal.body.appendChild(belowSection.element);
-  const overlaySection = buildLayerSection("Overlay (shown while in use)", draftType.overlay?.[0], characterAssetPaths, true, () => {});
+  const overlaySection = buildLayerSection("Overlay (shown while in use)", draftType.overlay?.[0], characterAssetPaths, true, () => rebuildSprite());
   modal.body.appendChild(overlaySection.element);
   const aboveSection = buildLayerSection("Above (rendered on top)", draftType.above?.[0], assetPaths, false, () => rebuildSprite());
   modal.body.appendChild(aboveSection.element);
@@ -863,6 +867,44 @@ async function openObjectTypeEditModal(
     .fill({ color: 0xff3366 });
   stage.addChild(crosshair);
 
+  // Simulates the overlay layer too, defaulting to Jacqueline's own art
+  // (the obvious default character for anyone previewing this) — the
+  // actual game decides this per-attribution at runtime, but there's no
+  // "who's doing this" to attribute in a static authoring preview, so a
+  // fixed stand-in is the only thing that makes sense here.
+  const PREVIEW_CHARACTER_SPRITE_NAME = "jacqueline";
+  let overlaySprite: Sprite | null = null;
+  let overlayFrames: Texture[] | null = null;
+  let overlayFrameIndex = 0;
+  let overlayFrameElapsedMs = 0;
+
+  /** Same fallback contract as resolveOverlayTexture in renderer.ts (spriteKey -> "<name>_<key>.png", falling back to the layer's own texture) — checked against the already-fetched characterAssetPaths list instead of attempting-and-catching a 404, since the admin tool has that directory listing up front. */
+  async function resolveOverlayPreviewTexture(layer: SpriteLayer): Promise<string | undefined> {
+    if (layer.spriteKey) {
+      const candidate = characterSpritePath(PREVIEW_CHARACTER_SPRITE_NAME, layer.spriteKey);
+      if (characterAssetPaths.includes(candidate)) {
+        await ensureTextureLoaded(candidate);
+        return candidate;
+      }
+    }
+    if (layer.texture) await ensureTextureLoaded(layer.texture);
+    return layer.texture;
+  }
+
+  // Ticker-driven, same as renderer.ts's own tick() — Pixi's Application
+  // already runs a continuous ticker by default, so this just piggybacks
+  // on it rather than needing its own loop.
+  app.ticker.add((ticker) => {
+    if (!overlaySprite || !overlayFrames) return;
+    overlayFrameElapsedMs += ticker.deltaMS;
+    const duration = overlaySection.getLayer()?.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS;
+    if (overlayFrameElapsedMs >= duration) {
+      overlayFrameElapsedMs -= duration;
+      overlayFrameIndex = (overlayFrameIndex + 1) % overlayFrames.length;
+      overlaySprite.texture = overlayFrames[overlayFrameIndex];
+    }
+  });
+
   /** Mirrors the room editor's tile-mode display convention: shows anchorX/anchorY as raw pixels, or as the tile (u,v) they correspond to. */
   function syncAnchorInputs() {
     anchorXLabel.textContent = anchorTileModeCheckbox.checked ? "Anchor tile u:" : "Anchor X:";
@@ -882,17 +924,47 @@ async function openObjectTypeEditModal(
   // crosshair — instead of the sprite always sitting at (0,0) with the
   // crosshair floating over it. This is what makes moving the anchor
   // visibly shift the object relative to the room corner.
-  function rebuildSprite() {
+  async function rebuildSprite() {
     rebuildRoom();
     stage.removeChild(spriteLayer);
     spriteLayer.destroy({ children: true });
     spriteLayer = new Container();
     const width = Number(widthInput.value) || 1;
     const height = Number(heightInput.value) || 1;
-    const layers = [belowSection.getLayer(), aboveSection.getLayer()].filter((l): l is SpriteLayer => !!l);
-    for (const layer of layers) {
-      spriteLayer.addChild(buildLayer(layer, width, height));
+
+    const below = belowSection.getLayer();
+    if (below) spriteLayer.addChild(buildLayer(below, width, height));
+
+    // Overlay specifically does NOT go through buildLayer: the real
+    // renderer never resizes it to the object's own width/height (see
+    // renderer.ts's buildObject) — it renders at the resolved texture's
+    // own native size, positioned by offsetX/offsetY alone, which is
+    // what this mirrors instead.
+    overlaySprite = null;
+    overlayFrames = null;
+    const overlayLayer = overlaySection.getLayer();
+    if (overlayLayer) {
+      const texturePath = await resolveOverlayPreviewTexture(overlayLayer);
+      if (texturePath) {
+        const baseTexture = Assets.get<Texture>(assetUrl(texturePath));
+        const sprite = new Sprite();
+        if (overlayLayer.frameCount && overlayLayer.frameCount > 1 && overlayLayer.frameWidth && overlayLayer.frameHeight) {
+          overlayFrames = sliceFrames(baseTexture, overlayLayer.frameWidth, overlayLayer.frameHeight, overlayLayer.frameCount);
+          overlayFrameIndex = 0;
+          overlayFrameElapsedMs = 0;
+          sprite.texture = overlayFrames[0];
+        } else {
+          sprite.texture = baseTexture;
+        }
+        sprite.position.set(overlayLayer.offsetX ?? 0, overlayLayer.offsetY ?? 0);
+        spriteLayer.addChild(sprite);
+        overlaySprite = sprite;
+      }
     }
+
+    const above = aboveSection.getLayer();
+    if (above) spriteLayer.addChild(buildLayer(above, width, height));
+
     spriteLayer.position.set(-anchorX, -anchorY);
     stage.addChildAt(spriteLayer, 1); // above the floor/walls, below the crosshair
     syncAnchorInputs();
@@ -960,7 +1032,7 @@ async function openObjectTypeEditModal(
   modal.onClose(() => app.destroy());
 
   await ensureTextureLoaded(belowSection.getLayer()?.texture);
-  rebuildSprite();
+  await rebuildSprite();
   modal.open();
 }
 

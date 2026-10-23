@@ -6,7 +6,10 @@ import { TileOverride, TileRect } from "./tileset";
 
 const DIM_ALPHA = 0.15;
 const PAN_EASE = 0.15;
-const DEFAULT_OVERLAY_FRAME_DURATION_MS = 150;
+// Exported for the admin tool's object-type preview (admin-main.ts),
+// which simulates the overlay layer too now (defaulting to Jacqueline's
+// own art) and needs the same default-duration fallback.
+export const DEFAULT_OVERLAY_FRAME_DURATION_MS = 150;
 const NAME_TAG_PADDING_X = 5;
 const NAME_TAG_PADDING_Y = 2;
 const NAME_TAG_GAP = 3; // above the overlay sprite's own top edge
@@ -48,8 +51,8 @@ interface ActiveOverlay {
   nameTagText: string | null;
 }
 
-/** Slices one spritesheet texture into `frameCount` equal-width frames laid out left-to-right starting at (0,0) — same sub-rect-of-one-sheet technique tileset.ts's floor/wall variants use, just a uniform grid instead of hand-placed rects (animation frames are naturally uniform-sized, unlike tileset corners/edges). */
-function sliceFrames(base: Texture, frameWidth: number, frameHeight: number, frameCount: number): Texture[] {
+/** Slices one spritesheet texture into `frameCount` equal-width frames laid out left-to-right starting at (0,0) — same sub-rect-of-one-sheet technique tileset.ts's floor/wall variants use, just a uniform grid instead of hand-placed rects (animation frames are naturally uniform-sized, unlike tileset corners/edges). Exported for the admin tool's object-type preview, which reuses this exact slicing to simulate overlay animation. */
+export function sliceFrames(base: Texture, frameWidth: number, frameHeight: number, frameCount: number): Texture[] {
   const frames: Texture[] = [];
   for (let i = 0; i < frameCount; i++) {
     frames.push(new Texture({ source: base.source, frame: new Rectangle(i * frameWidth, 0, frameWidth, frameHeight) }));
