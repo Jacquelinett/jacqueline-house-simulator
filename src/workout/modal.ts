@@ -25,8 +25,9 @@ type WorkoutTab = "today" | "lifetime" | "records" | "log";
 
 /**
  * Read-only display of real wger workout data — four tabs, all backed by
- * server_config.wger_base_url/wger_api_token (server/wger.ts); every tab
- * is empty for a non-wger-linked character, not placeholder data (see
+ * server_config.wger_base_url + this character's own characters.wger_api_token
+ * (server/wger.ts); every tab is empty for a non-wger-linked character,
+ * not placeholder data (see
  * server/workouts.ts's own comment on why the old mock mirror is gone).
  * Deliberately independent of AW/goals entirely — just "what did I lift,"
  * no activity-tracking tie-in. See also the Dashboard's "Lifted Today"

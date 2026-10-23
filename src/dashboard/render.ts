@@ -118,8 +118,9 @@ export function renderGoalList(container: HTMLElement, entries: DashboardGoalEnt
 }
 
 /**
- * "Lifted Today" — real logged wger sets (or [] for a mock/no-data day),
- * already grouped-by-exercise via src/workout/format.ts's
+ * "Lifted Today" — real logged wger sets (or [] for a non-wger-linked
+ * character or a day with nothing logged), already grouped-by-exercise
+ * via src/workout/format.ts's
  * summarizeWorkoutSessions() by the caller. Hides `section` entirely
  * (heading, divider, list, all of it) when there's nothing to show,
  * rather than rendering an empty-state placeholder the way
