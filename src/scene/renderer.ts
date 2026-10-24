@@ -4,6 +4,7 @@ import { findActivityById } from "./activities";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./characterSprites";
 import { resolveWallVariant, TileOverride, TileRect, WallPart, WallPartName, WallVariant, WALL_PART_SIZE } from "./tileset";
 import { buildPaletteTexture } from "./paletteRecolor";
+import { AmbientManualStop } from "../settings/types";
 
 // Exported for AdminPreviewRenderer (adminPreview.ts), which reuses this
 // same dim level for its own whole-room dimming instead of a separately
@@ -38,15 +39,15 @@ export const DEFAULT_OVERLAY_FRAME_DURATION_MS = 150;
 
 // --- Day/night ambient tint ---
 //
-// A full-viewport multiply-blended color wash, driven purely by the
-// player's own local wall-clock time (`hour`, 0-24, fractional) — no
-// admin configuration yet, these are the one place the look lives for
-// now (same "module-level constant, not yet exposed" spirit GLOW_COLOR/
-// GLOW_ALPHA already have). Multiply blending darkens/tints everything
-// under it without fully obscuring — alpha 0 at midday means "no tint at
-// all," not "transparent dark navy." Stops must span the full 0-24 range
-// (first and last hour implicitly wrap to the same look, since a day
-// has no real start/end) and be in ascending hour order.
+// A full-viewport multiply-blended color wash, driven by real wall-clock
+// time pinned to the house's own location (AMBIENT_TIMEZONE) rather than
+// whatever timezone a given device happens to be in — a phone viewing the
+// house from elsewhere should still see Jacqueline's own day/night, not
+// its own. Multiply blending darkens/tints everything under it without
+// fully obscuring — alpha 0 at midday means "no tint at all," not
+// "transparent dark navy." Stops must span the full 0-24 range (first and
+// last hour implicitly wrap to the same look, since a day has no real
+// start/end) and be in ascending hour order.
 interface AmbientStop {
   hour: number;
   color: number;
@@ -68,6 +69,23 @@ const AMBIENT_STOPS: AmbientStop[] = [
 // renderer.
 const AMBIENT_RECOMPUTE_INTERVAL_MS = 30_000;
 
+// Where "real time" mode's clock is read from — intentionally not the
+// browser's own timezone (see comment above).
+const AMBIENT_TIMEZONE = "America/New_York";
+
+// The four testable "modes" a Settings toggle can manually pin the tint
+// to (see settings/types.ts's AmbientManualStop) — each one lifted
+// straight from AMBIENT_STOPS' own look at that point in the day, so a
+// manually-picked mode always matches what real time would actually show
+// then, just without needing to wait for the clock (or interpolating
+// through the stops in between).
+const AMBIENT_MANUAL_LOOKS: Record<AmbientManualStop, { color: number; alpha: number }> = {
+  night: { color: 0x1a1a40, alpha: 0.45 },
+  dawn: { color: 0xff9966, alpha: 0.18 },
+  day: { color: 0xffffff, alpha: 0 },
+  dusk: { color: 0xff9966, alpha: 0.18 },
+};
+
 function lerpColorChannelwise(a: number, b: number, t: number): number {
   const channel = (n: number, shift: number) => (n >> shift) & 0xff;
   const lerp = (x: number, y: number) => Math.round(x + (y - x) * t);
@@ -77,8 +95,18 @@ function lerpColorChannelwise(a: number, b: number, t: number): number {
   return (r << 16) | (g << 8) | bch;
 }
 
-function computeAmbientTint(now: Date): { color: number; alpha: number } {
-  const hour = now.getHours() + now.getMinutes() / 60;
+// Reads the hour-of-day (0-24, fractional) in `timeZone` regardless of the
+// device's own — Intl.DateTimeFormat (not Date.getHours(), which is always
+// the SYSTEM's local time) is the one built-in way to ask "what time is it
+// over there right now" without a timezone database dependency.
+function hourInTimeZone(now: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  return hour + minute / 60;
+}
+
+function computeAmbientTintForHour(hour: number): { color: number; alpha: number } {
   for (let i = 0; i < AMBIENT_STOPS.length - 1; i++) {
     const a = AMBIENT_STOPS[i];
     const b = AMBIENT_STOPS[i + 1];
@@ -88,6 +116,10 @@ function computeAmbientTint(now: Date): { color: number; alpha: number } {
     }
   }
   return { color: AMBIENT_STOPS[0].color, alpha: AMBIENT_STOPS[0].alpha }; // unreachable given stops span the full 0-24 range
+}
+
+function computeAmbientTint(now: Date): { color: number; alpha: number } {
+  return computeAmbientTintForHour(hourInTimeZone(now, AMBIENT_TIMEZONE));
 }
 const NAME_TAG_PADDING_X = 5;
 const NAME_TAG_PADDING_Y = 2;
@@ -750,6 +782,21 @@ function compareRoomDepth(a: RoomDef, b: RoomDef): number {
 }
 
 /**
+ * Shared by SceneRenderer's own constructor and every subclass's
+ * (House/HouseViewer) — a single definition so a new initial-state field
+ * (like the ambient ones below) only needs adding once. The two ambient
+ * fields are optional so AdminPreviewRenderer's existing `{ devMode: false,
+ * scale: 1.5 }` literal (which never cares about ambient tint — see
+ * isAmbientTintEnabled's override there) keeps compiling unchanged.
+ */
+export interface SceneRendererInitial {
+  devMode: boolean;
+  scale: number;
+  ambientUseRealTime?: boolean;
+  ambientManualStop?: AmbientManualStop;
+}
+
+/**
  * Builds and renders the isometric house scene: rooms, objects, camera
  * panning, floor-dimming focus, and "currently doing X" overlay highlighting.
  * Deliberately has NO click/interaction handling of its own — that's added by
@@ -828,14 +875,21 @@ export class SceneRenderer {
   // "Day/night ambient tint" above.
   private ambientTint = new Graphics();
   private ambientTintElapsedMs = 0;
+  // Optional on SceneRendererInitial (default true/"day") so AdminPreviewRenderer's
+  // own narrower initial object (which never touches ambient — see
+  // isAmbientTintEnabled's override there) doesn't need updating.
+  private ambientUseRealTime: boolean;
+  private ambientManualStop: AmbientManualStop;
 
   constructor(
     protected app: Application,
     protected onRoomChange: (roomName: string) => void,
-    initial: { devMode: boolean; scale: number },
+    initial: SceneRendererInitial,
   ) {
     this.scale = initial.scale;
     this.devMode = initial.devMode;
+    this.ambientUseRealTime = initial.ambientUseRealTime ?? true;
+    this.ambientManualStop = initial.ambientManualStop ?? "day";
     app.stage.addChild(this.world);
     this.world.scale.set(this.scale);
 
@@ -906,7 +960,7 @@ export class SceneRenderer {
   }
 
   private redrawAmbientTint(): void {
-    const { color, alpha } = computeAmbientTint(new Date());
+    const { color, alpha } = this.ambientUseRealTime ? computeAmbientTint(new Date()) : AMBIENT_MANUAL_LOOKS[this.ambientManualStop];
     this.ambientTint.clear().rect(0, 0, this.app.screen.width, this.app.screen.height).fill({ color, alpha });
   }
 
@@ -1510,6 +1564,13 @@ export class SceneRenderer {
     this.world.scale.set(scale);
     this.computeCameraTarget();
     this.world.position.set(this.cameraTarget.x, this.cameraTarget.y);
+  }
+
+  /** Redraws immediately (not waiting for tick()'s own 30s recompute) so flipping between manual modes in Settings reads as instant, same reasoning setDevMode/setScale apply their change right away too. */
+  public setAmbientOverride(useRealTime: boolean, manualStop: AmbientManualStop) {
+    this.ambientUseRealTime = useRealTime;
+    this.ambientManualStop = manualStop;
+    if (this.isAmbientTintEnabled()) this.redrawAmbientTint();
   }
 
   private tick() {

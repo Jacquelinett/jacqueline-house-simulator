@@ -1,16 +1,28 @@
-import { Theme } from "../settings/types";
+import { AmbientManualStop, Theme } from "../settings/types";
+import { buildToggleGroup } from "./toggleGroup";
 
 export interface DisplaySettingsValues {
   devMode: boolean;
   theme: Theme;
   scale: number;
+  ambientUseRealTime: boolean;
+  ambientManualStop: AmbientManualStop;
 }
 
 export interface DisplaySettingsCallbacks {
   onDevModeChange(value: boolean): void;
   onThemeChange(value: Theme): void;
   onScaleChange(value: number): void;
+  onAmbientUseRealTimeChange(value: boolean): void;
+  onAmbientManualStopChange(value: AmbientManualStop): void;
 }
+
+const AMBIENT_MANUAL_STOP_LABELS: Record<AmbientManualStop, string> = {
+  night: "Night",
+  dawn: "Dawn",
+  day: "Day",
+  dusk: "Dusk",
+};
 
 /**
  * The "Display" section (dev-mode checkbox, theme select, zoom slider) —
@@ -87,12 +99,60 @@ export function buildDisplaySettingsSection(
   };
   scaleInput.onchange = () => callbacks.onScaleChange(Number(scaleInput.value));
 
+  // Ambient lighting (day/night tint) testing controls — "real time" pins
+  // the tint to the house's own clock (America/New_York, see
+  // scene/renderer.ts), which is the normal/default behavior; unchecking
+  // it freezes the tint on one manually-picked mode so each look can be
+  // previewed on demand instead of waiting for the real day/night cycle
+  // to reach it.
+  const ambientHeading = document.createElement("h3");
+  ambientHeading.textContent = "Ambient Lighting";
+  section.appendChild(ambientHeading);
+
+  const ambientRealTimeLabel = document.createElement("label");
+  ambientRealTimeLabel.className = "settings-checkbox-row";
+  const ambientRealTimeCheckbox = document.createElement("input");
+  ambientRealTimeCheckbox.type = "checkbox";
+  ambientRealTimeCheckbox.checked = initial.ambientUseRealTime;
+  ambientRealTimeLabel.appendChild(ambientRealTimeCheckbox);
+  ambientRealTimeLabel.appendChild(document.createTextNode(" Use real time (Jacqueline's — EST/New York)"));
+  section.appendChild(ambientRealTimeLabel);
+
+  const ambientStopRow = document.createElement("div");
+  ambientStopRow.className = "settings-scale-row";
+  section.appendChild(ambientStopRow);
+
+  // Rebuilt (not patched in place) on every mode change/external update —
+  // buildToggleGroup has no resync hook of its own, and a handful of
+  // buttons is cheap enough to just recreate, same spirit as rebuildSprite
+  // elsewhere in this app favoring a clean rebuild over partial patching.
+  let ambientStopButtons: HTMLElement | null = null;
+  function renderAmbientStopButtons(current: AmbientManualStop) {
+    const next = buildToggleGroup(
+      (["night", "dawn", "day", "dusk"] as const).map((v) => [v, AMBIENT_MANUAL_STOP_LABELS[v]] as const),
+      current,
+      (value) => callbacks.onAmbientManualStopChange(value),
+    );
+    next.style.display = ambientRealTimeCheckbox.checked ? "none" : "";
+    if (ambientStopButtons) ambientStopButtons.replaceWith(next);
+    else ambientStopRow.appendChild(next);
+    ambientStopButtons = next;
+  }
+  renderAmbientStopButtons(initial.ambientManualStop);
+
+  ambientRealTimeCheckbox.onchange = () => {
+    callbacks.onAmbientUseRealTimeChange(ambientRealTimeCheckbox.checked);
+    if (ambientStopButtons) ambientStopButtons.style.display = ambientRealTimeCheckbox.checked ? "none" : "";
+  };
+
   return {
     update(values) {
       devModeCheckbox.checked = values.devMode;
       themeSelect.value = values.theme;
       scaleInput.value = String(values.scale);
       scaleValue.textContent = `${values.scale}×`;
+      ambientRealTimeCheckbox.checked = values.ambientUseRealTime;
+      renderAmbientStopButtons(values.ambientManualStop);
     },
   };
 }

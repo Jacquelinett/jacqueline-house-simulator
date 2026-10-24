@@ -1,7 +1,7 @@
 import { Application, Container, Polygon } from "pixi.js";
 import { findObjectForActivityLabel, gridToScreen, ObjectAction, ObjectDef, RoomDef } from "./rooms";
 import { findActivityById } from "./activities";
-import { OverlayAttribution, SceneRenderer } from "./renderer";
+import { OverlayAttribution, SceneRenderer, SceneRendererInitial } from "./renderer";
 import { describeAction } from "./actionDispatch";
 import { openActionPicker } from "../ui/actionPicker";
 import { AllStatusesEntry, getAllStatuses, getCharacter, getRemoteStatus, RemoteStatus, sendCommand } from "../client/remoteState";
@@ -34,7 +34,7 @@ export class House extends SceneRenderer {
   constructor(
     app: Application,
     onRoomChange: (roomName: string) => void,
-    initial: { devMode: boolean; scale: number },
+    initial: SceneRendererInitial,
   ) {
     super(app, onRoomChange, initial);
     app.canvas.addEventListener("contextmenu", (e) => e.preventDefault());

@@ -84,7 +84,9 @@ export function migrate(): void {
       device_id TEXT PRIMARY KEY,
       scale REAL NOT NULL,
       theme TEXT NOT NULL,
-      dev_mode INTEGER NOT NULL
+      dev_mode INTEGER NOT NULL,
+      ambient_use_real_time INTEGER NOT NULL DEFAULT 1,
+      ambient_manual_stop TEXT NOT NULL DEFAULT 'day'
     );
 
     CREATE TABLE IF NOT EXISTS server_config (
@@ -287,6 +289,16 @@ export function migrate(): void {
   }
   try {
     db.exec("ALTER TABLE objects ADD COLUMN light_schedule_off_at TEXT");
+  } catch {
+    // already applied
+  }
+  try {
+    db.exec("ALTER TABLE device_settings ADD COLUMN ambient_use_real_time INTEGER NOT NULL DEFAULT 1");
+  } catch {
+    // already applied
+  }
+  try {
+    db.exec("ALTER TABLE device_settings ADD COLUMN ambient_manual_stop TEXT NOT NULL DEFAULT 'day'");
   } catch {
     // already applied
   }

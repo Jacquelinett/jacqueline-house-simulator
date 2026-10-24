@@ -1,7 +1,7 @@
 import { Application, Container, Polygon } from "pixi.js";
 import { findActivityById } from "./activities";
 import { findObjectForActivityLabel, gridToScreen, ObjectDef, RoomDef } from "./rooms";
-import { OverlayAttribution, SceneRenderer } from "./renderer";
+import { OverlayAttribution, SceneRenderer, SceneRendererInitial } from "./renderer";
 
 export { preloadRoomAssets } from "./renderer";
 
@@ -31,7 +31,7 @@ export class HouseViewer extends SceneRenderer {
   constructor(
     app: Application,
     onRoomChange: (roomName: string) => void,
-    initial: { devMode: boolean; scale: number },
+    initial: SceneRendererInitial,
     private onCharacterClick: (character: { id: string; name: string }) => void,
   ) {
     super(app, onRoomChange, initial);

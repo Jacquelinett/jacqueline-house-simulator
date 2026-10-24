@@ -57,13 +57,19 @@ async function setupHouse(app: Application): Promise<House> {
       roomLabelEl.textContent = name;
       floorButtons.onRoomChange(name);
     },
-    { devMode: getSettings().devMode, scale: getSettings().scale },
+    {
+      devMode: getSettings().devMode,
+      scale: getSettings().scale,
+      ambientUseRealTime: getSettings().ambientUseRealTime,
+      ambientManualStop: getSettings().ambientManualStop,
+    },
   );
   floorButtons.bindGoToRoom((roomId) => house.goToRoom(roomId));
 
   onSettingsChange(() => {
     house.setDevMode(getSettings().devMode);
     house.setScale(getSettings().scale);
+    house.setAmbientOverride(getSettings().ambientUseRealTime, getSettings().ambientManualStop);
   });
 
   return house;

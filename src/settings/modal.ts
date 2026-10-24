@@ -36,6 +36,20 @@ export function setupSettingsContent(container: HTMLElement): void {
         console.error("[settings] failed to save scale", err);
       }
     },
+    onAmbientUseRealTimeChange: async (value) => {
+      try {
+        await updateSettings({ ambientUseRealTime: value });
+      } catch (err) {
+        console.error("[settings] failed to save ambient real-time toggle", err);
+      }
+    },
+    onAmbientManualStopChange: async (value) => {
+      try {
+        await updateSettings({ ambientManualStop: value });
+      } catch (err) {
+        console.error("[settings] failed to save ambient manual stop", err);
+      }
+    },
   });
 
   // The desktop modal and the mobile tab each build their own independent

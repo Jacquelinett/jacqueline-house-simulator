@@ -28,7 +28,7 @@ import { setupTopButtons } from "./ui/topButtons";
 import { setupPixiApp } from "./ui/pixiApp";
 import { setupMobileTabs } from "./ui/mobileTabs";
 import { buildDisplaySettingsSection, DisplaySettingsCallbacks } from "./ui/displaySettings";
-import { Theme } from "./settings/types";
+import { AmbientManualStop, Theme } from "./settings/types";
 import { applyTheme, THEME_BACKGROUND } from "./settings/themes";
 
 // Edit this to your own deployed val.town status val before building/hosting
@@ -43,9 +43,18 @@ interface ViewerSettings {
   scale: number;
   devMode: boolean;
   theme: Theme;
+  ambientUseRealTime: boolean;
+  ambientManualStop: AmbientManualStop;
 }
 
 const VIEWER_SETTINGS_KEY = "houseSimulatorViewerSettings";
+const DEFAULT_VIEWER_SETTINGS: ViewerSettings = {
+  scale: 2,
+  devMode: false,
+  theme: DEFAULT_VIEWER_THEME,
+  ambientUseRealTime: true,
+  ambientManualStop: "day",
+};
 
 // No desktop-app-style Tauri fs here — this is a public static page, so
 // localStorage is the whole persistence story (per-browser, not per-person;
@@ -53,11 +62,11 @@ const VIEWER_SETTINGS_KEY = "houseSimulatorViewerSettings";
 function loadViewerSettings(): ViewerSettings {
   try {
     const raw = localStorage.getItem(VIEWER_SETTINGS_KEY);
-    if (raw) return { scale: 2, devMode: false, theme: DEFAULT_VIEWER_THEME, ...JSON.parse(raw) };
+    if (raw) return { ...DEFAULT_VIEWER_SETTINGS, ...JSON.parse(raw) };
   } catch {
     // ignore corrupt/inaccessible storage, just fall through to defaults
   }
-  return { scale: 2, devMode: false, theme: DEFAULT_VIEWER_THEME };
+  return { ...DEFAULT_VIEWER_SETTINGS };
 }
 
 function saveViewerSettings(settings: ViewerSettings) {
@@ -784,6 +793,18 @@ async function main() {
     onScaleChange: (value) => {
       viewerSettings.scale = value;
       viewer.setScale(value);
+      saveViewerSettings(viewerSettings);
+      syncSettingsUI();
+    },
+    onAmbientUseRealTimeChange: (value) => {
+      viewerSettings.ambientUseRealTime = value;
+      viewer.setAmbientOverride(value, viewerSettings.ambientManualStop);
+      saveViewerSettings(viewerSettings);
+      syncSettingsUI();
+    },
+    onAmbientManualStopChange: (value: AmbientManualStop) => {
+      viewerSettings.ambientManualStop = value;
+      viewer.setAmbientOverride(viewerSettings.ambientUseRealTime, value);
       saveViewerSettings(viewerSettings);
       syncSettingsUI();
     },
