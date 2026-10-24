@@ -22,7 +22,7 @@ import { activityLabelHasLiveObject } from "./activityGuard";
 import { getWorkoutsForDate, getLifetimeStatsForCharacter, getPersonalRecordsForCharacter, getRecentDaySummariesForCharacter } from "./workouts";
 import { getActivities } from "./activities";
 import { getObjectTypes } from "./objectTypes";
-import { getRoomSpecs } from "./rooms";
+import { getLightState, getLightStates, getRoomSpecs, setLightState } from "./rooms";
 import { getFloors } from "./floors";
 
 /**
@@ -50,6 +50,14 @@ const commands: Record<string, (characterId: string, args: any) => Promise<void>
   toggleTodo: (characterId, { id }) => toggleTodo(characterId, id),
   deleteTodo: (characterId, { id }) => deleteTodo(characterId, id),
   deleteMessage: (characterId, { id }) => deleteMessage(characterId, id),
+  // Light state is global (not per-character, same reasoning allStatuses
+  // already uses) — any connected client can flip any object's light
+  // regardless of which character it belongs to, same "no privacy
+  // boundary between household characters" stance queries' own
+  // viewingCharacterId comment states. See setLightState's own comment
+  // for why this is a narrow single-column write, not the admin REST
+  // API's full-row upsert.
+  toggleLight: async (_characterId, { objectId }) => setLightState(objectId, !getLightState(objectId)),
 };
 
 /**
@@ -263,6 +271,10 @@ export function setupRpc(wss: WebSocketServer): void {
     ws.send(JSON.stringify({ type: "state", key: "objectTypes", data: getObjectTypes() }));
     ws.send(JSON.stringify({ type: "state", key: "roomSpecs", data: getRoomSpecs() }));
     ws.send(JSON.stringify({ type: "state", key: "floors", data: getFloors() }));
+    // Global, not per-character (same reasoning allStatuses already
+    // uses) — every client sees every object's current light state
+    // regardless of which character it's connected as.
+    ws.send(JSON.stringify({ type: "state", key: "lightStates", data: getLightStates() }));
     sendSettings(ws, deviceId);
 
     ws.on("close", () => {
@@ -307,6 +319,7 @@ export function setupRpc(wss: WebSocketServer): void {
               pushStatus(character.id).catch((err) => console.error("[rpc] pushStatus after activity change failed", err));
             }
           }
+          if (msg.name === "toggleLight") broadcastToAll("lightStates", getLightStates());
         } catch (err) {
           console.error(`[rpc] command ${msg.name} failed`, err);
         }

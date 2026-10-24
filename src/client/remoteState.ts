@@ -204,6 +204,11 @@ const statusStore = createRemoteStore<RemoteStatus>({ activityLabel: null, start
 // connecting character's own clients). Lets House.ts show that another
 // character is doing something without being scoped to their broadcast.
 const allStatusesStore = createRemoteStore<Record<string, AllStatusesEntry>>({});
+// Every object placement's current on/off, keyed by object id — global,
+// not per-character (same reasoning allStatuses above is global), fed by
+// the toggleLight command's broadcast and the server's schedule
+// evaluator (server/index.ts). See renderer.ts's applyLightStates.
+const lightStatesStore = createRemoteStore<Record<number, boolean>>({});
 const settingsStore = createRemoteStore<DeviceSettings>(DEFAULT_DEVICE_SETTINGS);
 // Which character this connection's secret authenticated as — replaces the
 // old hardcoded CURRENT_USER_NAME for any surface that needs to work for
@@ -226,6 +231,8 @@ export const getRemoteStatus = statusStore.get;
 export const onRemoteStatusChange = statusStore.onChange;
 export const getAllStatuses = allStatusesStore.get;
 export const onAllStatusesChange = allStatusesStore.onChange;
+export const getLightStates = lightStatesStore.get;
+export const onLightStatesChange = lightStatesStore.onChange;
 export const getDeviceSettings = settingsStore.get;
 export const onDeviceSettingsChange = settingsStore.onChange;
 export const getCharacter = characterStore.get;
@@ -240,6 +247,7 @@ const storesByKey: Record<string, { _set(data: unknown): void }> = {
   todos: todosStore,
   status: statusStore,
   allStatuses: allStatusesStore,
+  lightStates: lightStatesStore,
   settings: settingsStore,
   character: characterStore,
   activities: activitiesStore,

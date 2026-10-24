@@ -336,6 +336,12 @@ export function getLightStates(): Record<number, boolean> {
   return result;
 }
 
+/** One placement's current light_on — false (not an error) for an unknown id, same "absent means off" shape the rest of this feature uses. */
+export function getLightState(objectId: number): boolean {
+  const row = db.prepare("SELECT light_on FROM objects WHERE id = ?").get(objectId) as { light_on: number } | undefined;
+  return !!row?.light_on;
+}
+
 /** Every placement with a complete schedule (both onAt/offAt set) — what the schedule evaluator (server/index.ts) iterates each tick. */
 export function getScheduledLights(): { id: number; onAt: string; offAt: string }[] {
   const rows = db

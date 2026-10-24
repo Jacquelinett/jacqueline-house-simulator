@@ -1174,8 +1174,12 @@ export class SceneRenderer {
    * no light groups at all, or one this broadcast hasn't mentioned) is
    * simply skipped; only objects actually tracked in activeLights (built
    * in buildObject, see ActiveLight's own comment) do anything here.
+   * Public (unlike updateActiveOverlays) since both House.ts and
+   * viewer.ts call it with the exact same shape — no per-subclass
+   * computation needed first, unlike attributing an overlay to a
+   * character.
    */
-  protected applyLightStates(states: Record<number, boolean>) {
+  public applyLightStates(states: Record<number, boolean>) {
     for (const [objectId, light] of this.activeLights) {
       const on = states[objectId] ?? light.on;
       if (on === light.on) continue;

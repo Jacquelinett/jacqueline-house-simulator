@@ -22,12 +22,14 @@ import { setFloors } from "./scene/floors";
 import {
   connectRemoteState,
   getAllStatuses,
+  getLightStates,
   getRemoteActivities,
   getRemoteFloors,
   getRemoteObjectTypes,
   getRemoteRoomSpecs,
   getRemoteStatus,
   onAllStatusesChange,
+  onLightStatesChange,
   onRemoteStatusChange,
 } from "./client/remoteState";
 
@@ -211,6 +213,11 @@ async function main() {
   // the camera-following broadcast above, see House.applyAllStatuses.
   house.applyAllStatuses(getAllStatuses());
   onAllStatusesChange(() => house.applyAllStatuses(getAllStatuses()));
+  // Global, not per-character — every object's current light on/off,
+  // same reasoning allStatuses above is global (see remoteState.ts's
+  // lightStatesStore).
+  house.applyLightStates(getLightStates());
+  onLightStatesChange(() => house.applyLightStates(getLightStates()));
 
   setupModals();
   setupMobileUI(house);
