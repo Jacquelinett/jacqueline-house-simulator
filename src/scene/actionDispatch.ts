@@ -13,5 +13,6 @@ import { findActivityById } from "./activities";
  */
 export function describeAction(action: ObjectAction): string {
   if (action.kind === "goTo") return `Go to ${rooms.find((r) => r.id === action.roomId)?.name ?? action.roomId}`;
+  if (action.kind === "toggleLight") return "Toggle light";
   return findActivityById(action.activityId)?.label ?? "?";
 }

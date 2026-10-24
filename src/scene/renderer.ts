@@ -3,6 +3,7 @@ import { DEFAULT_WALL_HEIGHT, gridToScreen, rooms as roomDefs, screenToGrid, Obj
 import { findActivityById } from "./activities";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./characterSprites";
 import { resolveWallVariant, TileOverride, TileRect, WallPart, WallPartName, WallVariant, WALL_PART_SIZE } from "./tileset";
+import { buildLitTexture } from "./lightRecolor";
 
 // Exported for AdminPreviewRenderer (adminPreview.ts), which reuses this
 // same dim level for its own whole-room dimming instead of a separately
@@ -127,6 +128,27 @@ interface ActiveOverlay {
   // an unchanged attribution don't rebuild the Text/Graphics every time.
   nameTag: Container;
   nameTagText: string | null;
+}
+
+/**
+ * One object's full light runtime state — tracked per-object (not per
+ * light-group, since all of an object's groups toggle together, see
+ * LightGroupDef's own comment). `sprite`/`baseTexture` are the below[0]
+ * layer's own Sprite/original Texture, recolored in place when `on`
+ * flips — null if the object has no texture-backed below layer at all
+ * (a pure "light shape" object has nothing to recolor, just its glows).
+ * `litTexture` starts null and resolves asynchronously (buildLitTexture
+ * is a Canvas2D round-trip) — an object that starts "on" shows its base
+ * texture plus the glow(s) until the recolor resolves a moment later,
+ * same "briefly unresolved, corrects itself" tolerance the sprite-overlay
+ * system's own async texture resolution already has.
+ */
+interface ActiveLight {
+  sprite: Sprite | null;
+  baseTexture: Texture | null;
+  litTexture: Texture | null;
+  glows: Graphics[];
+  on: boolean;
 }
 
 /** Slices one spritesheet texture into `frameCount` equal-width frames laid out left-to-right starting at (0,0) — same sub-rect-of-one-sheet technique tileset.ts's floor/wall variants use, just a uniform grid instead of hand-placed rects (animation frames are naturally uniform-sized, unlike tileset corners/edges). Frame width/height are derived from the sheet's own natural size (width / frameCount, full height) rather than authored — a spritesheet's frames are always its own height, and equal-width slices of its own width. Exported for the admin tool's object-type preview, which reuses this exact slicing to simulate overlay animation. */
@@ -766,6 +788,10 @@ export class SceneRenderer {
   // Sprites shown only while one of their object's activity labels is the
   // currently-running activity (e.g. a character sprite at the piano).
   protected activeOverlays: ActiveOverlay[] = [];
+  // Keyed by object placement id (not index) so applyLightStates (fed by
+  // the live lightStates broadcast, see client/remoteState.ts) can look
+  // one up directly without a scan.
+  protected activeLights = new Map<number, ActiveLight>();
   // Objects are clickable in any room on the SAME FLOOR as the one
   // currently viewed, not just the exact viewed room — clicking one both
   // recenters the camera on its room (see House.ts's attachObjectInteraction,
@@ -986,8 +1012,49 @@ export class SceneRenderer {
     // and wall tiles are placed from) — not grid-snapped, negative allowed.
     container.position.set(obj.x, obj.y);
 
+    // Captures the FIRST texture-backed below sprite only — a light's
+    // pixel recolor only ever targets below[0] (see LightGroupDef's own
+    // comment), and every real object today has at most one below entry
+    // anyway (same assumption the sprite/above loops already make).
+    let belowSprite: Sprite | null = null;
     for (const layer of obj.below ?? []) {
-      container.addChild(buildLayer(layer, obj.width, obj.height));
+      const node = buildLayer(layer, obj.width, obj.height);
+      container.addChild(node);
+      if (!belowSprite && node instanceof Sprite) belowSprite = node;
+    }
+
+    if (obj.lightGroups && obj.lightGroups.length > 0) {
+      const glows: Graphics[] = [];
+      for (const group of obj.lightGroups) {
+        // Same filled-then-blurred-circle technique as the room-focus
+        // glow (GLOW_COLOR/GLOW_BLUR_STRENGTH above), just object-scoped
+        // instead of room-scoped, and using the light's own color/alpha.
+        const glow = new Graphics().circle(group.glowOffsetX, group.glowOffsetY, group.glowRadius).fill({ color: group.onColor, alpha: group.glowAlpha });
+        glow.filters = [new BlurFilter({ strength: GLOW_BLUR_STRENGTH })];
+        glow.eventMode = "none";
+        glow.visible = obj.lightOn ?? false;
+        container.addChild(glow);
+        glows.push(glow);
+      }
+
+      const activeLight: ActiveLight = {
+        sprite: belowSprite,
+        baseTexture: belowSprite?.texture ?? null,
+        litTexture: null,
+        glows,
+        on: obj.lightOn ?? false,
+      };
+      this.activeLights.set(obj.id, activeLight);
+
+      const recolorGroups = obj.lightGroups.filter((g) => g.pixelMatch !== undefined).map((g) => ({ pixelMatch: g.pixelMatch!, onColor: g.onColor }));
+      if (belowSprite && recolorGroups.length > 0 && obj.below?.[0]?.texture) {
+        buildLitTexture(assetUrl(obj.below[0].texture), recolorGroups)
+          .then((texture) => {
+            activeLight.litTexture = texture;
+            if (activeLight.on && activeLight.sprite) activeLight.sprite.texture = texture;
+          })
+          .catch((err) => console.error("[renderer] buildLitTexture failed", err));
+      }
     }
 
     // Name tags are UI, not world geometry — collected here and added to
@@ -1096,6 +1163,25 @@ export class SceneRenderer {
         this.resolveOverlayTexture(overlay, attribution.characterSpriteName);
         this.setOverlayNameTag(overlay, attribution.characterName);
       }
+    }
+  }
+
+  /**
+   * Flips every tracked object's lit/unlit texture + glow visibility per
+   * the live lightStates broadcast (keyed by object placement id — see
+   * client/remoteState.ts's lightStates store) — called from House.ts/
+   * viewer.ts whenever that store changes. A missing key (an object with
+   * no light groups at all, or one this broadcast hasn't mentioned) is
+   * simply skipped; only objects actually tracked in activeLights (built
+   * in buildObject, see ActiveLight's own comment) do anything here.
+   */
+  protected applyLightStates(states: Record<number, boolean>) {
+    for (const [objectId, light] of this.activeLights) {
+      const on = states[objectId] ?? light.on;
+      if (on === light.on) continue;
+      light.on = on;
+      for (const glow of light.glows) glow.visible = on;
+      if (light.sprite) light.sprite.texture = on ? light.litTexture ?? light.sprite.texture : light.baseTexture ?? light.sprite.texture;
     }
   }
 

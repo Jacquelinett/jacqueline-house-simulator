@@ -142,7 +142,8 @@ export function migrate(): void {
       sprite_id INTEGER,
       sprite_offset_x REAL,
       sprite_offset_y REAL,
-      tags_json TEXT
+      tags_json TEXT,
+      light_groups_json TEXT
     );
 
     -- Mirrors src/scene/rooms.ts's RoomSpec shape (not flattened absolute
@@ -182,7 +183,10 @@ export function migrate(): void {
       y INTEGER NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       clickable INTEGER NOT NULL DEFAULT 1,
-      action_json TEXT
+      action_json TEXT,
+      light_on INTEGER NOT NULL DEFAULT 0,
+      light_schedule_on_at TEXT,
+      light_schedule_off_at TEXT
     );
 
     -- Mirrors RoomSpec.connectedTo (ConnectedToEntry[]). idx preserves
@@ -252,6 +256,31 @@ export function migrate(): void {
   // for every existing type, unlike the two booleans above.
   try {
     db.exec("ALTER TABLE object_types ADD COLUMN tags_json TEXT");
+  } catch {
+    // already applied
+  }
+
+  // Same gotcha, same fix — the lighting feature's columns added after
+  // both tables already existed on the live install. NULL/0 (no lights,
+  // no schedule, off) is the correct default for every existing object
+  // type/placement — nothing already placed starts lit.
+  try {
+    db.exec("ALTER TABLE object_types ADD COLUMN light_groups_json TEXT");
+  } catch {
+    // already applied
+  }
+  try {
+    db.exec("ALTER TABLE objects ADD COLUMN light_on INTEGER NOT NULL DEFAULT 0");
+  } catch {
+    // already applied
+  }
+  try {
+    db.exec("ALTER TABLE objects ADD COLUMN light_schedule_on_at TEXT");
+  } catch {
+    // already applied
+  }
+  try {
+    db.exec("ALTER TABLE objects ADD COLUMN light_schedule_off_at TEXT");
   } catch {
     // already applied
   }

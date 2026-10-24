@@ -37,6 +37,9 @@ interface ObjectRow {
   enabled: number;
   clickable: number;
   action_json: string | null;
+  light_on: number;
+  light_schedule_on_at: string | null;
+  light_schedule_off_at: string | null;
 }
 
 function rowToPlacement(row: ObjectRow): ObjectPlacement {
@@ -48,6 +51,9 @@ function rowToPlacement(row: ObjectRow): ObjectPlacement {
     y: row.y,
     actions: row.action_json ? (JSON.parse(row.action_json) as ObjectAction[]) : undefined,
     clickable: !!row.clickable,
+    lightOn: !!row.light_on,
+    lightScheduleOnAt: row.light_schedule_on_at ?? undefined,
+    lightScheduleOffAt: row.light_schedule_off_at ?? undefined,
   };
 }
 
@@ -260,8 +266,8 @@ export function deleteRoom(id: number): void {
 export function createObject(roomId: number, placement: Omit<ObjectPlacement, "id">): number {
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO objects (room_id, type_id, x, y, enabled, clickable, action_json)
-     VALUES (@roomId, @typeId, @x, @y, @enabled, @clickable, @actionJson)`,
+      `INSERT INTO objects (room_id, type_id, x, y, enabled, clickable, action_json, light_on, light_schedule_on_at, light_schedule_off_at)
+     VALUES (@roomId, @typeId, @x, @y, @enabled, @clickable, @actionJson, @lightOn, @lightScheduleOnAt, @lightScheduleOffAt)`,
     )
     .run({
       roomId,
@@ -271,13 +277,27 @@ export function createObject(roomId: number, placement: Omit<ObjectPlacement, "i
       enabled: placement.enabled === false ? 0 : 1,
       clickable: placement.clickable === false ? 0 : 1,
       actionJson: placement.actions ? JSON.stringify(placement.actions) : null,
+      lightOn: placement.lightOn ? 1 : 0,
+      lightScheduleOnAt: placement.lightScheduleOnAt ?? null,
+      lightScheduleOffAt: placement.lightScheduleOffAt ?? null,
     });
   return Number(lastInsertRowid);
 }
 
+/**
+ * Full-row upsert — same admin-REST-only path every other placement
+ * field already goes through. `lightOn` IS included here (so the admin
+ * room editor's schedule inputs, see admin-main.ts's Objects tab, save
+ * normally like any other field) — the live toggleLight RPC command and
+ * the schedule evaluator both deliberately bypass this function and use
+ * setLightState's narrow single-column UPDATE instead (see its own
+ * comment), specifically so a live flip can never race/clobber a
+ * concurrent admin edit here, or vice versa.
+ */
 export function updateObject(roomId: number, placement: ObjectPlacement & { id: number }): void {
   db.prepare(
-    `UPDATE objects SET type_id = @typeId, x = @x, y = @y, enabled = @enabled, clickable = @clickable, action_json = @actionJson
+    `UPDATE objects SET type_id = @typeId, x = @x, y = @y, enabled = @enabled, clickable = @clickable, action_json = @actionJson,
+     light_on = @lightOn, light_schedule_on_at = @lightScheduleOnAt, light_schedule_off_at = @lightScheduleOffAt
      WHERE id = @id AND room_id = @roomId`,
   ).run({
     id: placement.id,
@@ -288,7 +308,40 @@ export function updateObject(roomId: number, placement: ObjectPlacement & { id: 
     enabled: placement.enabled === false ? 0 : 1,
     clickable: placement.clickable === false ? 0 : 1,
     actionJson: placement.actions ? JSON.stringify(placement.actions) : null,
+    lightOn: placement.lightOn ? 1 : 0,
+    lightScheduleOnAt: placement.lightScheduleOnAt ?? null,
+    lightScheduleOffAt: placement.lightScheduleOffAt ?? null,
   });
+}
+
+/**
+ * Narrow single-column write — deliberately NOT updateObject's full-row
+ * upsert, so a live light toggle (from the toggleLight RPC command or the
+ * schedule evaluator, see server/index.ts) can never race/clobber a
+ * concurrent admin edit to the same placement's other fields, or vice
+ * versa. Used by server/rpc.ts's toggleLight command and the schedule
+ * evaluator; the admin REST API never calls this — it goes through
+ * updateObject's own lightOn field instead (e.g. when editing a
+ * placement's schedule in the room editor).
+ */
+export function setLightState(objectId: number, on: boolean): void {
+  db.prepare("UPDATE objects SET light_on = ? WHERE id = ?").run(on ? 1 : 0, objectId);
+}
+
+/** Every placement's current light_on, keyed by object id — the shape the live lightStates broadcast and the schedule evaluator both want. */
+export function getLightStates(): Record<number, boolean> {
+  const rows = db.prepare("SELECT id, light_on FROM objects").all() as { id: number; light_on: number }[];
+  const result: Record<number, boolean> = {};
+  for (const row of rows) result[row.id] = !!row.light_on;
+  return result;
+}
+
+/** Every placement with a complete schedule (both onAt/offAt set) — what the schedule evaluator (server/index.ts) iterates each tick. */
+export function getScheduledLights(): { id: number; onAt: string; offAt: string }[] {
+  const rows = db
+    .prepare("SELECT id, light_schedule_on_at, light_schedule_off_at FROM objects WHERE light_schedule_on_at IS NOT NULL AND light_schedule_off_at IS NOT NULL")
+    .all() as { id: number; light_schedule_on_at: string; light_schedule_off_at: string }[];
+  return rows.map((r) => ({ id: r.id, onAt: r.light_schedule_on_at, offAt: r.light_schedule_off_at }));
 }
 
 export function deleteObject(roomId: number, objectId: number): void {

@@ -107,6 +107,11 @@ export class House extends SceneRenderer {
     const runAction = (action: ObjectAction) => {
       if (action.kind === "goTo") {
         this.setViewedRoom(action.roomId);
+      } else if (action.kind === "toggleLight") {
+        // Fire-and-forget, same as startActivity below — the UI reacts
+        // later via the live lightStates broadcast (applyLightStates),
+        // not a direct response to this call.
+        sendCommand("toggleLight", { objectId: obj.id });
       } else {
         this.runActivity(roomId, obj.id, action.activityId);
       }

@@ -64,7 +64,43 @@ export interface SpriteLayer {
 // attribution, not a persisted ObjectAction.
 export type ObjectAction =
   | { kind: "activity"; activityId: number }
-  | { kind: "goTo"; roomId: number }; // e.g. a staircase — jumps the view to another room, no AW tracking
+  | { kind: "goTo"; roomId: number } // e.g. a staircase — jumps the view to another room, no AW tracking
+  | { kind: "toggleLight" }; // flips THIS object's own lightOn state — see LightGroupDef, no extra field needed since the click handler already knows which object was clicked
+
+/**
+ * One light source on an object TYPE (visual/authoring data — "what does
+ * this look like lit"), toggled all-together per-PLACEMENT by
+ * ObjectDef.lightOn (behavioral — "is this particular lamp currently on"),
+ * same type/placement split as below/above/sprite above.
+ *
+ * `pixelMatch`, when present, recolors every pixel of the type's `below`
+ * texture within `tolerancePercent` of `anchorColor` — a fuzzy color-key
+ * match, not an exact one, so anti-aliased edges around a hand-painted
+ * "light" color still get caught. The recolor itself preserves each
+ * matched pixel's own HSL lightness while swapping its hue/saturation
+ * toward `onColor` (see src/scene/lightRecolor.ts) — a palette-swap, not
+ * a flat repaint, so shading/anti-aliasing survives being lit.
+ *
+ * `pixelMatch` is OMITTED for the "light shape" edge case — an object
+ * whose light-emitting pixels aren't actually visible from the camera
+ * (e.g. the back of a laptop screen) has nothing to recolor, just the
+ * glow below contributing light to the room around it.
+ *
+ * The glow (a soft blurred circle, same BlurFilter technique as the
+ * existing room-focus glow — see renderer.ts's GLOW_COLOR) is NEVER
+ * optional — illuminating the area is what a light source does; a light
+ * with no glow would just be a recolored sprite, not a light.
+ */
+export interface LightGroupDef {
+  id: string; // stable key within this type's own light group list, for admin edit/delete — not a DB row id
+  name: string; // admin-facing label, e.g. "Lamp bulb"
+  pixelMatch?: { anchorColor: number; tolerancePercent: number };
+  onColor: number; // target hue/sat recolored pixels blend toward, and the glow's own color
+  glowOffsetX: number;
+  glowOffsetY: number;
+  glowRadius: number;
+  glowAlpha: number;
+}
 
 export interface ObjectDef {
   id: number;
@@ -108,6 +144,14 @@ export interface ObjectDef {
   // viewer.ts's own attachObjectInteraction, and AdminPreviewRenderer's
   // separate override, which never reads this field at all).
   clickable?: boolean;
+  // Visual (per-type) light definitions, carried through unchanged — see
+  // LightGroupDef's own comment. Empty/absent = this object has no lights.
+  lightGroups?: LightGroupDef[];
+  // Behavioral (per-placement) current state — whether this specific
+  // object's light(s) are on right now. All of an object's lightGroups
+  // toggle together; there's no independent per-group on/off in this
+  // first version. Resolved from ObjectPlacement.lightOn, default false.
+  lightOn?: boolean;
 }
 
 // --- Object types: what an object looks like + what it does, independent
@@ -164,6 +208,11 @@ export interface ObjectTypeDef {
   // above rather than a separate table, since tags are a plain string list
   // with nothing else to join against.
   tags?: string[];
+  // Visual light-source definitions — see LightGroupDef's own comment.
+  // Current on/off state is NOT here; that's ObjectPlacement.lightOn,
+  // the same type/placement split every other visual-vs-behavioral field
+  // on this interface already follows.
+  lightGroups?: LightGroupDef[];
 }
 
 /**
@@ -258,6 +307,20 @@ export interface ObjectPlacement {
   // per-type) same as actions above: two placements of the same type can
   // differ on whether either one is clickable at all.
   clickable?: boolean;
+  // Current on/off state for this placement's light(s), default false —
+  // see LightGroupDef's own comment. Flipped live by the toggleLight
+  // RPC command/schedule evaluator (server-authoritative, broadcast to
+  // every client), not by the admin REST API's full-row upsert — see
+  // server/rooms.ts's setLightState.
+  lightOn?: boolean;
+  // Optional auto on/off schedule, "HH:MM" each, both-or-neither — a
+  // schedule only applies once both are set. Semantics: AT onAt, set on;
+  // AT offAt, set off (a direct set at the boundary, never a continuous
+  // toggle) — manual clicks are free to change the state in between, and
+  // simply get overwritten at the next boundary crossing. See
+  // server/index.ts's light-schedule timer.
+  lightScheduleOnAt?: string;
+  lightScheduleOffAt?: string;
 }
 
 function resolveObjectPlacement(placement: ObjectPlacement): ObjectDef {
@@ -281,6 +344,8 @@ function resolveObjectPlacement(placement: ObjectPlacement): ObjectDef {
     anchorX: type.anchorX,
     anchorY: type.anchorY,
     clickable: placement.clickable,
+    lightGroups: type.lightGroups,
+    lightOn: placement.lightOn ?? false,
   };
 }
 
