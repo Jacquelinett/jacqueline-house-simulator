@@ -167,6 +167,11 @@ function broadcastAllStatuses(): void {
   broadcastToAll("allStatuses", computeAllStatuses());
 }
 
+/** Exported for the light-schedule evaluator (server/lightSchedule.ts), called from index.ts's own timer outside any WebSocket message — same "a function rpc.ts owns, needed by startup/scheduling code elsewhere" precedent stopOrphanedActivities already is. */
+export function broadcastLightStates(): void {
+  broadcastToAll("lightStates", getLightStates());
+}
+
 /**
  * Auto-stops `character`'s currently-running activity if the room/object
  * that was tracking it has since been deleted or reconfigured out from
@@ -319,7 +324,7 @@ export function setupRpc(wss: WebSocketServer): void {
               pushStatus(character.id).catch((err) => console.error("[rpc] pushStatus after activity change failed", err));
             }
           }
-          if (msg.name === "toggleLight") broadcastToAll("lightStates", getLightStates());
+          if (msg.name === "toggleLight") broadcastLightStates();
         } catch (err) {
           console.error(`[rpc] command ${msg.name} failed`, err);
         }

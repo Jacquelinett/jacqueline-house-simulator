@@ -9,6 +9,7 @@ import { initTodosState } from "./todos";
 import { settleGoalHistory } from "./goalHistory";
 import { ensureStopwatchBucket, resumeActivity } from "../src/aw/client";
 import { setupRpc, stopOrphanedActivities } from "./rpc";
+import { evaluateLightSchedules } from "./lightSchedule";
 import { getServerConfig } from "./serverConfig";
 import {
   pushGoals,
@@ -44,6 +45,13 @@ const STATS_PUSH_INTERVAL_MS = 60 * 60 * 1000;
 // yesterday), but checking hourly is cheap and means a server restart
 // mid-day still catches up promptly instead of waiting for a fixed time.
 const SETTLE_INTERVAL_MS = 60 * 60 * 1000;
+// Much tighter than the hourly stats/settlement timers above -- a
+// scheduled light needs to catch its own on/off boundary within about a
+// minute of it actually passing, not sometime within the next hour.
+// evaluateLightSchedules() itself is cheap (self-skips any object whose
+// window hasn't changed, see its own comment), so a short interval here
+// costs nothing when nothing's actually crossing a boundary.
+const LIGHT_SCHEDULE_INTERVAL_MS = 60 * 1000;
 
 async function main() {
   migrate();
@@ -172,6 +180,14 @@ async function main() {
   };
   runStatsPushes();
   setInterval(runStatsPushes, STATS_PUSH_INTERVAL_MS);
+
+  // Runs once immediately too, same reasoning as every other timer here
+  // (startup should reflect reality right away, not wait a full interval)
+  // -- see evaluateLightSchedules's own comment on why this also brings
+  // every scheduled light's state in line with its correct window on a
+  // restart, not just on an ongoing boundary crossing.
+  evaluateLightSchedules();
+  setInterval(evaluateLightSchedules, LIGHT_SCHEDULE_INTERVAL_MS);
 
   const server = http.createServer(async (req, res) => {
     if (req.url === "/health") {
