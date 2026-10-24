@@ -23,10 +23,11 @@ body {
 
 /* Real folder-tab shape (rounded top corners, sitting on a shelf line)
    instead of flat text with an underline — the underline read as "a
-   button with a line under it," not an actual tab. The active tab's own
-   bottom border is drawn in its own fill color and the tab is nudged down
-   by that same width, so it visually punches through the bar's shelf line
-   and reads as attached to the content below, folder-tab style. */
+   button with a line under it," not an actual tab. No tab ever draws its
+   own bottom border — nudging each one down by the shelf's own width
+   (`top`) just lets its fill paint straight over that line instead, so
+   the active tab reads as punching through and attaching to the content
+   below, folder-tab style, with no seam to fake-match colors on. */
 #admin-tab-bar {
   display: flex;
   gap: 2px;
@@ -56,7 +57,6 @@ body {
   font-weight: 600;
   background: var(--accent-bg);
   border-color: var(--accent-border);
-  border-bottom: 2px solid var(--accent-bg);
 }
 
 .admin-tab-page {
@@ -101,7 +101,6 @@ body {
   font-weight: 600;
   background: var(--accent-bg);
   border-color: var(--accent-border);
-  border-bottom: 2px solid var(--accent-bg);
 }
 
 .admin-subtab-page {
