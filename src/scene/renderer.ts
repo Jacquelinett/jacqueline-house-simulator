@@ -1227,7 +1227,7 @@ export class SceneRenderer {
       color: def.colors[p.frameIndices[i] % def.colors.length],
     }));
     buildPaletteTexture(p.url, groups)
-      .then((texture) => {
+      .then(({ texture }) => {
         p.sprite.texture = texture;
       })
       .catch((err) => console.error("[renderer] buildPaletteTexture failed", err));

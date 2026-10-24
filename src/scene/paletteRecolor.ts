@@ -118,7 +118,16 @@ function loadImageCached(url: string): Promise<HTMLImageElement> {
  * Fully transparent pixels and non-matching pixels are left byte-for-
  * byte untouched.
  */
-export async function buildPaletteTexture(url: string, groups: PaletteRecolorGroup[]): Promise<Texture> {
+export interface PaletteRecolorResult {
+  texture: Texture;
+  // One count per input group, same order — lets a caller (the admin
+  // preview) warn when a group matched zero pixels, since that's
+  // otherwise a silent no-op: the texture comes back looking byte-for-
+  // byte identical to the original, with no error anywhere.
+  matchedPixelCounts: number[];
+}
+
+export async function buildPaletteTexture(url: string, groups: PaletteRecolorGroup[]): Promise<PaletteRecolorResult> {
   const img = await loadImageCached(url);
 
   const canvas = document.createElement("canvas");
@@ -134,6 +143,7 @@ export async function buildPaletteTexture(url: string, groups: PaletteRecolorGro
     tolerancePercent: g.match.tolerancePercent,
     targetHs: rgbToHsl(...hexToRgb(g.color)).slice(0, 2) as [number, number],
   }));
+  const matchedPixelCounts = groups.map(() => 0);
 
   for (let i = 0; i < data.length; i += 4) {
     const alpha = data[i + 3];
@@ -141,9 +151,11 @@ export async function buildPaletteTexture(url: string, groups: PaletteRecolorGro
     const r = data[i];
     const g = data[i + 1];
     const b = data[i + 2];
-    for (const group of resolvedGroups) {
+    for (let groupIndex = 0; groupIndex < resolvedGroups.length; groupIndex++) {
+      const group = resolvedGroups[groupIndex];
       const [ar, ag, ab] = group.anchor;
       if (colorDistancePercent(r, g, b, ar, ag, ab) > group.tolerancePercent) continue;
+      matchedPixelCounts[groupIndex]++;
       const [, , l] = rgbToHsl(r, g, b);
       const [nr, ng, nb] = hslToRgb(group.targetHs[0], group.targetHs[1], l);
       data[i] = nr;
@@ -154,5 +166,7 @@ export async function buildPaletteTexture(url: string, groups: PaletteRecolorGro
   }
   ctx.putImageData(imageData, 0, 0);
 
-  return Texture.from(canvas);
+  const texture = Texture.from(canvas);
+  texture.source.scaleMode = "nearest"; // keep pixel art crisp, same as every other texture this app loads
+  return { texture, matchedPixelCounts };
 }

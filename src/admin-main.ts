@@ -1132,8 +1132,18 @@ async function openObjectTypeEditModal(
   const paletteHint = document.createElement("div");
   paletteHint.className = "admin-hint";
   paletteHint.textContent =
-    "Each palette recolors matching sprite pixels, permanently — there's no on/off for this (that's the separate Light tab). One color is a plain swap; two or more with a cycle interval animate through them automatically.";
+    "Each palette recolors matching sprite pixels, permanently — there's no on/off for this (that's the separate Light tab). One color is a plain swap; two or more with a cycle interval animate through them automatically. Needs a real texture on the Below layer (Appearance tab) — a solid-color placeholder has no pixels to match.";
   objectTabPages.palette.appendChild(paletteHint);
+
+  // Surfaces exactly what buildPaletteTexture's own comment warns about:
+  // a palette matching zero pixels is otherwise a completely silent
+  // no-op (the texture comes back looking byte-for-byte identical, no
+  // error anywhere) — this is what actually shows up if that happens,
+  // instead of just a console.error nobody's looking at.
+  const paletteStatusEl = document.createElement("div");
+  paletteStatusEl.className = "admin-error";
+  paletteStatusEl.style.display = "none";
+  objectTabPages.palette.appendChild(paletteStatusEl);
 
   const PIXEL_SAMPLE_ZOOM = 8;
   const pixelSampleCanvas = document.createElement("canvas");
@@ -1168,8 +1178,18 @@ async function openObjectTypeEditModal(
   pixelSampleCanvas.onclick = (e) => {
     if (!armedPalette) return;
     const rect = pixelSampleCanvas.getBoundingClientRect();
-    const px = Math.floor((e.clientX - rect.left) / PIXEL_SAMPLE_ZOOM) * PIXEL_SAMPLE_ZOOM;
-    const py = Math.floor((e.clientY - rect.top) / PIXEL_SAMPLE_ZOOM) * PIXEL_SAMPLE_ZOOM;
+    // The canvas's CSS size (rect.width/height) can differ from its real
+    // pixel size (pixelSampleCanvas.width/height) — e.g. the editor modal
+    // is resizable and `max-width: 100%` shrinks the canvas once the modal
+    // is narrower than the zoomed image. Without this ratio, a click's
+    // clientX/Y (in CSS pixels) was being treated as if it were already in
+    // canvas-pixel space, sampling the wrong source pixel any time the
+    // canvas was rendered at anything other than its native size — the
+    // likely reason a sampled "anchor color" kept coming back wrong/white.
+    const scaleX = pixelSampleCanvas.width / rect.width;
+    const scaleY = pixelSampleCanvas.height / rect.height;
+    const px = Math.floor(((e.clientX - rect.left) * scaleX) / PIXEL_SAMPLE_ZOOM) * PIXEL_SAMPLE_ZOOM;
+    const py = Math.floor(((e.clientY - rect.top) * scaleY) / PIXEL_SAMPLE_ZOOM) * PIXEL_SAMPLE_ZOOM;
     const ctx = pixelSampleCanvas.getContext("2d")!;
     const [r, g, b] = ctx.getImageData(px, py, 1, 1).data;
     armedPalette.setAnchorColor((r << 16) | (g << 8) | b);
@@ -1189,12 +1209,21 @@ async function openObjectTypeEditModal(
       rebuildSprite();
     };
 
-    const colorSwatch = document.createElement("span");
-    colorSwatch.className = "admin-swatch";
+    // A real <input type=color>, not just a swatch — sampling a pixel
+    // below is the easy way to fill this in, but it's directly editable
+    // too (defaults to white, which matches nothing on almost any real
+    // sprite — if sampling isn't landing on the right pixel for some
+    // reason, typing/picking a color here directly is the fallback).
+    const anchorColorInput = document.createElement("input");
+    anchorColorInput.type = "color";
     function refreshAnchorSwatch() {
-      colorSwatch.style.background = `#${def.anchorColor.toString(16).padStart(6, "0")}`;
+      anchorColorInput.value = `#${def.anchorColor.toString(16).padStart(6, "0")}`;
     }
     refreshAnchorSwatch();
+    anchorColorInput.oninput = () => {
+      def.anchorColor = parseInt(anchorColorInput.value.slice(1), 16);
+      rebuildSprite();
+    };
 
     const sampleBtn = document.createElement("button");
     sampleBtn.type = "button";
@@ -1274,8 +1303,9 @@ async function openObjectTypeEditModal(
     row.append(
       document.createTextNode("Name:"),
       nameInput,
+      document.createTextNode("Match color:"),
+      anchorColorInput,
       sampleBtn,
-      colorSwatch,
       document.createTextNode("Tolerance %:"),
       toleranceInput,
       document.createTextNode("Colors:"),
@@ -1542,23 +1572,54 @@ async function openObjectTypeEditModal(
     // duplicating renderer.ts's tick(), and the real in-game render
     // already does that correctly; this preview is for tuning the
     // pixel-match/colors, not for watching the cycle play out.
-    if (belowSprite && below?.texture && palettes.length > 0) {
-      const groups = palettes.map((p) => ({ match: { anchorColor: p.anchorColor, tolerancePercent: p.tolerancePercent }, color: p.colors[0] }));
-      try {
-        belowSprite.texture = await buildPaletteTexture(assetUrl(below.texture), groups);
-      } catch (err) {
-        console.error("[admin] buildPaletteTexture preview failed", err);
+    if (palettes.length > 0) {
+      if (belowSprite && below?.texture) {
+        const groups = palettes.map((p) => ({ match: { anchorColor: p.anchorColor, tolerancePercent: p.tolerancePercent }, color: p.colors[0] }));
+        try {
+          const { texture, matchedPixelCounts } = await buildPaletteTexture(assetUrl(below.texture), groups);
+          belowSprite.texture = texture;
+          const zeroMatchNames = palettes.filter((_, i) => matchedPixelCounts[i] === 0).map((p, i) => p.name || `Palette ${i + 1}`);
+          if (zeroMatchNames.length > 0) {
+            paletteStatusEl.textContent = `${zeroMatchNames.join(", ")}: matched 0 pixels — sample a pixel that's actually present in this sprite (or widen the tolerance).`;
+            paletteStatusEl.style.display = "";
+          } else {
+            paletteStatusEl.style.display = "none";
+          }
+        } catch (err) {
+          console.error("[admin] buildPaletteTexture preview failed", err);
+          paletteStatusEl.textContent = err instanceof Error ? err.message : String(err);
+          paletteStatusEl.style.display = "";
+        }
+      } else {
+        paletteStatusEl.textContent = "Below (Appearance tab) has no real texture — a solid-color placeholder has no pixels for a palette to match.";
+        paletteStatusEl.style.display = "";
       }
+    } else {
+      paletteStatusEl.style.display = "none";
     }
 
     // Light: pure glow, toggled only by the preview checkbox (simulating
     // lightOn) — no sprite/texture involvement at all, see LightDef's
-    // own comment.
+    // own comment. The glow alone is too diffuse to tell exactly where
+    // offsetX/offsetY actually lands — the small "+" marker (in the
+    // light's own color, so it's identifiable when there's more than
+    // one) stays visible regardless of the preview checkbox, same
+    // reasoning the anchor's own crosshair is always shown.
     for (const light of lights) {
       const glow = new Graphics().circle(light.offsetX, light.offsetY, light.radius).fill({ color: light.color, alpha: light.alpha });
       glow.filters = [new BlurFilter({ strength: 16 })];
       glow.visible = lightPreviewCheckbox.checked;
       spriteLayer.addChild(glow);
+
+      const marker = new Graphics()
+        .moveTo(light.offsetX - 5, light.offsetY)
+        .lineTo(light.offsetX + 5, light.offsetY)
+        .moveTo(light.offsetX, light.offsetY - 5)
+        .lineTo(light.offsetX, light.offsetY + 5)
+        .stroke({ width: 2, color: light.color })
+        .circle(light.offsetX, light.offsetY, 2)
+        .fill({ color: light.color });
+      spriteLayer.addChild(marker);
     }
 
     // The interaction sprite specifically does NOT go through buildLayer:
@@ -1851,6 +1912,7 @@ function buildActionsEditor(
 
   function defaultFor(kind: ObjectAction["kind"]): ObjectAction {
     if (kind === "goTo") return { kind: "goTo", roomId: allRooms[0]?.id ?? 0 };
+    if (kind === "toggleLight") return { kind: "toggleLight" };
     return { kind: "activity", activityId: activities[0]?.id ?? 0 };
   }
 
@@ -1862,6 +1924,7 @@ function buildActionsEditor(
     for (const [value, label] of [
       ["goTo", "Go To"],
       ["activity", "Activity"],
+      ["toggleLight", "Toggle Light"],
     ] as const) {
       const opt = document.createElement("option");
       opt.value = value;
@@ -1915,6 +1978,15 @@ function buildActionsEditor(
           warn.textContent = warning;
           fieldSpan.appendChild(warn);
         }
+      } else if (current.kind === "toggleLight") {
+        // No extra field — it always operates on this object's own
+        // lightOn state (see ObjectAction's own comment in rooms.ts),
+        // which the object type needs at least one Light defined for
+        // to actually show anything when flipped.
+        const hint = document.createElement("span");
+        hint.className = "admin-hint";
+        hint.textContent = "Flips this placement's own light(s) on/off — set those up on the Light tab.";
+        fieldSpan.appendChild(hint);
       }
     }
     renderField(action);
