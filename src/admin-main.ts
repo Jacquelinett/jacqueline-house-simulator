@@ -26,6 +26,7 @@ import { Application, Assets, BlurFilter, Container, Graphics, Sprite, Texture }
 import { buildModal } from "./ui/modal";
 import { assetUrl, buildFloorAndWalls, buildLayer, DEFAULT_OVERLAY_FRAME_DURATION_MS, preloadRoomAssets, sliceFrames, WallSegmentInfo } from "./scene/renderer";
 import { buildLitTexture } from "./scene/lightRecolor";
+import { generateId } from "./lib/randomId";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./scene/characterSprites";
 import { ADMIN_ACCENT_COLOR, AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
@@ -327,7 +328,7 @@ const TABS: { id: TabId; label: string }[] = [
 
 function setupTabs(): Record<TabId, HTMLElement> {
   const { bar, pages } = buildTabStrip(TABS, "characters", "admin-tab-page");
-  bar.id = "admin-tab-bar";
+  bar.className = "admin-tab-bar";
   app.appendChild(bar);
   for (const tab of TABS) app.appendChild(pages[tab.id]);
   return pages;
@@ -1222,7 +1223,7 @@ async function openObjectTypeEditModal(
   addLightGroupBtn.type = "button";
   addLightGroupBtn.textContent = "Add light group";
   addLightGroupBtn.onclick = () => {
-    lightGroups.push({ id: crypto.randomUUID(), name: "", onColor: 0xffff99, glowOffsetX: 0, glowOffsetY: 0, glowRadius: 24, glowAlpha: 0.5 });
+    lightGroups.push({ id: generateId(), name: "", onColor: 0xffff99, glowOffsetX: 0, glowOffsetY: 0, glowRadius: 24, glowAlpha: 0.5 });
     renderLightGroupList();
     rebuildSprite();
   };
@@ -1978,13 +1979,14 @@ async function openRoomEditModal(
       { id: "connections" as const, label: "Connections" },
     ],
     initialTab,
-    "admin-tab-level-3-page",
+    "admin-tab-page",
   );
-  // A third, visually distinct (but related) tier — reusing .admin-subtab-bar
-  // verbatim here would make "which floor am I on" (one level up, a sibling
-  // of the Rooms tab's own content) and "which part of this room am I
-  // editing" (inside a modal) look identical despite being different levels.
-  roomTabBar.className = "admin-tab-level-3-bar";
+  // Same full-size tab look as the admin page's own top nav — these tabs
+  // aren't nested under anything else within this modal, so they're the
+  // top level of THIS surface, not a demoted "deeper" tier. Being inside
+  // a modal isn't itself a tab-nesting level (see .admin-tab-bar's own
+  // CSS comment).
+  roomTabBar.className = "admin-tab-bar";
   tabArea.appendChild(roomTabBar);
   tabArea.appendChild(roomTabPages.info);
   tabArea.appendChild(roomTabPages.objects);
@@ -2241,6 +2243,7 @@ async function openRoomEditModal(
   async function renderPreview() {
     placingObjectId = null;
     try {
+      currentRenderer?.destroy(); // removes its window resize listener — see SceneRenderer.destroy()'s own comment
       currentApp?.destroy();
       previewContainer.textContent = "";
 
@@ -2983,6 +2986,7 @@ async function openRoomEditModal(
   // comment) and can move this room onto a different floor's tree even if
   // Save is never clicked, so onSaved() can't be conditional on that.
   modal.onClose(() => {
+    currentRenderer?.destroy();
     currentApp?.destroy();
     onSaved();
   });

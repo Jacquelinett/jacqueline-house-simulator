@@ -27,14 +27,21 @@ body {
    own bottom border — nudging each one down by the shelf's own width
    (`top`) just lets its fill paint straight over that line instead, so
    the active tab reads as punching through and attaching to the content
-   below, folder-tab style, with no seam to fake-match colors on. */
-#admin-tab-bar {
+   below, folder-tab style, with no seam to fake-match colors on.
+   One shared class, not an id — used for every tab bar that is the
+   TOP-level tab set within its own surface: the admin page's own nav
+   AND the room editor modal's Info/Objects/Connections tabs. Being
+   inside a modal isn't a tab-nesting level by itself — the hierarchy
+   below (.admin-subtab-bar) is reserved for tabs that are genuinely
+   nested UNDER another tab bar on the same surface (the Rooms tab's own
+   per-floor sub-tabs), not for "is this in a modal." */
+.admin-tab-bar {
   display: flex;
   gap: 2px;
   border-bottom: 2px solid var(--border);
 }
 
-#admin-tab-bar button {
+.admin-tab-bar button {
   background: var(--surface);
   border: 1px solid var(--border);
   border-bottom: none;
@@ -48,11 +55,11 @@ body {
   top: 2px;
 }
 
-#admin-tab-bar button:hover {
+.admin-tab-bar button:hover {
   opacity: 0.9;
 }
 
-#admin-tab-bar button.active {
+.admin-tab-bar button.active {
   opacity: 1;
   font-weight: 600;
   background: var(--accent-bg);
@@ -67,10 +74,11 @@ body {
   display: block;
 }
 
-/* Second-level tabs (floor sub-tabs within the Rooms tab) — same
-   folder-tab shape as #admin-tab-bar but a class selector (an id can't be
-   reused), and slightly smaller/lower-margin to read as nested under the
-   real tab bar. */
+/* Tabs genuinely nested UNDER another tab bar on the same surface — only
+   the Rooms tab's own per-floor sub-tabs today. Same folder-tab shape as
+   .admin-tab-bar, smaller/lower-margin to read as nested under the real
+   tab bar above it. NOT used just because something happens to be inside
+   a modal — see .admin-tab-bar's own comment. */
 .admin-subtab-bar {
   display: flex;
   gap: 2px;
@@ -108,50 +116,6 @@ body {
 }
 
 .admin-subtab-page.active {
-  display: block;
-}
-
-/* Third-level tabs (the room editor modal's own Info/Objects/Connections
-   tabs) — same folder-tab shape again, smaller/flatter again, so three
-   nested tab levels actually read as three levels instead of the second
-   and third looking identical. */
-.admin-tab-level-3-bar {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 10px;
-}
-
-.admin-tab-level-3-bar button {
-  background: var(--surface-soft);
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: 5px 5px 0 0;
-  color: var(--text);
-  padding: 5px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  opacity: 0.65;
-  position: relative;
-  top: 1px;
-}
-
-.admin-tab-level-3-bar button:hover {
-  opacity: 0.9;
-}
-
-.admin-tab-level-3-bar button.active {
-  opacity: 1;
-  font-weight: 600;
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-}
-
-.admin-tab-level-3-page {
-  display: none;
-}
-
-.admin-tab-level-3-page.active {
   display: block;
 }
 

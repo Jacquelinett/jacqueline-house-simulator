@@ -855,11 +855,36 @@ export class SceneRenderer {
     app.stage.addChild(this.ambientTint);
     if (this.isAmbientTintEnabled()) this.redrawAmbientTint();
 
-    window.addEventListener("resize", () => {
-      this.computeCameraTarget();
-      if (this.isAmbientTintEnabled()) this.redrawAmbientTint();
-    });
+    // A bound instance method (not an inline arrow), specifically so
+    // destroy() below can remove THIS EXACT listener — the admin tool's
+    // room/object-type previews construct a brand-new SceneRenderer
+    // (AdminPreviewRenderer) on every single field edit (see
+    // openRoomEditModal's/openObjectTypeEditModal's own renderPreview/
+    // rebuildSprite), so without an explicit removal every one of those
+    // short-lived instances' resize listeners would pile up forever,
+    // each still holding this.app after admin-main.ts has already
+    // called app.destroy() on it — confirmed live as the exact crash
+    // ("Cannot read properties of null (reading 'screen')") the next
+    // real window resize triggered.
+    window.addEventListener("resize", this.handleResize);
     app.ticker.add(() => this.tick());
+  }
+
+  private handleResize = () => {
+    this.computeCameraTarget();
+    if (this.isAmbientTintEnabled()) this.redrawAmbientTint();
+  };
+
+  /**
+   * Admin-tool-only cleanup (the real game/viewer build exactly one
+   * SceneRenderer for their whole lifetime, so this never needs calling
+   * there) — removes the window resize listener registered above.
+   * Callers that destroy their own Application instance (admin-main.ts's
+   * currentApp?.destroy()) must call this too, or that destroyed app
+   * stays reachable forever through an orphaned listener.
+   */
+  public destroy(): void {
+    window.removeEventListener("resize", this.handleResize);
   }
 
   /** Overridden to `false` by AdminPreviewRenderer — same "editing chrome should look the same regardless of real-world time" reasoning isRoomFocusEffectsEnabled already uses. */
