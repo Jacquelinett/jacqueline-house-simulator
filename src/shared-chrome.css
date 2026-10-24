@@ -33,6 +33,11 @@
   --panel-bg: rgba(250, 214, 226, 0.97);
   --accent-bg: rgba(214, 51, 108, 0.25);
   --accent-border: rgba(214, 51, 108, 0.7);
+  /* Opaque pink for a solid-filled control (e.g. a pressed segmented-toggle
+     chip) with white text on top — --accent-bg is deliberately translucent
+     for overlaying on existing surfaces, which reads too washed-out behind
+     white text, so this is its own token rather than reusing that one. */
+  --accent-solid: #d6336c;
 }
 
 :root[data-theme="dark"] {
@@ -49,8 +54,14 @@
   --chrome-bg: rgba(0, 0, 0, 0.55);
   --backdrop: rgba(0, 0, 0, 0.5);
   --panel-bg: rgba(20, 20, 20, 0.95);
-  --accent-bg: rgba(120, 200, 255, 0.4);
-  --accent-border: rgba(120, 200, 255, 0.8);
+  /* Pink in both themes — these two used to flip to sky blue here, the one
+     token pair that broke the "everything stays in its own color family"
+     rule every other token above follows. Brighter/more saturated than the
+     pink theme's own values specifically so they still read clearly against
+     a near-black panel background instead of going muddy. */
+  --accent-bg: rgba(214, 51, 108, 0.45);
+  --accent-border: rgba(255, 107, 157, 0.85);
+  --accent-solid: #ff6b9d;
 }
 
 #app {
@@ -610,11 +621,10 @@
  * div — the row class exists only to give the toggle group's own bare
  * <span> wrapper something to stretch full-width against, same reasoning
  * CLAUDE.md's shared-render split favors: one small reusable piece, not a
- * change to buildToggleGroup itself. Dark pink is a fixed, explicit color
- * rather than var(--accent-bg) (which flips to blue in dark mode) —
- * deliberately theme-independent, same "a dedicated control should read
- * as itself, not blend into either theme" reasoning CLAUDE.md's
- * .stop-activity-button already uses for its own always-red look.
+ * change to buildToggleGroup itself. Uses var(--accent-solid) — an opaque
+ * pink fill, not var(--accent-bg)'s translucent one, since this is a solid
+ * filled chip with white text on top rather than an overlay on an existing
+ * surface.
  */
 .segment-toggle-row {
   margin-bottom: 14px;
@@ -650,7 +660,7 @@
 }
 
 .segment-toggle-btn.selected {
-  background: #d6336c;
+  background: var(--accent-solid);
   color: #fff;
 }
 

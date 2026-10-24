@@ -295,3 +295,30 @@ Produces `src-tauri/gen/apple/build/arm64-sim/House Simulator.app`. Confirmed wo
 7. On the connection form (same one shown in the Simulator screenshot above), enter her LAN server address (`ws://<mac-lan-ip>:4000`) and her own character's secret (`characters.secret` — the admin tool's Characters tab shows it per character, not `server_config.lan_secret`).
 
 After that first Xcode-driven run, reinstalling updates can go back to the headless `tauri ios build` path (now with signing available, so without `--no-sign`) if she ever wants to script future rebuilds — the manual steps above are a one-time trust/signing setup, not a per-build requirement.
+
+## UI theme & component hierarchy
+
+Check this section before adding any new styled element — the question is always "does an existing token/class already cover this," not "what color looks good here." A consistent cutesy pastel-pink look across all three builds (desktop app, viewer, admin) is a deliberate goal, not an accident of one shared stylesheet.
+
+**Tokens (`src/shared-chrome.css`, imported by all three builds' own stylesheets).** Every color anywhere in `styles.css`/`viewer-styles.css`/`admin-styles.css`, and every UI-chrome color passed to a Pixi `Graphics`/`Sprite` fill, should be one of these — never a literal hex/rgb. If none fits, add a new token to both theme blocks (`:root`/`[data-theme="pink"]` and `[data-theme="dark"]`) rather than hardcoding one-off — that's exactly how `--accent-solid` got added (a solid opaque fill was needed alongside `--accent-bg`'s translucent one, see below):
+
+- `--text`/`--text-strong` — body text / emphasized text.
+- `--error`/`--success` — status coloring, red/green family in both themes, never pink (so an error still reads as an error rather than blending into the accent).
+- `--border`/`--line`/`--line-strong` — hairlines, from faint to emphasized.
+- `--surface`/`--surface-soft`/`--surface-strong` — translucent fill washes for inputs, hover states, nested rows.
+- `--chrome-bg`/`--panel-bg`/`--backdrop` — floating panel/modal chrome and its backdrop.
+- `--accent-bg`/`--accent-border` — the pink "this is active/selected/primary" wash, translucent, meant to overlay an existing surface (tab active states, `.admin-btn-primary`, toggle-active states). **Both stay pink in both themes** — these used to flip to sky blue in dark mode (the one token pair that broke the "stay in your own color family" rule every other token follows); fixed once, don't reintroduce a per-theme hue change here.
+- `--accent-solid` — opaque pink for a solid-filled chip with white text on top (e.g. `.segment-toggle-btn.selected`) — use this instead of `--accent-bg` whenever the control needs full opacity rather than an overlay wash.
+
+Pixi-side UI chrome (not game-world object art) should match this same pink family by eye rather than picking a new hex — see `src/scene/adminPreview.ts`'s `ADMIN_ACCENT_COLOR` (shared by every admin editing affordance: placement ghost, wall-hover outline, anchor crosshair) and `renderer.ts`'s `GLOW_COLOR` (the room-focus glow) for the pattern: one named constant, not a literal inlined at each call site.
+
+**Tab hierarchy — three levels, each visually distinct from the ones above/below it:**
+1. **Level 1** — `#admin-tab-bar` / `.admin-tab-page` (admin's own top nav: Characters/Activities/Objects/Sprites/Rooms). Largest padding/font.
+2. **Level 2** — `.admin-subtab-bar` / `.admin-subtab-page` (one nesting level in — today only the Rooms tab's per-floor sub-tabs). Same folder-tab shape, smaller.
+3. **Level 3** — `.admin-tab-level-3-bar` / `.admin-tab-level-3-page` (one nesting level deeper still — today only the room editor modal's Info/Objects/Connections tabs). Same shape again, smaller again, flatter border.
+
+Each tier is the same folder-tab visual idea (rounded top corners, sitting on a shelf line, active tab filled `--accent-bg`) at a different size — never reuse a shallower tier's class for a deeper level just because it "looks fine"; that's exactly how level 2 and level 3 ended up visually identical before this was fixed. The Tauri app's own two-tier equivalent is `.stat-tab` (outer, the Statistic modal's Goals/Workout split) → `.segment-toggle-btn` (inner, via `buildToggleGroup()` — All Time/Period, Lifetime/Records/Logs, etc.) — same "each level reads as a level" reasoning, different visual language since it's a different surface (a modal's own tabs, not a nested admin tree).
+
+**Buttons:** every button is themed by default (`#admin-app button` admin-side; the desktop/viewer equivalent lives per-stylesheet) — plain `--surface`/`--border`. Layer `.admin-btn-primary` (or the desktop/viewer equivalent) on top for the one main action per surface (Save, each "Add X" button) — never more than one primary-styled button visible at once on a given form/modal, or nothing reads as *the* default action anymore.
+
+**Trees/tables/forms:** `.admin-tree`/`.admin-table`/`.admin-form` are the one reusable shape for each — extend them (a new modifier class) rather than hand-rolling a new tree/table/form look for one specific feature.

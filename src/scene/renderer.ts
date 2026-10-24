@@ -27,7 +27,7 @@ const ROOM_FOCUS_EASE = 0.2;
 // copy of the same shape, so it reads as the whole room giving off a
 // little ambient light rather than being traced by a line. The other
 // half of the "this one's focused" cue, alongside the raise above.
-const GLOW_COLOR = 0xffd166;
+const GLOW_COLOR = 0xff6b9d; // pink, matching --accent-solid's dark-theme value rather than an unrelated amber
 const GLOW_ALPHA = 0.55;
 const GLOW_BLUR_STRENGTH = 16;
 // Exported for the admin tool's object-type preview (admin-main.ts),

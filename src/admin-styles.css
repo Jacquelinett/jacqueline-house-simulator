@@ -111,6 +111,50 @@ body {
   display: block;
 }
 
+/* Third-level tabs (the room editor modal's own Info/Objects/Connections
+   tabs) — same folder-tab shape again, smaller/flatter again, so three
+   nested tab levels actually read as three levels instead of the second
+   and third looking identical. */
+.admin-tab-level-3-bar {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+
+.admin-tab-level-3-bar button {
+  background: var(--surface-soft);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 5px 5px 0 0;
+  color: var(--text);
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.65;
+  position: relative;
+  top: 1px;
+}
+
+.admin-tab-level-3-bar button:hover {
+  opacity: 0.9;
+}
+
+.admin-tab-level-3-bar button.active {
+  opacity: 1;
+  font-weight: 600;
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+
+.admin-tab-level-3-page {
+  display: none;
+}
+
+.admin-tab-level-3-page.active {
+  display: block;
+}
+
 .admin-tree {
   font-size: 13px;
   margin-bottom: 10px;

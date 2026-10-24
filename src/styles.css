@@ -220,7 +220,7 @@ body {
 }
 
 .connection-setup-error {
-  color: #d6336c;
+  color: var(--error);
   font-size: 12px;
   min-height: 14px;
 }

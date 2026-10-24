@@ -2,6 +2,12 @@ import { AlphaFilter, Container, FederatedPointerEvent, Graphics, Polygon, Recta
 import { gridToScreen, rooms as roomDefs, ObjectDef, RoomDef, screenToGrid } from "./rooms";
 import { buildLayer, DIM_ALPHA, SceneRenderer, wallSegments, WallSegmentInfo } from "./renderer";
 
+// One shared pink for every admin-only editing affordance (placement
+// ghost/ring, wall-hover outline, the object-type editor's anchor
+// crosshair) — matches the CSS accent's pink-theme value (#d6336c)
+// exactly, instead of three independently hand-picked near-pink hexes.
+export const ADMIN_ACCENT_COLOR = 0xd6336c;
+
 /**
  * Read-only-except-for-placement preview renderer for the admin tool —
  * same house scene as the game/viewer (reused via SceneRenderer, not
@@ -248,8 +254,8 @@ export class AdminPreviewRenderer extends SceneRenderer {
       diamond
         .clear()
         .poly([back.x, back.y, right.x, right.y, frontPt.x, frontPt.y, left.x, left.y])
-        .fill({ color: 0xff3366, alpha: 0.35 })
-        .stroke({ width: 1, color: 0xff3366 });
+        .fill({ color: ADMIN_ACCENT_COLOR, alpha: 0.35 })
+        .stroke({ width: 1, color: ADMIN_ACCENT_COLOR });
       this.app.render();
     };
 
@@ -340,7 +346,7 @@ export class AdminPreviewRenderer extends SceneRenderer {
           .clear()
           .rect(0, 0, segment.width, segment.height)
           .fill({ color: 0xffffff, alpha: 0.001 })
-          .stroke({ width: 2, color: 0xff2d55 });
+          .stroke({ width: 2, color: ADMIN_ACCENT_COLOR });
       drawIdle();
       g.on("pointerover", () => {
         drawHover();

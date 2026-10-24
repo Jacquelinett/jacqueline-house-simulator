@@ -26,7 +26,7 @@ import { Application, Assets, Container, Graphics, Sprite, Texture } from "pixi.
 import { buildModal } from "./ui/modal";
 import { assetUrl, buildFloorAndWalls, buildLayer, DEFAULT_OVERLAY_FRAME_DURATION_MS, preloadRoomAssets, sliceFrames, WallSegmentInfo } from "./scene/renderer";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./scene/characterSprites";
-import { AdminPreviewRenderer } from "./scene/adminPreview";
+import { ADMIN_ACCENT_COLOR, AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
 import {
   buildFloorTree,
@@ -1046,9 +1046,9 @@ async function openObjectTypeEditModal(
     .lineTo(6, 0)
     .moveTo(0, -6)
     .lineTo(0, 6)
-    .stroke({ width: 2, color: 0xff3366 })
+    .stroke({ width: 2, color: ADMIN_ACCENT_COLOR })
     .circle(0, 0, 3)
-    .fill({ color: 0xff3366 });
+    .fill({ color: ADMIN_ACCENT_COLOR });
   stage.addChild(crosshair);
 
   // Simulates the interaction sprite too, defaulting to
@@ -1596,9 +1596,13 @@ async function openRoomEditModal(
       { id: "connections" as const, label: "Connections" },
     ],
     initialTab,
-    "admin-subtab-page",
+    "admin-tab-level-3-page",
   );
-  roomTabBar.className = "admin-subtab-bar";
+  // A third, visually distinct (but related) tier — reusing .admin-subtab-bar
+  // verbatim here would make "which floor am I on" (one level up, a sibling
+  // of the Rooms tab's own content) and "which part of this room am I
+  // editing" (inside a modal) look identical despite being different levels.
+  roomTabBar.className = "admin-tab-level-3-bar";
   tabArea.appendChild(roomTabBar);
   tabArea.appendChild(roomTabPages.info);
   tabArea.appendChild(roomTabPages.objects);
