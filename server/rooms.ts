@@ -138,7 +138,7 @@ export function seedRoomsIfEmpty(): void {
         showRightWall: spec.showRightWall === false ? 0 : 1,
         showBottomLeftWall: spec.showBottomLeftWall === true ? 1 : 0,
         showBottomRightWall: spec.showBottomRightWall === true ? 1 : 0,
-        wallHeight: spec.wallHeight ?? 8,
+        wallHeight: spec.wallHeight ?? 7,
         // Jacqueline's Office/DDR Room set visible: true directly on their
         // STATIC_ROOM_SPECS entry (see rooms.ts) — any other seeded room
         // defaults to invisible until an admin opts it in.
@@ -184,7 +184,7 @@ export function createRoom(spec: Omit<RoomSpecInput, "id">): number {
         showRightWall: spec.showRightWall === false ? 0 : 1,
         showBottomLeftWall: spec.showBottomLeftWall === true ? 1 : 0,
         showBottomRightWall: spec.showBottomRightWall === true ? 1 : 0,
-        wallHeight: spec.wallHeight ?? 8,
+        wallHeight: spec.wallHeight ?? 7,
         visible: spec.visible === true ? 1 : 0,
       });
     const id = Number(lastInsertRowid);
@@ -215,7 +215,7 @@ export function updateRoom(spec: RoomSpecInput): void {
       showRightWall: spec.showRightWall === false ? 0 : 1,
       showBottomLeftWall: spec.showBottomLeftWall === true ? 1 : 0,
       showBottomRightWall: spec.showBottomRightWall === true ? 1 : 0,
-      wallHeight: spec.wallHeight ?? 8,
+      wallHeight: spec.wallHeight ?? 7,
       visible: spec.visible === true ? 1 : 0,
     });
     replaceConnections(spec.id, spec.connectedTo);

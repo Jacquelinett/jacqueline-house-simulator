@@ -264,8 +264,8 @@ type TabId = "characters" | "activities" | "object-types" | "sprite-overlays" | 
 const TABS: { id: TabId; label: string }[] = [
   { id: "characters", label: "Characters" },
   { id: "activities", label: "Activities" },
-  { id: "object-types", label: "Object Types" },
-  { id: "sprite-overlays", label: "Sprite Overlays" },
+  { id: "object-types", label: "Objects" },
+  { id: "sprite-overlays", label: "Sprites" },
   { id: "rooms", label: "Rooms" },
 ];
 
@@ -381,6 +381,7 @@ function openCharacterEditModal(id: string | null, existing: Character | null, o
   footer.className = "admin-form";
   const saveBtn = document.createElement("button");
   saveBtn.textContent = "Save";
+  saveBtn.classList.add("admin-btn-primary");
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.textContent = "Cancel";
@@ -455,6 +456,7 @@ async function renderCharacters(body: HTMLElement) {
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.textContent = "Add Character";
+  addBtn.classList.add("admin-btn-primary");
   addBtn.onclick = () => openCharacterEditModal(null, null, () => renderCharacters(body));
   body.appendChild(addBtn);
 }
@@ -483,6 +485,7 @@ function openActivityEditModal(id: number | null, existing: ActivityDef | null, 
   footer.className = "admin-form";
   const saveBtn = document.createElement("button");
   saveBtn.textContent = "Save";
+  saveBtn.classList.add("admin-btn-primary");
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.textContent = "Cancel";
@@ -557,6 +560,7 @@ async function renderActivities(body: HTMLElement) {
   const addBtn = document.createElement("button");
   addBtn.type = "button";
   addBtn.textContent = "Add Activity";
+  addBtn.classList.add("admin-btn-primary");
   addBtn.onclick = () => openActivityEditModal(null, null, () => renderActivities(body));
   body.appendChild(addBtn);
 }
@@ -581,7 +585,7 @@ async function renderActivities(body: HTMLElement) {
  * types reusing the same overlay can still want it positioned differently.
  */
 function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDef | null, onSaved: () => void): void {
-  const modal = buildModal(id ? `Edit Sprite Overlay: ${existing!.spriteKey}` : "Add Sprite Overlay", {});
+  const modal = buildModal(id ? `Edit Sprite: ${existing!.spriteKey}` : "Add Sprite", {});
 
   const form = document.createElement("div");
   form.className = "admin-form";
@@ -622,6 +626,7 @@ function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDe
   footer.className = "admin-form";
   const saveBtn = document.createElement("button");
   saveBtn.textContent = "Save";
+  saveBtn.classList.add("admin-btn-primary");
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.textContent = "Cancel";
@@ -692,7 +697,8 @@ async function renderSpriteOverlays(body: HTMLElement) {
 
   const addBtn = document.createElement("button");
   addBtn.type = "button";
-  addBtn.textContent = "Add Sprite Overlay";
+  addBtn.textContent = "Add Sprite";
+  addBtn.classList.add("admin-btn-primary");
   addBtn.onclick = () => openSpriteOverlayEditModal(null, null, () => renderSpriteOverlays(body));
   body.appendChild(addBtn);
 }
@@ -826,6 +832,12 @@ async function openObjectTypeEditModal(
   overlays: SpriteOverlayDef[],
   onSaved: () => void,
 ) {
+  // Same staleness fix as openRoomEditModal's own re-fetch — a sprite
+  // overlay created from the Sprite Overlays tab wasn't pickable here
+  // until a full page reload, since this `overlays` parameter is only as
+  // fresh as whatever the caller fetched whenever IT last ran.
+  overlays = await adminFetch<SpriteOverlayDef[]>("/api/admin/sprite-overlays");
+
   const draftType: ObjectTypeDef = existing
     ? { ...existing, below: existing.below ? [...existing.below] : undefined }
     : makeDefaultObjectType();
@@ -837,7 +849,7 @@ async function openObjectTypeEditModal(
   // there must never silently override it.
   let anchorTouched = existing !== null;
 
-  const modal = buildModal(id ? `Edit Object Type: ${draftType.name}` : "Add Object Type", {});
+  const modal = buildModal(id ? `Edit Object: ${draftType.name}` : "Add Object", {});
 
   const form = document.createElement("div");
   form.className = "admin-form";
@@ -848,14 +860,23 @@ async function openObjectTypeEditModal(
   nameInput.value = draftType.name;
   form.append(document.createTextNode("Name:"), nameInput);
 
+  // Disabled, not freely typed — derived from the below (base sprite)
+  // texture's own loaded pixel size (see deriveSizeFromBelowTexture below),
+  // same way renderer.ts's buildLayer always stretched below/above to
+  // whatever width/height this type declared. Manually defining a size
+  // independent of the actual art stopped making sense once every real
+  // object type's art is authored at its own intended size — still just a
+  // disabled input (not removed) so the resolved value stays visible.
   const widthInput = document.createElement("input");
   widthInput.type = "number";
   widthInput.value = String(draftType.width);
   widthInput.style.width = "60px";
+  widthInput.disabled = true;
   const heightInput = document.createElement("input");
   heightInput.type = "number";
   heightInput.value = String(draftType.height);
   heightInput.style.width = "60px";
+  heightInput.disabled = true;
   form.append(document.createTextNode("W:"), widthInput, document.createTextNode("H:"), heightInput);
 
   modal.body.appendChild(form);
@@ -865,12 +886,12 @@ async function openObjectTypeEditModal(
   // (see rooms.ts's ObjectTypeDef.overlayId) — a plain dropdown showing
   // each one's spriteKey, not the raw id, per CLAUDE.md's "never show a
   // raw id to the admin" convention.
-  const belowSection = buildLayerSection("Below (base sprite)", draftType.below?.[0], assetPaths, () => rebuildSprite());
+  const belowSection = buildLayerSection("Below (base sprite)", draftType.below?.[0], assetPaths, () => deriveSizeFromBelowTexture());
   modal.body.appendChild(belowSection.element);
 
   const overlayWrap = document.createElement("div");
   const overlayHeading = document.createElement("h3");
-  overlayHeading.textContent = "Overlay (shown while in use)";
+  overlayHeading.textContent = "Sprite (shown while interacted with)";
   overlayWrap.appendChild(overlayHeading);
   const overlayRow = document.createElement("div");
   overlayRow.className = "admin-form";
@@ -886,11 +907,11 @@ async function openObjectTypeEditModal(
     overlaySelect.appendChild(opt);
   }
   overlaySelect.value = draftType.overlayId ? String(draftType.overlayId) : "";
-  overlayRow.append(document.createTextNode("Overlay:"), overlaySelect);
+  overlayRow.append(document.createTextNode("Sprite:"), overlaySelect);
   overlayWrap.appendChild(overlayRow);
   const overlayHint = document.createElement("div");
   overlayHint.className = "admin-hint";
-  overlayHint.textContent = "Managed on the Sprite Overlays tab — pick which one (if any) this type shows while in use.";
+  overlayHint.textContent = "Managed on the Sprites tab — pick which sprite (if any) to use when this object is being interacted with.";
   overlayWrap.appendChild(overlayHint);
 
   // Offset lives here, per-type, not on the Sprite Overlay entity itself —
@@ -957,6 +978,7 @@ async function openObjectTypeEditModal(
   footer.className = "admin-form";
   const saveBtn = document.createElement("button");
   saveBtn.textContent = "Save";
+  saveBtn.classList.add("admin-btn-primary");
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.textContent = "Cancel";
@@ -1111,10 +1133,31 @@ async function openObjectTypeEditModal(
       anchorX = Math.round((Number(widthInput.value) || 0) / 2);
       anchorY = Math.round((Number(heightInput.value) || 0) / 2);
     }
-    rebuildSprite();
+    return rebuildSprite();
   }
-  widthInput.onchange = applyWidthHeight;
-  heightInput.onchange = applyWidthHeight;
+
+  /**
+   * Reads width/height off the below layer's own loaded texture (real
+   * pixel size, not a free-form value anymore — see widthInput/heightInput's
+   * own comment) and applies them, which in turn re-centers the anchor via
+   * applyWidthHeight's existing logic unless the admin already touched it.
+   * A no-op (keeps whatever width/height is already there) for "(none)"/
+   * "(solid color)", since there's no texture to derive a size from —
+   * same fallback a brand-new type's default color-only below layer hits
+   * until a real texture is actually picked. The texture is already
+   * guaranteed loaded by the time this runs: buildLayerSection's own
+   * onchange handler awaits ensureTextureLoaded(...) before calling this.
+   */
+  function deriveSizeFromBelowTexture() {
+    const below = belowSection.getLayer();
+    if (below?.texture) {
+      const texture = Assets.get<Texture>(assetUrl(below.texture));
+      widthInput.value = String(texture.width);
+      heightInput.value = String(texture.height);
+    }
+    return applyWidthHeight();
+  }
+
   anchorTileModeCheckbox.onchange = () => syncAnchorInputs(); // redisplay only — doesn't change the underlying anchor
   function applyAnchorInputs() {
     anchorTouched = true;
@@ -1169,7 +1212,12 @@ async function openObjectTypeEditModal(
   modal.onClose(() => app.destroy());
 
   await ensureTextureLoaded(belowSection.getLayer()?.texture);
-  await rebuildSprite();
+  // Re-derive on open too, not just on a texture change — self-corrects an
+  // existing type whose saved width/height no longer matches its texture's
+  // actual on-disk size (e.g. the art was swapped for a differently-sized
+  // file directly), and correctly leaves a brand-new type's default 32x32
+  // alone until a real texture is picked (see this function's own comment).
+  await deriveSizeFromBelowTexture();
   modal.open();
 }
 
@@ -1185,7 +1233,7 @@ async function renderObjectTypes(body: HTMLElement) {
 
   const table = document.createElement("table");
   table.className = "admin-table";
-  table.innerHTML = "<tr><th>Name</th><th>Size</th><th>Anchor</th><th>Overlay</th><th></th></tr>";
+  table.innerHTML = "<tr><th>Name</th><th>Size</th><th>Anchor</th><th>Sprite</th><th></th></tr>";
   for (const [id, type] of Object.entries(types)) {
     const row = document.createElement("tr");
     const overlaySpriteKey = type.overlayId ? overlaysById.get(type.overlayId)?.spriteKey ?? "?" : "—";
@@ -1214,7 +1262,8 @@ async function renderObjectTypes(body: HTMLElement) {
 
   const addBtn = document.createElement("button");
   addBtn.type = "button";
-  addBtn.textContent = "Add Object Type";
+  addBtn.textContent = "Add Object";
+  addBtn.classList.add("admin-btn-primary");
   addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, characterAssetPaths, overlays, () => renderObjectTypes(body));
   body.appendChild(addBtn);
 }
@@ -1395,6 +1444,19 @@ async function openRoomEditModal(
   wallAssetPaths: string[],
   onSaved: () => void,
 ) {
+  // Re-fetch fresh rather than trusting the parameters' caller
+  // (renderRooms, see its own fetch) — renderRooms only re-fetches
+  // object-types/activities when IT runs, which creating a new object
+  // type or activity from a DIFFERENT tab never triggers, so a just-added
+  // one wasn't selectable/assignable here until a full page reload. Same
+  // "fetch right before use" convention renderRooms already applies to
+  // floorAssetPaths/wallAssetPaths, just extended one level deeper to the
+  // room editor itself.
+  [objectTypes, activities] = await Promise.all([
+    adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
+    adminFetch<ActivityDef[]>("/api/admin/activities"),
+  ]);
+
   const typeIds = Object.keys(objectTypes);
   const original = cloneObjects(room.objects);
   const draft = cloneObjects(room.objects);
@@ -1484,7 +1546,7 @@ async function openRoomEditModal(
     showRightWall: room.showRightWall !== false,
     showBottomLeftWall: room.showBottomLeftWall === true,
     showBottomRightWall: room.showBottomRightWall === true,
-    wallHeight: room.wallHeight ?? 8,
+    wallHeight: room.wallHeight ?? 7,
     wallOverrides: room.wallOverrides ?? [],
     visible: room.visible === true,
   };
@@ -1633,6 +1695,7 @@ async function openRoomEditModal(
   footer.className = "admin-form";
   const saveBtn = document.createElement("button");
   saveBtn.textContent = "Save";
+  saveBtn.classList.add("admin-btn-primary");
   const cancelBtn = document.createElement("button");
   cancelBtn.type = "button";
   cancelBtn.textContent = "Cancel";
@@ -2051,6 +2114,7 @@ async function openRoomEditModal(
     const addBtn = document.createElement("button");
     addBtn.type = "submit";
     addBtn.textContent = "Add Object";
+    addBtn.classList.add("admin-btn-primary");
     addForm.append(newTypeSelect, newXInput, newYInput, addBtn);
     addForm.onsubmit = (e) => {
       e.preventDefault();
@@ -2417,6 +2481,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     const confirmBtn = document.createElement("button");
     confirmBtn.type = "button";
     confirmBtn.textContent = "Connect";
+    confirmBtn.classList.add("admin-btn-primary");
     confirmBtn.onclick = async () => {
       try {
         await addConnection(Number(roomSelect.value), directionSelect.value as ConnectionDirection, Number(gapInput.value), Number(offsetInput.value));
@@ -2577,6 +2642,7 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
       baseRoomCell.appendChild(select);
 
       editFloorBtn.textContent = "Save";
+      editFloorBtn.classList.add("admin-btn-primary");
       editFloorBtn.onclick = async () => {
         try {
           await adminFetch(`/api/admin/floors/${floor.level}`, { method: "PATCH", body: JSON.stringify({ label: floor.label, baseRoomId: Number(select.value) }) });
@@ -2623,6 +2689,7 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
   const addFloorBtn = document.createElement("button");
   addFloorBtn.type = "submit";
   addFloorBtn.textContent = "Add Floor";
+  addFloorBtn.classList.add("admin-btn-primary");
   if (availableBaseRooms.length === 0) addFloorBtn.disabled = true;
   floorForm.append(floorLevelInput, floorLabelInput, floorBaseRoomSelect, addFloorBtn);
   floorForm.onsubmit = async (e) => {
@@ -2720,7 +2787,7 @@ async function renderRooms(body: HTMLElement) {
     table.innerHTML = "<tr><th>Room</th><th>Size</th><th>Objects</th><th></th></tr>";
     for (const room of roomsForTab) {
       const row = document.createElement("tr");
-      row.innerHTML = `<td>${room.name}</td><td>${room.cols}×${room.rows}</td><td>${room.objects.length}</td>`;
+      row.innerHTML = `<td>${room.name}</td><td>${room.cols}×${room.rows}×${room.wallHeight ?? 7}</td><td>${room.objects.length}</td>`;
 
       const actionCell = document.createElement("td");
       const editBtn = document.createElement("button");
@@ -2776,6 +2843,7 @@ async function renderRooms(body: HTMLElement) {
     const submitBtn = document.createElement("button");
     submitBtn.type = "submit";
     submitBtn.textContent = "Add Room (unconnected)";
+    submitBtn.classList.add("admin-btn-primary");
     form.append(nameInput, colsInput, rowsInput, floorVariantSelect, wallVariantSelect, submitBtn);
     form.onsubmit = async (e) => {
       e.preventDefault();

@@ -164,7 +164,7 @@ export function migrate(): void {
       show_right_wall INTEGER NOT NULL DEFAULT 1,
       show_bottom_left_wall INTEGER NOT NULL DEFAULT 0,
       show_bottom_right_wall INTEGER NOT NULL DEFAULT 0,
-      wall_height INTEGER NOT NULL DEFAULT 8,
+      wall_height INTEGER NOT NULL DEFAULT 7,
       visible INTEGER NOT NULL DEFAULT 0
     );
 

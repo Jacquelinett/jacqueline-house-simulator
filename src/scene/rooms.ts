@@ -286,8 +286,8 @@ export const TILE_SIZE = 16; // base square tile, px
 export const TILE_WIDTH = TILE_SIZE * 2; // 32 — tile's iso-projected screen width
 export const TILE_HEIGHT = TILE_SIZE; // 16 — tile's iso-projected screen height (2:1 iso)
 
-/** RoomSpec.wallHeight's own default when unset — see that field's own comment and tileset.ts's WALL_PART_SIZE (16px per stacked piece, so 8 -> a 128px-tall wall). */
-export const DEFAULT_WALL_HEIGHT = 8;
+/** RoomSpec.wallHeight's own default when unset — see that field's own comment and tileset.ts's WALL_PART_SIZE (16px per stacked piece, so 7 -> a 112px-tall wall). */
+export const DEFAULT_WALL_HEIGHT = 7;
 
 // Vertical stacking between floors (level: 1 = upper floor, -1 = basement,
 // etc.) is just a fixed screen-Y offset per level — unlike room-to-room

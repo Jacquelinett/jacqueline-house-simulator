@@ -168,8 +168,15 @@ body {
   font-size: 13px;
 }
 
-.admin-form button,
-.admin-table button {
+/* Every button in the admin tool, themed by default — not just ones that
+   happen to sit inside an .admin-form/.admin-table wrapper. Previously
+   only `.admin-form button, .admin-table button` were covered, which left
+   every "Add X" button (appended directly to a tab's body, outside both
+   wrappers) with bare browser chrome while Edit/Delete buttons a few
+   lines away (inside an .admin-table row) looked themed — the
+   inconsistency was accidental CSS coverage, not a deliberate style
+   choice. */
+#admin-app button {
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
@@ -179,9 +186,25 @@ body {
   cursor: pointer;
 }
 
-.admin-form button:hover,
-.admin-table button:hover {
+#admin-app button:hover {
   background: var(--border);
+}
+
+/* The one "main action" per surface — Save, each "Add X" button — gets
+   the same pink accent .segment-toggle-btn.selected already uses
+   elsewhere in the app (shared-chrome.css), applied here for the first
+   time so there's a clear primary/secondary hierarchy instead of every
+   button reading identically. Cancel/Edit/Delete/Remove stay the neutral
+   default above. */
+.admin-btn-primary {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  font-weight: 600;
+}
+
+.admin-btn-primary:hover {
+  background: var(--accent-border);
+  color: var(--panel-bg);
 }
 
 .admin-tile-mode-toggle {
@@ -242,7 +265,7 @@ body {
 }
 
 .admin-error {
-  color: #d6336c;
+  color: var(--error);
   font-size: 13px;
   margin: 8px 0;
 }
