@@ -22,9 +22,10 @@
 // a snapped, single-click placement rather than continuous drag-and-drop,
 // since there's no browser available in this environment to visually
 // verify continuous pointer-drag math well enough to trust.
-import { Application, Assets, Container, Graphics, Sprite, Texture } from "pixi.js";
+import { Application, Assets, BlurFilter, Container, Graphics, Sprite, Texture } from "pixi.js";
 import { buildModal } from "./ui/modal";
 import { assetUrl, buildFloorAndWalls, buildLayer, DEFAULT_OVERLAY_FRAME_DURATION_MS, preloadRoomAssets, sliceFrames, WallSegmentInfo } from "./scene/renderer";
+import { buildLitTexture } from "./scene/lightRecolor";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./scene/characterSprites";
 import { ADMIN_ACCENT_COLOR, AdminPreviewRenderer } from "./scene/adminPreview";
 import { setActivities } from "./scene/activities";
@@ -36,6 +37,7 @@ import {
   FloorTreeNode,
   getUsedRoomIds,
   gridToScreen,
+  LightGroupDef,
   ObjectAction,
   ObjectTypeDef,
   PAIR_DIRECTION,
@@ -92,6 +94,14 @@ interface ObjectPlacementWire {
   enabled: boolean;
   actions?: ObjectAction[];
   clickable?: boolean;
+  // See src/scene/rooms.ts's ObjectPlacement — lightOn is live-toggled
+  // server-side too (via the toggleLight RPC command/schedule evaluator,
+  // never this admin REST path), but editable here as a manual
+  // starting/override state same as any other placement field. A
+  // schedule only applies once both times are set.
+  lightOn?: boolean;
+  lightScheduleOnAt?: string;
+  lightScheduleOffAt?: string;
 }
 
 interface RoomSpecWire {
@@ -1010,6 +1020,227 @@ async function openObjectTypeEditModal(
   const aboveSection = buildLayerSection("Above (rendered on top)", draftType.above?.[0], assetPaths, () => rebuildSprite());
   modal.body.appendChild(aboveSection.element);
 
+  // --- Lighting ---
+  //
+  // First pixel-picker UI in this codebase — a dedicated, plainly-zoomed
+  // <canvas> rather than clicking the live Pixi preview, which the anchor
+  // feature already tried and rejected for being "fiddly and imprecise"
+  // (see buildLayerSection's own doc comment) at the preview's small,
+  // scaled-down size. Deliberately NOT wired to live-update as the admin
+  // types the tolerance/color fields — only "Sample pixel" clicks and
+  // the below texture itself (on change) touch it, so repainting it
+  // doesn't fight normal typing.
+  const lightingSection = document.createElement("div");
+  const lightingHeading = document.createElement("h3");
+  lightingHeading.textContent = "Lighting";
+  lightingSection.appendChild(lightingHeading);
+
+  const lightingHint = document.createElement("div");
+  lightingHint.className = "admin-hint";
+  lightingHint.textContent =
+    'Each light group optionally recolors matching sprite pixels when on, and always casts a soft glow. Leave "Recolor sprite pixels" off for a light whose source isn\'t actually visible (e.g. the back of a laptop screen) — it still casts a glow.';
+  lightingSection.appendChild(lightingHint);
+
+  const lightGroups: LightGroupDef[] = (draftType.lightGroups ?? []).map((g) => ({ ...g, pixelMatch: g.pixelMatch ? { ...g.pixelMatch } : undefined }));
+
+  const PIXEL_SAMPLE_ZOOM = 8;
+  const pixelSampleCanvas = document.createElement("canvas");
+  pixelSampleCanvas.className = "admin-pixel-sample-canvas";
+  const pixelSampleHint = document.createElement("div");
+  pixelSampleHint.className = "admin-hint";
+  pixelSampleHint.textContent = 'Click "Sample pixel…" on a light group below, then click a pixel here.';
+
+  let armedGroup: { setAnchorColor(color: number): void } | null = null;
+
+  async function refreshPixelSampleCanvas() {
+    const below = belowSection.getLayer();
+    const ctx = pixelSampleCanvas.getContext("2d")!;
+    if (!below?.texture) {
+      pixelSampleCanvas.width = 0;
+      pixelSampleCanvas.height = 0;
+      return;
+    }
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error(`failed to load ${below.texture}`));
+      img.src = assetUrl(below.texture!);
+    });
+    pixelSampleCanvas.width = img.naturalWidth * PIXEL_SAMPLE_ZOOM;
+    pixelSampleCanvas.height = img.naturalHeight * PIXEL_SAMPLE_ZOOM;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0, pixelSampleCanvas.width, pixelSampleCanvas.height);
+  }
+
+  pixelSampleCanvas.onclick = (e) => {
+    if (!armedGroup) return;
+    const rect = pixelSampleCanvas.getBoundingClientRect();
+    const px = Math.floor((e.clientX - rect.left) / PIXEL_SAMPLE_ZOOM) * PIXEL_SAMPLE_ZOOM;
+    const py = Math.floor((e.clientY - rect.top) / PIXEL_SAMPLE_ZOOM) * PIXEL_SAMPLE_ZOOM;
+    const ctx = pixelSampleCanvas.getContext("2d")!;
+    const [r, g, b] = ctx.getImageData(px, py, 1, 1).data;
+    armedGroup.setAnchorColor((r << 16) | (g << 8) | b);
+    armedGroup = null;
+    pixelSampleHint.textContent = 'Click "Sample pixel…" on a light group below, then click a pixel here.';
+  };
+
+  function buildLightGroupRow(group: LightGroupDef, onRemove: () => void): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "admin-form";
+
+    const nameInput = document.createElement("input");
+    nameInput.placeholder = "Name (e.g. Lamp bulb)";
+    nameInput.value = group.name;
+    nameInput.onchange = () => {
+      group.name = nameInput.value;
+      rebuildSprite();
+    };
+
+    const colorSwatch = document.createElement("span");
+    colorSwatch.className = "admin-swatch";
+
+    function refreshSwatch() {
+      colorSwatch.style.background = group.pixelMatch ? `#${group.pixelMatch.anchorColor.toString(16).padStart(6, "0")}` : "transparent";
+      colorSwatch.style.visibility = group.pixelMatch ? "visible" : "hidden";
+    }
+    refreshSwatch();
+
+    const sampleBtn = document.createElement("button");
+    sampleBtn.type = "button";
+    sampleBtn.textContent = "Sample pixel…";
+    sampleBtn.disabled = !group.pixelMatch;
+    sampleBtn.onclick = () => {
+      armedGroup = {
+        setAnchorColor(color) {
+          group.pixelMatch = { anchorColor: color, tolerancePercent: group.pixelMatch?.tolerancePercent ?? 3 };
+          refreshSwatch();
+          rebuildSprite();
+        },
+      };
+      pixelSampleHint.textContent = `Click a pixel below to sample a color for "${group.name || "this light"}".`;
+    };
+
+    const toleranceInput = document.createElement("input");
+    toleranceInput.type = "number";
+    toleranceInput.min = "0";
+    toleranceInput.max = "100";
+    toleranceInput.style.width = "50px";
+    toleranceInput.value = String(group.pixelMatch?.tolerancePercent ?? 3);
+    toleranceInput.onchange = () => {
+      if (group.pixelMatch) group.pixelMatch.tolerancePercent = Number(toleranceInput.value) || 0;
+      rebuildSprite();
+    };
+
+    const recolorCheckbox = document.createElement("input");
+    recolorCheckbox.type = "checkbox";
+    recolorCheckbox.checked = group.pixelMatch !== undefined;
+    const recolorLabel = document.createElement("label");
+    recolorLabel.append(recolorCheckbox, document.createTextNode(" Recolor sprite pixels"));
+    recolorCheckbox.onchange = () => {
+      group.pixelMatch = recolorCheckbox.checked ? (group.pixelMatch ?? { anchorColor: 0xffffff, tolerancePercent: 3 }) : undefined;
+      sampleBtn.disabled = !recolorCheckbox.checked;
+      toleranceInput.disabled = !recolorCheckbox.checked;
+      refreshSwatch();
+      rebuildSprite();
+    };
+    toleranceInput.disabled = !recolorCheckbox.checked;
+
+    const onColorInput = document.createElement("input");
+    onColorInput.type = "color";
+    onColorInput.value = `#${group.onColor.toString(16).padStart(6, "0")}`;
+    onColorInput.onchange = () => {
+      group.onColor = parseInt(onColorInput.value.slice(1), 16);
+      rebuildSprite();
+    };
+
+    function numberField(value: number, width: string, onChange: (v: number) => void): HTMLInputElement {
+      const input = document.createElement("input");
+      input.type = "number";
+      input.style.width = width;
+      input.value = String(value);
+      input.onchange = () => {
+        onChange(Number(input.value) || 0);
+        rebuildSprite();
+      };
+      return input;
+    }
+    const glowOffsetXInput = numberField(group.glowOffsetX, "50px", (v) => (group.glowOffsetX = v));
+    const glowOffsetYInput = numberField(group.glowOffsetY, "50px", (v) => (group.glowOffsetY = v));
+    const glowRadiusInput = numberField(group.glowRadius, "50px", (v) => (group.glowRadius = v));
+    const glowAlphaInput = numberField(group.glowAlpha, "50px", (v) => (group.glowAlpha = v));
+    glowAlphaInput.step = "0.05";
+    glowAlphaInput.min = "0";
+    glowAlphaInput.max = "1";
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.textContent = "×";
+    removeBtn.onclick = onRemove;
+
+    row.append(
+      document.createTextNode("Name:"),
+      nameInput,
+      recolorLabel,
+      sampleBtn,
+      colorSwatch,
+      document.createTextNode("Tolerance %:"),
+      toleranceInput,
+      document.createTextNode("On color:"),
+      onColorInput,
+      document.createTextNode("Glow X:"),
+      glowOffsetXInput,
+      document.createTextNode("Y:"),
+      glowOffsetYInput,
+      document.createTextNode("Radius:"),
+      glowRadiusInput,
+      document.createTextNode("Alpha:"),
+      glowAlphaInput,
+      removeBtn,
+    );
+    return row;
+  }
+
+  const lightGroupList = document.createElement("div");
+  lightGroupList.className = "admin-action-list";
+  lightingSection.appendChild(lightGroupList);
+
+  function renderLightGroupList() {
+    lightGroupList.textContent = "";
+    lightGroups.forEach((group, i) => {
+      lightGroupList.appendChild(
+        buildLightGroupRow(group, () => {
+          lightGroups.splice(i, 1);
+          renderLightGroupList();
+          rebuildSprite();
+        }),
+      );
+    });
+  }
+  renderLightGroupList();
+
+  const addLightGroupBtn = document.createElement("button");
+  addLightGroupBtn.type = "button";
+  addLightGroupBtn.textContent = "Add light group";
+  addLightGroupBtn.onclick = () => {
+    lightGroups.push({ id: crypto.randomUUID(), name: "", onColor: 0xffff99, glowOffsetX: 0, glowOffsetY: 0, glowRadius: 24, glowAlpha: 0.5 });
+    renderLightGroupList();
+    rebuildSprite();
+  };
+  lightingSection.appendChild(addLightGroupBtn);
+
+  lightingSection.appendChild(pixelSampleHint);
+  lightingSection.appendChild(pixelSampleCanvas);
+
+  const lightPreviewLabel = document.createElement("label");
+  lightPreviewLabel.className = "admin-tile-mode-toggle";
+  const lightPreviewCheckbox = document.createElement("input");
+  lightPreviewCheckbox.type = "checkbox";
+  lightPreviewLabel.append(lightPreviewCheckbox, document.createTextNode(" Preview lit (on) in the preview below"));
+  lightPreviewCheckbox.onchange = () => rebuildSprite();
+  lightingSection.appendChild(lightPreviewLabel);
+
+  modal.body.appendChild(lightingSection);
+
   const anchorHint = document.createElement("div");
   anchorHint.className = "admin-hint";
   anchorHint.textContent =
@@ -1157,7 +1388,35 @@ async function openObjectTypeEditModal(
     const height = Number(heightInput.value) || 1;
 
     const below = belowSection.getLayer();
-    if (below) spriteLayer.addChild(buildLayer(below, width, height));
+    let belowSprite: Sprite | null = null;
+    if (below) {
+      const belowNode = buildLayer(below, width, height);
+      spriteLayer.addChild(belowNode);
+      if (belowNode instanceof Sprite) belowSprite = belowNode;
+    }
+
+    // Mirrors renderer.ts's own buildObject: a glow per light group always
+    // (toggled by the preview checkbox, same as the real game toggles it
+    // by lightOn), and — only while previewing "lit" — a combined
+    // recolored texture swapped onto the below sprite (same
+    // buildLitTexture() the real renderer uses, so this preview shows
+    // exactly what players will actually see).
+    for (const group of lightGroups) {
+      const glow = new Graphics().circle(group.glowOffsetX, group.glowOffsetY, group.glowRadius).fill({ color: group.onColor, alpha: group.glowAlpha });
+      glow.filters = [new BlurFilter({ strength: 16 })];
+      glow.visible = lightPreviewCheckbox.checked;
+      spriteLayer.addChild(glow);
+    }
+    if (lightPreviewCheckbox.checked && belowSprite && below?.texture) {
+      const recolorGroups = lightGroups.filter((g) => g.pixelMatch).map((g) => ({ pixelMatch: g.pixelMatch!, onColor: g.onColor }));
+      if (recolorGroups.length > 0) {
+        try {
+          belowSprite.texture = await buildLitTexture(assetUrl(below.texture), recolorGroups);
+        } catch (err) {
+          console.error("[admin] buildLitTexture preview failed", err);
+        }
+      }
+    }
 
     // The interaction sprite specifically does NOT go through buildLayer:
     // the real renderer never resizes it to the object's own width/height
@@ -1222,6 +1481,7 @@ async function openObjectTypeEditModal(
       widthInput.value = String(texture.width);
       heightInput.value = String(texture.height);
     }
+    refreshPixelSampleCanvas().catch((err) => console.error("[admin] refreshPixelSampleCanvas failed", err));
     return applyWidthHeight();
   }
 
@@ -1267,6 +1527,7 @@ async function openObjectTypeEditModal(
       anchorX,
       anchorY,
       tags: tags.length ? tags : undefined,
+      lightGroups: lightGroups.length ? lightGroups : undefined,
     };
     try {
       if (id) {
@@ -2086,8 +2347,8 @@ async function openRoomEditModal(
 
   function renderTable() {
     const tileMode = tileModeCheckbox.checked;
-    const COLUMN_COUNT = 7; // Type, x, y, Enabled, Clickable, Place, Remove — kept in sync with the header row below for the actions row's colspan
-    table.innerHTML = `<tr><th>Type</th><th>${tileMode ? "tile u" : "x"}</th><th>${tileMode ? "tile v" : "y"}</th><th>Enabled</th><th>Clickable</th><th></th><th></th></tr>`;
+    const COLUMN_COUNT = 8; // Type, x, y, Enabled, Clickable, Light, Place, Remove — kept in sync with the header row below for the actions row's colspan
+    table.innerHTML = `<tr><th>Type</th><th>${tileMode ? "tile u" : "x"}</th><th>${tileMode ? "tile v" : "y"}</th><th>Enabled</th><th>Clickable</th><th>Light</th><th></th><th></th></tr>`;
     for (const obj of draft) {
       const row = document.createElement("tr");
       // Row id still keys off the real/placeholder numeric id internally
@@ -2146,6 +2407,38 @@ async function openRoomEditModal(
       clickableCell.appendChild(clickableCheckbox);
       row.appendChild(clickableCell);
 
+      // Manual on/off (persisted same as any other placement field here)
+      // plus an optional "HH:MM" on/off schedule — only applies once BOTH
+      // are set (see server/lightSchedule.ts). Neither one rebuilds this
+      // room editor's own preview: that preview is about position/layout,
+      // not lighting — see the Objects tab's own Lighting section for a
+      // real lit/unlit preview.
+      const lightOnCheckbox = document.createElement("input");
+      lightOnCheckbox.type = "checkbox";
+      lightOnCheckbox.checked = obj.lightOn === true;
+      lightOnCheckbox.title = "On right now";
+      const lightScheduleOnInput = document.createElement("input");
+      lightScheduleOnInput.type = "time";
+      lightScheduleOnInput.value = obj.lightScheduleOnAt ?? "";
+      lightScheduleOnInput.title = "Auto-on at";
+      lightScheduleOnInput.style.width = "90px";
+      const lightScheduleOffInput = document.createElement("input");
+      lightScheduleOffInput.type = "time";
+      lightScheduleOffInput.value = obj.lightScheduleOffAt ?? "";
+      lightScheduleOffInput.title = "Auto-off at";
+      lightScheduleOffInput.style.width = "90px";
+      function applyLightFields() {
+        obj.lightOn = lightOnCheckbox.checked;
+        obj.lightScheduleOnAt = lightScheduleOnInput.value || undefined;
+        obj.lightScheduleOffAt = lightScheduleOffInput.value || undefined;
+        updateSaveState();
+      }
+      lightOnCheckbox.onchange = applyLightFields;
+      lightScheduleOnInput.onchange = applyLightFields;
+      lightScheduleOffInput.onchange = applyLightFields;
+      const lightCell = document.createElement("td");
+      lightCell.append(lightOnCheckbox, lightScheduleOnInput, lightScheduleOffInput);
+      row.appendChild(lightCell);
 
       // x/y move the object live (AdminPreviewRenderer.moveObject) instead
       // of a full scene rebuild — this is the fix for the "blip" when

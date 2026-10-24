@@ -278,6 +278,20 @@ body {
   height: 32px;
 }
 
+/* The Lighting section's zoomed pixel-sampling canvas (object-type
+   editor) — crisp, unsmoothed pixel art at a fixed 8x zoom, large enough
+   to click an individual source pixel precisely (see its own comment on
+   why this is a dedicated plain canvas, not the live Pixi preview). */
+.admin-pixel-sample-canvas {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  cursor: crosshair;
+  image-rendering: pixelated;
+}
+
 .admin-form {
   display: flex;
   flex-wrap: wrap;
