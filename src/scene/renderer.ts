@@ -34,6 +34,60 @@ const GLOW_BLUR_STRENGTH = 16;
 // which simulates the overlay layer too now (defaulting to Jacqueline's
 // own art) and needs the same default-duration fallback.
 export const DEFAULT_OVERLAY_FRAME_DURATION_MS = 150;
+
+// --- Day/night ambient tint ---
+//
+// A full-viewport multiply-blended color wash, driven purely by the
+// player's own local wall-clock time (`hour`, 0-24, fractional) — no
+// admin configuration yet, these are the one place the look lives for
+// now (same "module-level constant, not yet exposed" spirit GLOW_COLOR/
+// GLOW_ALPHA already have). Multiply blending darkens/tints everything
+// under it without fully obscuring — alpha 0 at midday means "no tint at
+// all," not "transparent dark navy." Stops must span the full 0-24 range
+// (first and last hour implicitly wrap to the same look, since a day
+// has no real start/end) and be in ascending hour order.
+interface AmbientStop {
+  hour: number;
+  color: number;
+  alpha: number;
+}
+const AMBIENT_STOPS: AmbientStop[] = [
+  { hour: 0, color: 0x1a1a40, alpha: 0.45 }, // midnight: deep navy
+  { hour: 5, color: 0x1a1a40, alpha: 0.45 }, // still night
+  { hour: 7, color: 0xff9966, alpha: 0.18 }, // dawn: warm orange, fading in
+  { hour: 9, color: 0xffffff, alpha: 0 }, // full daylight: no tint
+  { hour: 17, color: 0xffffff, alpha: 0 }, // still full daylight
+  { hour: 19, color: 0xff9966, alpha: 0.18 }, // dusk: warm orange
+  { hour: 21, color: 0x1a1a40, alpha: 0.45 }, // night falls
+  { hour: 24, color: 0x1a1a40, alpha: 0.45 }, // wraps back to hour 0's own look
+];
+// The eye can't tell a color wash is stale for a few seconds — recomputed
+// this often rather than every frame, same "doesn't need per-frame
+// precision" reasoning as everywhere else timing is approximate in this
+// renderer.
+const AMBIENT_RECOMPUTE_INTERVAL_MS = 30_000;
+
+function lerpColorChannelwise(a: number, b: number, t: number): number {
+  const channel = (n: number, shift: number) => (n >> shift) & 0xff;
+  const lerp = (x: number, y: number) => Math.round(x + (y - x) * t);
+  const r = lerp(channel(a, 16), channel(b, 16));
+  const g = lerp(channel(a, 8), channel(b, 8));
+  const bch = lerp(channel(a, 0), channel(b, 0));
+  return (r << 16) | (g << 8) | bch;
+}
+
+function computeAmbientTint(now: Date): { color: number; alpha: number } {
+  const hour = now.getHours() + now.getMinutes() / 60;
+  for (let i = 0; i < AMBIENT_STOPS.length - 1; i++) {
+    const a = AMBIENT_STOPS[i];
+    const b = AMBIENT_STOPS[i + 1];
+    if (hour >= a.hour && hour <= b.hour) {
+      const t = (hour - a.hour) / (b.hour - a.hour);
+      return { color: lerpColorChannelwise(a.color, b.color, t), alpha: a.alpha + (b.alpha - a.alpha) * t };
+    }
+  }
+  return { color: AMBIENT_STOPS[0].color, alpha: AMBIENT_STOPS[0].alpha }; // unreachable given stops span the full 0-24 range
+}
 const NAME_TAG_PADDING_X = 5;
 const NAME_TAG_PADDING_Y = 2;
 const NAME_TAG_GAP = 3; // above the overlay sprite's own top edge
@@ -730,6 +784,11 @@ export class SceneRenderer {
   protected cameraTarget = { x: 0, y: 0 };
   protected scale: number;
   protected devMode: boolean;
+  // Sits directly on app.stage (not this.world), so it covers the whole
+  // viewport uniformly regardless of camera pan/zoom — see
+  // "Day/night ambient tint" above.
+  private ambientTint = new Graphics();
+  private ambientTintElapsedMs = 0;
 
   constructor(
     protected app: Application,
@@ -762,8 +821,29 @@ export class SceneRenderer {
     this.world.position.set(this.cameraTarget.x, this.cameraTarget.y);
     this.onRoomChange(roomDefs[0].name);
 
-    window.addEventListener("resize", () => this.computeCameraTarget());
+    // Added after `this.world` so it always paints on top of the whole
+    // scene, and on `app.stage` directly (not `this.world`) so panning/
+    // zooming the camera never moves or scales it.
+    this.ambientTint.eventMode = "none";
+    this.ambientTint.blendMode = "multiply";
+    app.stage.addChild(this.ambientTint);
+    if (this.isAmbientTintEnabled()) this.redrawAmbientTint();
+
+    window.addEventListener("resize", () => {
+      this.computeCameraTarget();
+      if (this.isAmbientTintEnabled()) this.redrawAmbientTint();
+    });
     app.ticker.add(() => this.tick());
+  }
+
+  /** Overridden to `false` by AdminPreviewRenderer — same "editing chrome should look the same regardless of real-world time" reasoning isRoomFocusEffectsEnabled already uses. */
+  protected isAmbientTintEnabled(): boolean {
+    return true;
+  }
+
+  private redrawAmbientTint(): void {
+    const { color, alpha } = computeAmbientTint(new Date());
+    this.ambientTint.clear().rect(0, 0, this.app.screen.width, this.app.screen.height).fill({ color, alpha });
   }
 
   protected buildRoom(room: RoomDef): Container {
@@ -1299,6 +1379,16 @@ export class SceneRenderer {
   }
 
   private tick() {
+    const deltaMs = this.app.ticker.deltaMS;
+
+    if (this.isAmbientTintEnabled()) {
+      this.ambientTintElapsedMs += deltaMs;
+      if (this.ambientTintElapsedMs >= AMBIENT_RECOMPUTE_INTERVAL_MS) {
+        this.ambientTintElapsedMs = 0;
+        this.redrawAmbientTint();
+      }
+    }
+
     this.world.x += (this.cameraTarget.x - this.world.x) * PAN_EASE;
     this.world.y += (this.cameraTarget.y - this.world.y) * PAN_EASE;
 
@@ -1326,7 +1416,6 @@ export class SceneRenderer {
     // have frameCount > 1 (see applyOverlayTexture) — a plain static
     // overlay (frames === null, the common case today) costs nothing
     // here beyond the one visible+frames check.
-    const deltaMs = this.app.ticker.deltaMS;
     for (const overlay of this.activeOverlays) {
       if (!overlay.sprite.visible || !overlay.frames) continue;
       overlay.frameElapsedMs += deltaMs;

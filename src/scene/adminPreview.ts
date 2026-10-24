@@ -163,6 +163,11 @@ export class AdminPreviewRenderer extends SceneRenderer {
     return false;
   }
 
+  /** Editing chrome should look the same regardless of real-world time of day — same reasoning isRoomFocusEffectsEnabled above already uses. */
+  protected isAmbientTintEnabled(): boolean {
+    return false;
+  }
+
   /** Moves one object's own sprite directly — no scene rebuild, so this never blips. Only valid for an already-built object (same type/size as when the scene was last built). */
   public moveObject(objectId: number, x: number, y: number): void {
     const entry = objectContainersFor(this).get(objectId);
