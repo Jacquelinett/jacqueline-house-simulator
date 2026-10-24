@@ -1,8 +1,13 @@
 import { Texture } from "pixi.js";
 
-interface PixelMatch {
+interface PaletteMatch {
   anchorColor: number;
   tolerancePercent: number;
+}
+
+export interface PaletteRecolorGroup {
+  match: PaletteMatch;
+  color: number; // the CURRENT target color for this group — callers cycling a PaletteDef pass whichever of its `colors` is active right now
 }
 
 function hexToRgb(hex: number): [number, number, number] {
@@ -68,42 +73,53 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`[lightRecolor] failed to load ${url}`));
+    img.onerror = () => reject(new Error(`[paletteRecolor] failed to load ${url}`));
     img.src = url;
   });
 }
 
-export interface RecolorGroup {
-  pixelMatch: PixelMatch;
-  onColor: number;
+// Cached by URL — a cycling PaletteDef rebuilds its texture every time
+// its current color changes (see renderer.ts's tick()), which would
+// otherwise mean re-fetching/re-decoding the same source image over and
+// over for an object that's actively cycling.
+const imageCache = new Map<string, Promise<HTMLImageElement>>();
+function loadImageCached(url: string): Promise<HTMLImageElement> {
+  let cached = imageCache.get(url);
+  if (!cached) {
+    cached = loadImage(url);
+    imageCache.set(url, cached);
+  }
+  return cached;
 }
 
 /**
- * Builds the "lit" variant of a below-layer texture — the first place
- * this codebase reads/writes raw pixel data off a texture (confirmed no
- * precedent existed before this). `url` is loaded fresh via a plain
- * Canvas2D round-trip (simpler and more portable than trying to read
- * pixels back off whatever backend Pixi's own GPU texture happens to be
- * using) rather than reusing the already-loaded Pixi Texture — caller
- * should pass an already-resolved URL (assetUrl(layer.texture)), same
- * convention Assets.load() calls elsewhere already follow.
+ * Builds one recolored variant of a below-layer texture — the first
+ * place this codebase reads/writes raw pixel data off a texture
+ * (confirmed no precedent existed before this). `url` is loaded fresh
+ * via a plain Canvas2D round-trip (simpler and more portable than
+ * trying to read pixels back off whatever backend Pixi's own GPU
+ * texture happens to be using) rather than reusing the already-loaded
+ * Pixi Texture — caller should pass an already-resolved URL
+ * (assetUrl(layer.texture)), same convention Assets.load() calls
+ * elsewhere already follow. The underlying image is cached (see above),
+ * so repeated calls for the same URL (a palette cycling through colors)
+ * only pay the network/decode cost once.
  *
- * Takes every light group that has a pixelMatch on the same object (an
- * object toggles all its lights together — see LightGroupDef's own
- * comment — so one combined texture covers all of them in a single
- * pass, rather than each group racing to overwrite the same sprite's
- * texture independently). Each pixel is tested against each group's own
- * `pixelMatch` in order; the first group it falls within
- * `tolerancePercent` of wins (a pixel matching more than one group's
- * anchor color is the rare/unexpected case — first-match-wins is a
- * reasonable tiebreak, not worth more machinery for). A matching pixel's
- * hue/saturation swaps toward that group's `onColor` while PRESERVING
- * the pixel's own HSL lightness — a palette swap, not a flat repaint, so
- * shading/anti-aliasing survives being lit. Fully transparent pixels and
- * non-matching pixels are left byte-for-byte untouched.
+ * Takes every PaletteDef on the same object at once (one combined
+ * texture covers all of them in a single pass, rather than each one
+ * racing to overwrite the same sprite's texture independently). Each
+ * pixel is tested against each group's own `match` in order; the first
+ * group it falls within `tolerancePercent` of wins (a pixel matching
+ * more than one group's anchor color is the rare/unexpected case —
+ * first-match-wins is a reasonable tiebreak, not worth more machinery
+ * for). A matching pixel's hue/saturation swaps toward that group's
+ * CURRENT `color` while PRESERVING the pixel's own HSL lightness — a
+ * palette swap, not a flat repaint, so shading/anti-aliasing survives.
+ * Fully transparent pixels and non-matching pixels are left byte-for-
+ * byte untouched.
  */
-export async function buildLitTexture(url: string, groups: RecolorGroup[]): Promise<Texture> {
-  const img = await loadImage(url);
+export async function buildPaletteTexture(url: string, groups: PaletteRecolorGroup[]): Promise<Texture> {
+  const img = await loadImageCached(url);
 
   const canvas = document.createElement("canvas");
   canvas.width = img.naturalWidth;
@@ -114,9 +130,9 @@ export async function buildLitTexture(url: string, groups: RecolorGroup[]): Prom
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const data = imageData.data;
   const resolvedGroups = groups.map((g) => ({
-    anchor: hexToRgb(g.pixelMatch.anchorColor),
-    tolerancePercent: g.pixelMatch.tolerancePercent,
-    onHs: rgbToHsl(...hexToRgb(g.onColor)).slice(0, 2) as [number, number],
+    anchor: hexToRgb(g.match.anchorColor),
+    tolerancePercent: g.match.tolerancePercent,
+    targetHs: rgbToHsl(...hexToRgb(g.color)).slice(0, 2) as [number, number],
   }));
 
   for (let i = 0; i < data.length; i += 4) {
@@ -129,7 +145,7 @@ export async function buildLitTexture(url: string, groups: RecolorGroup[]): Prom
       const [ar, ag, ab] = group.anchor;
       if (colorDistancePercent(r, g, b, ar, ag, ab) > group.tolerancePercent) continue;
       const [, , l] = rgbToHsl(r, g, b);
-      const [nr, ng, nb] = hslToRgb(group.onHs[0], group.onHs[1], l);
+      const [nr, ng, nb] = hslToRgb(group.targetHs[0], group.targetHs[1], l);
       data[i] = nr;
       data[i + 1] = ng;
       data[i + 2] = nb;

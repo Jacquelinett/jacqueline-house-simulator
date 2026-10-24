@@ -1,9 +1,9 @@
 import { AlphaFilter, Application, Assets, BlurFilter, Container, Graphics, Rectangle, Sprite, Text, Texture } from "pixi.js";
-import { DEFAULT_WALL_HEIGHT, gridToScreen, rooms as roomDefs, screenToGrid, ObjectDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
+import { DEFAULT_WALL_HEIGHT, gridToScreen, rooms as roomDefs, screenToGrid, ObjectDef, PaletteDef, RoomDef, SpriteLayer, TILE_HEIGHT, TILE_WIDTH } from "./rooms";
 import { findActivityById } from "./activities";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./characterSprites";
 import { resolveWallVariant, TileOverride, TileRect, WallPart, WallPartName, WallVariant, WALL_PART_SIZE } from "./tileset";
-import { buildLitTexture } from "./lightRecolor";
+import { buildPaletteTexture } from "./paletteRecolor";
 
 // Exported for AdminPreviewRenderer (adminPreview.ts), which reuses this
 // same dim level for its own whole-room dimming instead of a separately
@@ -132,23 +132,33 @@ interface ActiveOverlay {
 
 /**
  * One object's full light runtime state — tracked per-object (not per
- * light-group, since all of an object's groups toggle together, see
- * LightGroupDef's own comment). `sprite`/`baseTexture` are the below[0]
- * layer's own Sprite/original Texture, recolored in place when `on`
- * flips — null if the object has no texture-backed below layer at all
- * (a pure "light shape" object has nothing to recolor, just its glows).
- * `litTexture` starts null and resolves asynchronously (buildLitTexture
- * is a Canvas2D round-trip) — an object that starts "on" shows its base
- * texture plus the glow(s) until the recolor resolves a moment later,
- * same "briefly unresolved, corrects itself" tolerance the sprite-overlay
- * system's own async texture resolution already has.
+ * light, since all of an object's lights toggle together, see LightDef's
+ * own comment). Purely a set of glow Graphics, one per LightDef — a
+ * light is nothing but a point that radiates a glow, no sprite/texture
+ * involvement at all (that's PaletteDef's job, tracked completely
+ * separately below).
  */
 interface ActiveLight {
-  sprite: Sprite | null;
-  baseTexture: Texture | null;
-  litTexture: Texture | null;
   glows: Graphics[];
   on: boolean;
+}
+
+/**
+ * One object's full palette runtime state — tracked per-object, covering
+ * every PaletteDef on its type at once (they combine into a single
+ * recolored texture, see buildPaletteTexture's own comment). `defs`/
+ * `frameIndices`/`frameElapsedMs` are parallel arrays, one entry per
+ * PaletteDef on this object; a def with no cycleIntervalMs (or only one
+ * color) simply never advances past index 0 — "just a regular palette
+ * swap." `url` is cached (see paletteRecolor.ts) so re-deriving a frame
+ * on every color change doesn't re-fetch/re-decode the source image.
+ */
+interface ActivePalette {
+  sprite: Sprite;
+  url: string;
+  defs: PaletteDef[];
+  frameIndices: number[];
+  frameElapsedMs: number[];
 }
 
 /** Slices one spritesheet texture into `frameCount` equal-width frames laid out left-to-right starting at (0,0) — same sub-rect-of-one-sheet technique tileset.ts's floor/wall variants use, just a uniform grid instead of hand-placed rects (animation frames are naturally uniform-sized, unlike tileset corners/edges). Frame width/height are derived from the sheet's own natural size (width / frameCount, full height) rather than authored — a spritesheet's frames are always its own height, and equal-width slices of its own width. Exported for the admin tool's object-type preview, which reuses this exact slicing to simulate overlay animation. */
@@ -792,6 +802,9 @@ export class SceneRenderer {
   // the live lightStates broadcast, see client/remoteState.ts) can look
   // one up directly without a scan.
   protected activeLights = new Map<number, ActiveLight>();
+  // Keyed by object placement id too — every object with at least one
+  // PaletteDef, ticked forward in tick() below.
+  protected activePalettes = new Map<number, ActivePalette>();
   // Objects are clickable in any room on the SAME FLOOR as the one
   // currently viewed, not just the exact viewed room — clicking one both
   // recenters the camera on its room (see House.ts's attachObjectInteraction,
@@ -1037,10 +1050,10 @@ export class SceneRenderer {
     // and wall tiles are placed from) — not grid-snapped, negative allowed.
     container.position.set(obj.x, obj.y);
 
-    // Captures the FIRST texture-backed below sprite only — a light's
-    // pixel recolor only ever targets below[0] (see LightGroupDef's own
-    // comment), and every real object today has at most one below entry
-    // anyway (same assumption the sprite/above loops already make).
+    // Captures the FIRST texture-backed below sprite only — a palette's
+    // recolor only ever targets below[0] (see PaletteDef's own comment),
+    // and every real object today has at most one below entry anyway
+    // (same assumption the sprite/above loops already make).
     let belowSprite: Sprite | null = null;
     for (const layer of obj.below ?? []) {
       const node = buildLayer(layer, obj.width, obj.height);
@@ -1048,38 +1061,32 @@ export class SceneRenderer {
       if (!belowSprite && node instanceof Sprite) belowSprite = node;
     }
 
-    if (obj.lightGroups && obj.lightGroups.length > 0) {
+    if (obj.lights && obj.lights.length > 0) {
       const glows: Graphics[] = [];
-      for (const group of obj.lightGroups) {
+      for (const light of obj.lights) {
         // Same filled-then-blurred-circle technique as the room-focus
         // glow (GLOW_COLOR/GLOW_BLUR_STRENGTH above), just object-scoped
         // instead of room-scoped, and using the light's own color/alpha.
-        const glow = new Graphics().circle(group.glowOffsetX, group.glowOffsetY, group.glowRadius).fill({ color: group.onColor, alpha: group.glowAlpha });
+        const glow = new Graphics().circle(light.offsetX, light.offsetY, light.radius).fill({ color: light.color, alpha: light.alpha });
         glow.filters = [new BlurFilter({ strength: GLOW_BLUR_STRENGTH })];
         glow.eventMode = "none";
         glow.visible = obj.lightOn ?? false;
         container.addChild(glow);
         glows.push(glow);
       }
+      this.activeLights.set(obj.id, { glows, on: obj.lightOn ?? false });
+    }
 
-      const activeLight: ActiveLight = {
+    if (obj.palettes && obj.palettes.length > 0 && belowSprite && obj.below?.[0]?.texture) {
+      const activePalette: ActivePalette = {
         sprite: belowSprite,
-        baseTexture: belowSprite?.texture ?? null,
-        litTexture: null,
-        glows,
-        on: obj.lightOn ?? false,
+        url: assetUrl(obj.below[0].texture),
+        defs: obj.palettes,
+        frameIndices: obj.palettes.map(() => 0),
+        frameElapsedMs: obj.palettes.map(() => 0),
       };
-      this.activeLights.set(obj.id, activeLight);
-
-      const recolorGroups = obj.lightGroups.filter((g) => g.pixelMatch !== undefined).map((g) => ({ pixelMatch: g.pixelMatch!, onColor: g.onColor }));
-      if (belowSprite && recolorGroups.length > 0 && obj.below?.[0]?.texture) {
-        buildLitTexture(assetUrl(obj.below[0].texture), recolorGroups)
-          .then((texture) => {
-            activeLight.litTexture = texture;
-            if (activeLight.on && activeLight.sprite) activeLight.sprite.texture = texture;
-          })
-          .catch((err) => console.error("[renderer] buildLitTexture failed", err));
-      }
+      this.activePalettes.set(obj.id, activePalette);
+      this.applyPaletteFrame(activePalette);
     }
 
     // Name tags are UI, not world geometry — collected here and added to
@@ -1210,8 +1217,20 @@ export class SceneRenderer {
       if (on === light.on) continue;
       light.on = on;
       for (const glow of light.glows) glow.visible = on;
-      if (light.sprite) light.sprite.texture = on ? light.litTexture ?? light.sprite.texture : light.baseTexture ?? light.sprite.texture;
     }
+  }
+
+  /** Rebuilds and applies one object's current combined palette texture — called once at build time (the initial frame) and again whenever tick() below advances any of its PaletteDefs past their own cycleIntervalMs. */
+  private applyPaletteFrame(p: ActivePalette) {
+    const groups = p.defs.map((def, i) => ({
+      match: { anchorColor: def.anchorColor, tolerancePercent: def.tolerancePercent },
+      color: def.colors[p.frameIndices[i] % def.colors.length],
+    }));
+    buildPaletteTexture(p.url, groups)
+      .then((texture) => {
+        p.sprite.texture = texture;
+      })
+      .catch((err) => console.error("[renderer] buildPaletteTexture failed", err));
   }
 
   /** Updates (rebuilding the actual text/background only if the name changed — see nameTagText's own comment) the small floating tag above an overlay sprite showing who's attributed to it. Always repositions regardless (see repositionOverlayNameTag), since that's cheap and depends on the sprite's current rendered size, not just the name. */
@@ -1502,6 +1521,25 @@ export class SceneRenderer {
         this.ambientTintElapsedMs = 0;
         this.redrawAmbientTint();
       }
+    }
+
+    // Each PaletteDef on an object advances independently (its own
+    // cycleIntervalMs, its own elapsed accumulator) — a def with no
+    // interval or only one color never has anywhere to advance TO, so
+    // it's skipped entirely rather than wastefully rebuilding an
+    // unchanged texture every frame.
+    for (const p of this.activePalettes.values()) {
+      let changed = false;
+      p.defs.forEach((def, i) => {
+        if (!def.cycleIntervalMs || def.colors.length <= 1) return;
+        p.frameElapsedMs[i] += deltaMs;
+        if (p.frameElapsedMs[i] >= def.cycleIntervalMs) {
+          p.frameElapsedMs[i] -= def.cycleIntervalMs;
+          p.frameIndices[i] = (p.frameIndices[i] + 1) % def.colors.length;
+          changed = true;
+        }
+      });
+      if (changed) this.applyPaletteFrame(p);
     }
 
     this.world.x += (this.cameraTarget.x - this.world.x) * PAN_EASE;

@@ -25,7 +25,7 @@
 import { Application, Assets, BlurFilter, Container, Graphics, Sprite, Texture } from "pixi.js";
 import { buildModal } from "./ui/modal";
 import { assetUrl, buildFloorAndWalls, buildLayer, DEFAULT_OVERLAY_FRAME_DURATION_MS, preloadRoomAssets, sliceFrames, WallSegmentInfo } from "./scene/renderer";
-import { buildLitTexture } from "./scene/lightRecolor";
+import { buildPaletteTexture } from "./scene/paletteRecolor";
 import { generateId } from "./lib/randomId";
 import { characterSpritePath, DEFAULT_SPRITE_CHARACTER } from "./scene/characterSprites";
 import { ADMIN_ACCENT_COLOR, AdminPreviewRenderer } from "./scene/adminPreview";
@@ -38,10 +38,11 @@ import {
   FloorTreeNode,
   getUsedRoomIds,
   gridToScreen,
-  LightGroupDef,
+  LightDef,
   ObjectAction,
   ObjectTypeDef,
   PAIR_DIRECTION,
+  PaletteDef,
   resolveRooms,
   RoomDef,
   roomSpecsFromWire,
@@ -869,28 +870,30 @@ function buildLayerSection(
 }
 
 /**
- * Edits one object type's name/size/below+sprite+above layers/anchor
- * point. Each of the three layers is editable via buildLayerSection
- * (texture-or-color-or-none, offset, and — the interaction sprite only —
- * a spriteKey plus optional frame-animation fields); every current type
- * has at most one entry per slot, so one section per slot (not a dynamic
- * array editor) doesn't lose anything for them. `actions` is no longer a
- * type-level concern at all (see ObjectTypeDef's own comment in rooms.ts).
+ * Edits one object type across four tabs — Info (name/tags/size),
+ * Appearance (below/sprite/above layers + anchor), Palette (always-on
+ * pixel recolors), Light (on/off glow sources) — same pinned-preview-
+ * plus-tabs shape the room editor already established (see
+ * .admin-modal-tabbed-body's own CSS comment): a big editor with a lot
+ * of fields gets tabs, as a standard to reuse, not a one-off.
+ *
  * The preview always shows the interaction sprite too (unlike the real
  * game, where it's only visible while someone's actually doing the
  * activity) — there's no "who's doing this" to attribute in a static
  * authoring preview, so it simulates Jacqueline's own art specifically
- * (PREVIEW_CHARACTER_SPRITE_NAME below), falling back to the layer's
- * plain texture exactly like the real per-character resolution does when
- * no matching file exists. Animated (frameCount > 1) sprites actually
- * animate here too, via the same sliceFrames the real renderer uses. The
- * preview renders a real floor+wall room corner (sized to the object's own
+ * (DEFAULT_SPRITE_CHARACTER), falling back to the layer's plain texture
+ * exactly like the real per-character resolution does when no matching
+ * file exists. Animated (frameCount > 1) sprites actually animate here
+ * too, via the same sliceFrames the real renderer uses. The preview
+ * renders a real floor+wall room corner (sized to the object's own
  * footprint) and repositions the sprite so its anchor point always lands
  * exactly on that corner — so tuning the anchor via the number inputs
- * below shows, live, how the object will actually sit relative to the
- * wall. No click-to-set: a live Pixi canvas turned out to be a fiddly,
- * imprecise way to pick a specific pixel — the text inputs are the only
- * way to set it.
+ * shows, live, how the object will actually sit relative to the wall.
+ * No click-to-set for the anchor itself: a live Pixi canvas turned out
+ * to be a fiddly, imprecise way to pick a specific pixel — text inputs
+ * are the only way to set it. (Palette's own pixel SAMPLING, below, is
+ * a dedicated separate zoomed canvas specifically to avoid that same
+ * problem — see its own comment.)
  */
 async function openObjectTypeEditModal(
   id: string | null,
@@ -916,12 +919,81 @@ async function openObjectTypeEditModal(
   // anchor the admin may be deliberately tuning, so a width/height edit
   // there must never silently override it.
   let anchorTouched = existing !== null;
+  // Deep-enough clones (own working copies, same spirit draftType.below's
+  // own clone above already has) so edits here never mutate `existing`
+  // directly until Save.
+  const lights: LightDef[] = (draftType.lights ?? []).map((l) => ({ ...l }));
+  const palettes: PaletteDef[] = (draftType.palettes ?? []).map((p) => ({ ...p, colors: [...p.colors] }));
 
-  const modal = buildModal(id ? `Edit Object: ${draftType.name}` : "Add Object", {});
+  function numberField(value: number, width: string, onChange: (v: number) => void): HTMLInputElement {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.style.width = width;
+    input.value = String(value);
+    input.onchange = () => {
+      onChange(Number(input.value) || 0);
+      rebuildSprite();
+    };
+    return input;
+  }
+
+  const modal = buildModal(id ? `Edit Object: ${draftType.name}` : "Add Object", { size: "large", resizable: true });
+  modal.body.classList.add("admin-modal-tabbed-body");
+
+  // Pinned area: never scrolls, stays visible no matter which tab is
+  // open (see .admin-modal-tabbed-body's own CSS comment).
+  const previewArea = document.createElement("div");
+  previewArea.className = "admin-modal-pinned-area";
+  modal.body.appendChild(previewArea);
+
+  const previewContainer = document.createElement("div");
+  previewContainer.id = "admin-preview-canvas";
+  previewArea.appendChild(previewContainer);
+
+  // Palette has no on/off — it's always in effect (see PaletteDef's own
+  // comment), so there's nothing to toggle for it. Light does have a
+  // real on/off in the real game, so the preview needs a way to show
+  // "what does this look like lit" — this checkbox simulates lightOn.
+  const lightPreviewLabel = document.createElement("label");
+  lightPreviewLabel.className = "admin-tile-mode-toggle";
+  const lightPreviewCheckbox = document.createElement("input");
+  lightPreviewCheckbox.type = "checkbox";
+  lightPreviewLabel.append(lightPreviewCheckbox, document.createTextNode(" Preview lights on"));
+  lightPreviewCheckbox.onchange = () => rebuildSprite();
+  previewArea.appendChild(lightPreviewLabel);
+
+  const previewHint = document.createElement("div");
+  previewHint.className = "admin-hint";
+  previewHint.textContent = "Preview reflects unsaved changes on every tab — nothing is written until you press Save.";
+  previewArea.appendChild(previewHint);
+
+  // Scrollable area: the tab bar + whichever tab's content is active.
+  const tabArea = document.createElement("div");
+  tabArea.className = "admin-modal-tab-area";
+  modal.body.appendChild(tabArea);
+
+  const { bar: objectTabBar, pages: objectTabPages } = buildTabStrip(
+    [
+      { id: "info" as const, label: "Info" },
+      { id: "appearance" as const, label: "Appearance" },
+      { id: "palette" as const, label: "Palette" },
+      { id: "light" as const, label: "Light" },
+    ],
+    "info",
+    "admin-tab-page",
+  );
+  objectTabBar.className = "admin-tab-bar";
+  tabArea.appendChild(objectTabBar);
+  tabArea.appendChild(objectTabPages.info);
+  tabArea.appendChild(objectTabPages.appearance);
+  tabArea.appendChild(objectTabPages.palette);
+  tabArea.appendChild(objectTabPages.light);
+
+  // --- Info tab ---
 
   const form = document.createElement("div");
   form.className = "admin-form";
-  modal.body.appendChild(form);
+  objectTabPages.info.appendChild(form);
 
   const nameInput = document.createElement("input");
   nameInput.placeholder = "Name";
@@ -956,7 +1028,7 @@ async function openObjectTypeEditModal(
   heightInput.disabled = true;
   form.append(document.createTextNode("W:"), widthInput, document.createTextNode("H:"), heightInput);
 
-  modal.body.appendChild(form);
+  // --- Appearance tab ---
 
   // Below/above are still edited inline (buildLayerSection); the
   // interaction sprite is now a reference to a named row managed on the
@@ -964,7 +1036,7 @@ async function openObjectTypeEditModal(
   // showing each one's spriteKey, not the raw id, per CLAUDE.md's "never
   // show a raw id to the admin" convention.
   const belowSection = buildLayerSection("Below (base sprite)", draftType.below?.[0], assetPaths, () => deriveSizeFromBelowTexture());
-  modal.body.appendChild(belowSection.element);
+  objectTabPages.appearance.appendChild(belowSection.element);
 
   const spriteWrap = document.createElement("div");
   const spriteHeading = document.createElement("h3");
@@ -1010,7 +1082,7 @@ async function openObjectTypeEditModal(
   spriteOffsetRow.append(document.createTextNode("Offset X:"), spriteOffsetXInput, document.createTextNode("Offset Y:"), spriteOffsetYInput);
   spriteWrap.appendChild(spriteOffsetRow);
 
-  modal.body.appendChild(spriteWrap);
+  objectTabPages.appearance.appendChild(spriteWrap);
   spriteSelect.onchange = () => rebuildSprite();
   spriteOffsetXInput.onchange = () => rebuildSprite();
   spriteOffsetYInput.onchange = () => rebuildSprite();
@@ -1019,39 +1091,59 @@ async function openObjectTypeEditModal(
   }
 
   const aboveSection = buildLayerSection("Above (rendered on top)", draftType.above?.[0], assetPaths, () => rebuildSprite());
-  modal.body.appendChild(aboveSection.element);
+  objectTabPages.appearance.appendChild(aboveSection.element);
 
-  // --- Lighting ---
+  const anchorHint = document.createElement("div");
+  anchorHint.className = "admin-hint";
+  anchorHint.textContent =
+    "Set the anchor point below — the sprite shifts so that point lands on the room corner, same as it will when placed via the room editor's tile mode. Unset defaults to the sprite's own top-left (today's behavior).";
+  objectTabPages.appearance.appendChild(anchorHint);
+
+  const anchorTileModeLabel = document.createElement("label");
+  anchorTileModeLabel.className = "admin-tile-mode-toggle";
+  const anchorTileModeCheckbox = document.createElement("input");
+  anchorTileModeCheckbox.type = "checkbox";
+  anchorTileModeLabel.append(anchorTileModeCheckbox, document.createTextNode(" Tile mode (snap the anchor to the diamond grid, enter as tile coordinates)"));
+  objectTabPages.appearance.appendChild(anchorTileModeLabel);
+
+  const anchorRow = document.createElement("div");
+  anchorRow.className = "admin-form";
+  const anchorXLabel = document.createTextNode("Anchor X:");
+  const anchorXInput = document.createElement("input");
+  anchorXInput.type = "number";
+  anchorXInput.style.width = "60px";
+  const anchorYLabel = document.createTextNode("Anchor Y:");
+  const anchorYInput = document.createElement("input");
+  anchorYInput.type = "number";
+  anchorYInput.style.width = "60px";
+  anchorRow.append(anchorXLabel, anchorXInput, anchorYLabel, anchorYInput);
+  objectTabPages.appearance.appendChild(anchorRow);
+
+  // --- Palette tab ---
   //
   // First pixel-picker UI in this codebase — a dedicated, plainly-zoomed
   // <canvas> rather than clicking the live Pixi preview, which the anchor
   // feature already tried and rejected for being "fiddly and imprecise"
-  // (see buildLayerSection's own doc comment) at the preview's small,
-  // scaled-down size. Deliberately NOT wired to live-update as the admin
+  // at the preview's small, scaled-down size (see this function's own
+  // doc comment). Deliberately NOT wired to live-update as the admin
   // types the tolerance/color fields — only "Sample pixel" clicks and
   // the below texture itself (on change) touch it, so repainting it
   // doesn't fight normal typing.
-  const lightingSection = document.createElement("div");
-  const lightingHeading = document.createElement("h3");
-  lightingHeading.textContent = "Lighting";
-  lightingSection.appendChild(lightingHeading);
-
-  const lightingHint = document.createElement("div");
-  lightingHint.className = "admin-hint";
-  lightingHint.textContent =
-    'Each light group optionally recolors matching sprite pixels when on, and always casts a soft glow. Leave "Recolor sprite pixels" off for a light whose source isn\'t actually visible (e.g. the back of a laptop screen) — it still casts a glow.';
-  lightingSection.appendChild(lightingHint);
-
-  const lightGroups: LightGroupDef[] = (draftType.lightGroups ?? []).map((g) => ({ ...g, pixelMatch: g.pixelMatch ? { ...g.pixelMatch } : undefined }));
+  const paletteHint = document.createElement("div");
+  paletteHint.className = "admin-hint";
+  paletteHint.textContent =
+    "Each palette recolors matching sprite pixels, permanently — there's no on/off for this (that's the separate Light tab). One color is a plain swap; two or more with a cycle interval animate through them automatically.";
+  objectTabPages.palette.appendChild(paletteHint);
 
   const PIXEL_SAMPLE_ZOOM = 8;
   const pixelSampleCanvas = document.createElement("canvas");
   pixelSampleCanvas.className = "admin-pixel-sample-canvas";
   const pixelSampleHint = document.createElement("div");
   pixelSampleHint.className = "admin-hint";
-  pixelSampleHint.textContent = 'Click "Sample pixel…" on a light group below, then click a pixel here.';
+  const PIXEL_SAMPLE_IDLE_HINT = 'Click "Sample pixel…" on a palette below, then click a pixel here.';
+  pixelSampleHint.textContent = PIXEL_SAMPLE_IDLE_HINT;
 
-  let armedGroup: { setAnchorColor(color: number): void } | null = null;
+  let armedPalette: { setAnchorColor(color: number): void } | null = null;
 
   async function refreshPixelSampleCanvas() {
     const below = belowSection.getLayer();
@@ -1074,51 +1166,48 @@ async function openObjectTypeEditModal(
   }
 
   pixelSampleCanvas.onclick = (e) => {
-    if (!armedGroup) return;
+    if (!armedPalette) return;
     const rect = pixelSampleCanvas.getBoundingClientRect();
     const px = Math.floor((e.clientX - rect.left) / PIXEL_SAMPLE_ZOOM) * PIXEL_SAMPLE_ZOOM;
     const py = Math.floor((e.clientY - rect.top) / PIXEL_SAMPLE_ZOOM) * PIXEL_SAMPLE_ZOOM;
     const ctx = pixelSampleCanvas.getContext("2d")!;
     const [r, g, b] = ctx.getImageData(px, py, 1, 1).data;
-    armedGroup.setAnchorColor((r << 16) | (g << 8) | b);
-    armedGroup = null;
-    pixelSampleHint.textContent = 'Click "Sample pixel…" on a light group below, then click a pixel here.';
+    armedPalette.setAnchorColor((r << 16) | (g << 8) | b);
+    armedPalette = null;
+    pixelSampleHint.textContent = PIXEL_SAMPLE_IDLE_HINT;
   };
 
-  function buildLightGroupRow(group: LightGroupDef, onRemove: () => void): HTMLElement {
+  function buildPaletteRow(def: PaletteDef, onRemove: () => void): HTMLElement {
     const row = document.createElement("div");
     row.className = "admin-form";
 
     const nameInput = document.createElement("input");
-    nameInput.placeholder = "Name (e.g. Lamp bulb)";
-    nameInput.value = group.name;
+    nameInput.placeholder = "Name (e.g. Shirt color)";
+    nameInput.value = def.name;
     nameInput.onchange = () => {
-      group.name = nameInput.value;
+      def.name = nameInput.value;
       rebuildSprite();
     };
 
     const colorSwatch = document.createElement("span");
     colorSwatch.className = "admin-swatch";
-
-    function refreshSwatch() {
-      colorSwatch.style.background = group.pixelMatch ? `#${group.pixelMatch.anchorColor.toString(16).padStart(6, "0")}` : "transparent";
-      colorSwatch.style.visibility = group.pixelMatch ? "visible" : "hidden";
+    function refreshAnchorSwatch() {
+      colorSwatch.style.background = `#${def.anchorColor.toString(16).padStart(6, "0")}`;
     }
-    refreshSwatch();
+    refreshAnchorSwatch();
 
     const sampleBtn = document.createElement("button");
     sampleBtn.type = "button";
     sampleBtn.textContent = "Sample pixel…";
-    sampleBtn.disabled = !group.pixelMatch;
     sampleBtn.onclick = () => {
-      armedGroup = {
+      armedPalette = {
         setAnchorColor(color) {
-          group.pixelMatch = { anchorColor: color, tolerancePercent: group.pixelMatch?.tolerancePercent ?? 3 };
-          refreshSwatch();
+          def.anchorColor = color;
+          refreshAnchorSwatch();
           rebuildSprite();
         },
       };
-      pixelSampleHint.textContent = `Click a pixel below to sample a color for "${group.name || "this light"}".`;
+      pixelSampleHint.textContent = `Click a pixel below to sample a color for "${def.name || "this palette"}".`;
     };
 
     const toleranceInput = document.createElement("input");
@@ -1126,151 +1215,201 @@ async function openObjectTypeEditModal(
     toleranceInput.min = "0";
     toleranceInput.max = "100";
     toleranceInput.style.width = "50px";
-    toleranceInput.value = String(group.pixelMatch?.tolerancePercent ?? 3);
+    toleranceInput.value = String(def.tolerancePercent);
     toleranceInput.onchange = () => {
-      if (group.pixelMatch) group.pixelMatch.tolerancePercent = Number(toleranceInput.value) || 0;
+      def.tolerancePercent = Number(toleranceInput.value) || 0;
       rebuildSprite();
     };
 
-    const recolorCheckbox = document.createElement("input");
-    recolorCheckbox.type = "checkbox";
-    recolorCheckbox.checked = group.pixelMatch !== undefined;
-    const recolorLabel = document.createElement("label");
-    recolorLabel.append(recolorCheckbox, document.createTextNode(" Recolor sprite pixels"));
-    recolorCheckbox.onchange = () => {
-      group.pixelMatch = recolorCheckbox.checked ? (group.pixelMatch ?? { anchorColor: 0xffffff, tolerancePercent: 3 }) : undefined;
-      sampleBtn.disabled = !recolorCheckbox.checked;
-      toleranceInput.disabled = !recolorCheckbox.checked;
-      refreshSwatch();
-      rebuildSprite();
-    };
-    toleranceInput.disabled = !recolorCheckbox.checked;
-
-    const onColorInput = document.createElement("input");
-    onColorInput.type = "color";
-    onColorInput.value = `#${group.onColor.toString(16).padStart(6, "0")}`;
-    onColorInput.onchange = () => {
-      group.onColor = parseInt(onColorInput.value.slice(1), 16);
-      rebuildSprite();
-    };
-
-    function numberField(value: number, width: string, onChange: (v: number) => void): HTMLInputElement {
-      const input = document.createElement("input");
-      input.type = "number";
-      input.style.width = width;
-      input.value = String(value);
-      input.onchange = () => {
-        onChange(Number(input.value) || 0);
-        rebuildSprite();
-      };
-      return input;
+    const colorsWrap = document.createElement("span");
+    function renderColors() {
+      colorsWrap.textContent = "";
+      def.colors.forEach((color, i) => {
+        const colorInput = document.createElement("input");
+        colorInput.type = "color";
+        colorInput.value = `#${color.toString(16).padStart(6, "0")}`;
+        colorInput.onchange = () => {
+          def.colors[i] = parseInt(colorInput.value.slice(1), 16);
+          rebuildSprite();
+        };
+        const removeColorBtn = document.createElement("button");
+        removeColorBtn.type = "button";
+        removeColorBtn.textContent = "×";
+        removeColorBtn.title = "Remove this color";
+        removeColorBtn.disabled = def.colors.length <= 1; // always at least one target color
+        removeColorBtn.onclick = () => {
+          def.colors.splice(i, 1);
+          renderColors();
+          rebuildSprite();
+        };
+        colorsWrap.append(colorInput, removeColorBtn);
+      });
     }
-    const glowOffsetXInput = numberField(group.glowOffsetX, "50px", (v) => (group.glowOffsetX = v));
-    const glowOffsetYInput = numberField(group.glowOffsetY, "50px", (v) => (group.glowOffsetY = v));
-    const glowRadiusInput = numberField(group.glowRadius, "50px", (v) => (group.glowRadius = v));
-    const glowAlphaInput = numberField(group.glowAlpha, "50px", (v) => (group.glowAlpha = v));
-    glowAlphaInput.step = "0.05";
-    glowAlphaInput.min = "0";
-    glowAlphaInput.max = "1";
+    renderColors();
+    const addColorBtn = document.createElement("button");
+    addColorBtn.type = "button";
+    addColorBtn.textContent = "+ color";
+    addColorBtn.onclick = () => {
+      def.colors.push(0xffffff);
+      renderColors();
+      rebuildSprite();
+    };
+
+    const intervalInput = document.createElement("input");
+    intervalInput.type = "number";
+    intervalInput.min = "0";
+    intervalInput.style.width = "70px";
+    intervalInput.placeholder = "ms (2+ colors)";
+    intervalInput.value = def.cycleIntervalMs ? String(def.cycleIntervalMs) : "";
+    intervalInput.onchange = () => {
+      def.cycleIntervalMs = intervalInput.value ? Number(intervalInput.value) : undefined;
+      rebuildSprite();
+    };
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
-    removeBtn.textContent = "×";
+    removeBtn.textContent = "Remove palette";
     removeBtn.onclick = onRemove;
 
     row.append(
       document.createTextNode("Name:"),
       nameInput,
-      recolorLabel,
       sampleBtn,
       colorSwatch,
       document.createTextNode("Tolerance %:"),
       toleranceInput,
-      document.createTextNode("On color:"),
-      onColorInput,
-      document.createTextNode("Glow X:"),
-      glowOffsetXInput,
-      document.createTextNode("Y:"),
-      glowOffsetYInput,
-      document.createTextNode("Radius:"),
-      glowRadiusInput,
-      document.createTextNode("Alpha:"),
-      glowAlphaInput,
+      document.createTextNode("Colors:"),
+      colorsWrap,
+      addColorBtn,
+      document.createTextNode("Cycle ms:"),
+      intervalInput,
       removeBtn,
     );
     return row;
   }
 
-  const lightGroupList = document.createElement("div");
-  lightGroupList.className = "admin-action-list";
-  lightingSection.appendChild(lightGroupList);
+  const paletteList = document.createElement("div");
+  paletteList.className = "admin-action-list";
+  objectTabPages.palette.appendChild(paletteList);
 
-  function renderLightGroupList() {
-    lightGroupList.textContent = "";
-    lightGroups.forEach((group, i) => {
-      lightGroupList.appendChild(
-        buildLightGroupRow(group, () => {
-          lightGroups.splice(i, 1);
-          renderLightGroupList();
+  function renderPaletteList() {
+    paletteList.textContent = "";
+    palettes.forEach((def, i) => {
+      paletteList.appendChild(
+        buildPaletteRow(def, () => {
+          palettes.splice(i, 1);
+          renderPaletteList();
           rebuildSprite();
         }),
       );
     });
   }
-  renderLightGroupList();
+  renderPaletteList();
 
-  const addLightGroupBtn = document.createElement("button");
-  addLightGroupBtn.type = "button";
-  addLightGroupBtn.textContent = "Add light group";
-  addLightGroupBtn.onclick = () => {
-    lightGroups.push({ id: generateId(), name: "", onColor: 0xffff99, glowOffsetX: 0, glowOffsetY: 0, glowRadius: 24, glowAlpha: 0.5 });
-    renderLightGroupList();
+  const addPaletteBtn = document.createElement("button");
+  addPaletteBtn.type = "button";
+  addPaletteBtn.textContent = "Add palette";
+  addPaletteBtn.onclick = () => {
+    palettes.push({ id: generateId(), name: "", anchorColor: 0xffffff, tolerancePercent: 3, colors: [0xffffff] });
+    renderPaletteList();
     rebuildSprite();
   };
-  lightingSection.appendChild(addLightGroupBtn);
+  objectTabPages.palette.appendChild(addPaletteBtn);
 
-  lightingSection.appendChild(pixelSampleHint);
-  lightingSection.appendChild(pixelSampleCanvas);
+  objectTabPages.palette.appendChild(pixelSampleHint);
+  objectTabPages.palette.appendChild(pixelSampleCanvas);
 
-  const lightPreviewLabel = document.createElement("label");
-  lightPreviewLabel.className = "admin-tile-mode-toggle";
-  const lightPreviewCheckbox = document.createElement("input");
-  lightPreviewCheckbox.type = "checkbox";
-  lightPreviewLabel.append(lightPreviewCheckbox, document.createTextNode(" Preview lit (on) in the preview below"));
-  lightPreviewCheckbox.onchange = () => rebuildSprite();
-  lightingSection.appendChild(lightPreviewLabel);
+  // --- Light tab ---
+  //
+  // Deliberately no pixel sampling here at all — a light is a point that
+  // radiates a glow, nothing to do with sprite pixels (that's the
+  // Palette tab's job, entirely separate — see LightDef's own comment).
 
-  modal.body.appendChild(lightingSection);
+  const lightHint = document.createElement("div");
+  lightHint.className = "admin-hint";
+  lightHint.textContent = "Each light is a point (relative to the sprite's own top-left) that casts a soft glow when on. Toggled together, per-placement, in the room editor's Objects tab.";
+  objectTabPages.light.appendChild(lightHint);
 
-  const anchorHint = document.createElement("div");
-  anchorHint.className = "admin-hint";
-  anchorHint.textContent =
-    "Set the anchor point below — the sprite shifts so that point lands on the room corner, same as it will when placed via the room editor's tile mode. Unset defaults to the sprite's own top-left (today's behavior).";
-  modal.body.appendChild(anchorHint);
+  function buildLightRow(light: LightDef, onRemove: () => void): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "admin-form";
 
-  const anchorTileModeLabel = document.createElement("label");
-  anchorTileModeLabel.className = "admin-tile-mode-toggle";
-  const anchorTileModeCheckbox = document.createElement("input");
-  anchorTileModeCheckbox.type = "checkbox";
-  anchorTileModeLabel.append(anchorTileModeCheckbox, document.createTextNode(" Tile mode (snap the anchor to the diamond grid, enter as tile coordinates)"));
-  modal.body.appendChild(anchorTileModeLabel);
+    const nameInput = document.createElement("input");
+    nameInput.placeholder = "Name (e.g. Lamp bulb)";
+    nameInput.value = light.name;
+    nameInput.onchange = () => {
+      light.name = nameInput.value;
+      rebuildSprite();
+    };
 
-  const anchorRow = document.createElement("div");
-  anchorRow.className = "admin-form";
-  const anchorXLabel = document.createTextNode("Anchor X:");
-  const anchorXInput = document.createElement("input");
-  anchorXInput.type = "number";
-  anchorXInput.style.width = "60px";
-  const anchorYLabel = document.createTextNode("Anchor Y:");
-  const anchorYInput = document.createElement("input");
-  anchorYInput.type = "number";
-  anchorYInput.style.width = "60px";
-  anchorRow.append(anchorXLabel, anchorXInput, anchorYLabel, anchorYInput);
-  modal.body.appendChild(anchorRow);
+    const colorInput = document.createElement("input");
+    colorInput.type = "color";
+    colorInput.value = `#${light.color.toString(16).padStart(6, "0")}`;
+    colorInput.onchange = () => {
+      light.color = parseInt(colorInput.value.slice(1), 16);
+      rebuildSprite();
+    };
 
-  const previewContainer = document.createElement("div");
-  previewContainer.id = "admin-preview-canvas";
-  modal.body.appendChild(previewContainer);
+    const xInput = numberField(light.offsetX, "50px", (v) => (light.offsetX = v));
+    const yInput = numberField(light.offsetY, "50px", (v) => (light.offsetY = v));
+    const radiusInput = numberField(light.radius, "50px", (v) => (light.radius = v));
+    const alphaInput = numberField(light.alpha, "50px", (v) => (light.alpha = v));
+    alphaInput.step = "0.05";
+    alphaInput.min = "0";
+    alphaInput.max = "1";
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.textContent = "Remove light";
+    removeBtn.onclick = onRemove;
+
+    row.append(
+      document.createTextNode("Name:"),
+      nameInput,
+      document.createTextNode("Color:"),
+      colorInput,
+      document.createTextNode("X:"),
+      xInput,
+      document.createTextNode("Y:"),
+      yInput,
+      document.createTextNode("Radius:"),
+      radiusInput,
+      document.createTextNode("Alpha:"),
+      alphaInput,
+      removeBtn,
+    );
+    return row;
+  }
+
+  const lightList = document.createElement("div");
+  lightList.className = "admin-action-list";
+  objectTabPages.light.appendChild(lightList);
+
+  function renderLightList() {
+    lightList.textContent = "";
+    lights.forEach((light, i) => {
+      lightList.appendChild(
+        buildLightRow(light, () => {
+          lights.splice(i, 1);
+          renderLightList();
+          rebuildSprite();
+        }),
+      );
+    });
+  }
+  renderLightList();
+
+  const addLightBtn = document.createElement("button");
+  addLightBtn.type = "button";
+  addLightBtn.textContent = "Add light";
+  addLightBtn.onclick = () => {
+    lights.push({ id: generateId(), name: "", offsetX: 0, offsetY: 0, radius: 24, color: 0xffff99, alpha: 0.5 });
+    renderLightList();
+    rebuildSprite();
+  };
+  objectTabPages.light.appendChild(addLightBtn);
+
+  // --- Footer (outside the tabs — Save/Cancel apply regardless of tab) ---
 
   const footer = document.createElement("div");
   footer.className = "admin-form";
@@ -1396,27 +1535,30 @@ async function openObjectTypeEditModal(
       if (belowNode instanceof Sprite) belowSprite = belowNode;
     }
 
-    // Mirrors renderer.ts's own buildObject: a glow per light group always
-    // (toggled by the preview checkbox, same as the real game toggles it
-    // by lightOn), and — only while previewing "lit" — a combined
-    // recolored texture swapped onto the below sprite (same
-    // buildLitTexture() the real renderer uses, so this preview shows
-    // exactly what players will actually see).
-    for (const group of lightGroups) {
-      const glow = new Graphics().circle(group.glowOffsetX, group.glowOffsetY, group.glowRadius).fill({ color: group.onColor, alpha: group.glowAlpha });
+    // Palette: always applied, no on/off (mirrors renderer.ts's own
+    // buildObject — see PaletteDef's own comment). Cycling palettes
+    // (2+ colors + a cycle interval) preview their FIRST color only —
+    // showing the actual animation live here would need its own ticker
+    // duplicating renderer.ts's tick(), and the real in-game render
+    // already does that correctly; this preview is for tuning the
+    // pixel-match/colors, not for watching the cycle play out.
+    if (belowSprite && below?.texture && palettes.length > 0) {
+      const groups = palettes.map((p) => ({ match: { anchorColor: p.anchorColor, tolerancePercent: p.tolerancePercent }, color: p.colors[0] }));
+      try {
+        belowSprite.texture = await buildPaletteTexture(assetUrl(below.texture), groups);
+      } catch (err) {
+        console.error("[admin] buildPaletteTexture preview failed", err);
+      }
+    }
+
+    // Light: pure glow, toggled only by the preview checkbox (simulating
+    // lightOn) — no sprite/texture involvement at all, see LightDef's
+    // own comment.
+    for (const light of lights) {
+      const glow = new Graphics().circle(light.offsetX, light.offsetY, light.radius).fill({ color: light.color, alpha: light.alpha });
       glow.filters = [new BlurFilter({ strength: 16 })];
       glow.visible = lightPreviewCheckbox.checked;
       spriteLayer.addChild(glow);
-    }
-    if (lightPreviewCheckbox.checked && belowSprite && below?.texture) {
-      const recolorGroups = lightGroups.filter((g) => g.pixelMatch).map((g) => ({ pixelMatch: g.pixelMatch!, onColor: g.onColor }));
-      if (recolorGroups.length > 0) {
-        try {
-          belowSprite.texture = await buildLitTexture(assetUrl(below.texture), recolorGroups);
-        } catch (err) {
-          console.error("[admin] buildLitTexture preview failed", err);
-        }
-      }
     }
 
     // The interaction sprite specifically does NOT go through buildLayer:
@@ -1528,7 +1670,8 @@ async function openObjectTypeEditModal(
       anchorX,
       anchorY,
       tags: tags.length ? tags : undefined,
-      lightGroups: lightGroups.length ? lightGroups : undefined,
+      lights: lights.length ? lights : undefined,
+      palettes: palettes.length ? palettes : undefined,
     };
     try {
       if (id) {
@@ -1919,16 +2062,16 @@ async function openRoomEditModal(
   }
 
   const modal = buildModal(`Edit Room: ${room.name}`, { size: "large", resizable: true });
-  modal.body.classList.add("admin-room-editor-body");
+  modal.body.classList.add("admin-modal-tabbed-body");
 
   // Pinned area: never scrolls, stays visible no matter which tab is open
-  // or how far its content is scrolled (see .admin-room-editor-body's own
-  // CSS comment) — this is what used to be two separate per-modal preview
-  // builders (this room alone, or this room plus synthesized neighbors in
-  // the old Connections modal), now one shared preview the Info/Objects/
-  // Connections tabs all render into.
+  // or how far its content is scrolled (see .admin-modal-tabbed-body's
+  // own CSS comment) — this is what used to be two separate per-modal
+  // preview builders (this room alone, or this room plus synthesized
+  // neighbors in the old Connections modal), now one shared preview the
+  // Info/Objects/Connections tabs all render into.
   const previewArea = document.createElement("div");
-  previewArea.className = "admin-room-editor-preview";
+  previewArea.className = "admin-modal-pinned-area";
   modal.body.appendChild(previewArea);
 
   const previewContainer = document.createElement("div");
@@ -1969,7 +2112,7 @@ async function openRoomEditModal(
 
   // Scrollable area: the tab bar + whichever tab's content is active.
   const tabArea = document.createElement("div");
-  tabArea.className = "admin-room-editor-tabs";
+  tabArea.className = "admin-modal-tab-area";
   modal.body.appendChild(tabArea);
 
   const { bar: roomTabBar, pages: roomTabPages } = buildTabStrip(

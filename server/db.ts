@@ -143,7 +143,8 @@ export function migrate(): void {
       sprite_offset_x REAL,
       sprite_offset_y REAL,
       tags_json TEXT,
-      light_groups_json TEXT
+      lights_json TEXT,
+      palettes_json TEXT
     );
 
     -- Mirrors src/scene/rooms.ts's RoomSpec shape (not flattened absolute
@@ -262,10 +263,15 @@ export function migrate(): void {
 
   // Same gotcha, same fix — the lighting feature's columns added after
   // both tables already existed on the live install. NULL/0 (no lights,
-  // no schedule, off) is the correct default for every existing object
-  // type/placement — nothing already placed starts lit.
+  // no palettes, no schedule, off) is the correct default for every
+  // existing object type/placement — nothing already placed starts lit.
   try {
-    db.exec("ALTER TABLE object_types ADD COLUMN light_groups_json TEXT");
+    db.exec("ALTER TABLE object_types ADD COLUMN lights_json TEXT");
+  } catch {
+    // already applied
+  }
+  try {
+    db.exec("ALTER TABLE object_types ADD COLUMN palettes_json TEXT");
   } catch {
     // already applied
   }

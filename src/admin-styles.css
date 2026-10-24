@@ -356,24 +356,28 @@ body {
   max-width: 100%;
 }
 
-/* The room editor modal's body splits into a pinned preview (never
-   scrolls) and a tab area that scrolls on its own — overriding
-   .modal-body's own single-scrolling-region layout so the preview stays
-   visible regardless of which tab is open or how far its content is
-   scrolled. .modal-body's own overflow-y:auto stays as an inert
-   fallback; in practice flexbox sizes these two children to fit, so
-   admin-room-editor-tabs is the one that actually scrolls. */
-.admin-room-editor-body {
+/* The standard shape for any "big editor" modal with a lot of fields
+   (the room editor, the object type editor) — body splits into a
+   pinned area (never scrolls, typically a live preview) and a tab area
+   that scrolls on its own, overriding .modal-body's own single-
+   scrolling-region layout so the pinned area stays visible regardless
+   of which tab is open or how far its content is scrolled.
+   .modal-body's own overflow-y:auto stays as an inert fallback; in
+   practice flexbox sizes these two children to fit, so
+   .admin-modal-tab-area is the one that actually scrolls. Reuse this
+   trio for any new editor modal with enough fields to want tabs —
+   that's the standard to strive for here, not a one-off for rooms. */
+.admin-modal-tabbed-body {
   display: flex;
   flex-direction: column;
   height: 100%;
 }
 
-.admin-room-editor-preview {
+.admin-modal-pinned-area {
   flex-shrink: 0;
 }
 
-.admin-room-editor-tabs {
+.admin-modal-tab-area {
   flex: 1;
   min-height: 0;
   overflow-y: auto;

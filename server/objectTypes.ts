@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { LightGroupDef, ObjectTypeDef, SpriteLayer, STATIC_OBJECT_TYPES } from "../src/scene/rooms";
+import { LightDef, ObjectTypeDef, PaletteDef, SpriteLayer, STATIC_OBJECT_TYPES } from "../src/scene/rooms";
 import { createSprite } from "./sprites";
 
 interface TypeRow {
@@ -15,7 +15,8 @@ interface TypeRow {
   sprite_offset_x: number | null;
   sprite_offset_y: number | null;
   tags_json: string | null;
-  light_groups_json: string | null;
+  lights_json: string | null;
+  palettes_json: string | null;
   linked_sprite_key: string | null;
   linked_frame_count: number | null;
   linked_frame_duration_ms: number | null;
@@ -30,7 +31,7 @@ interface TypeRow {
 // can still position it differently.
 const SELECT_TYPES_SQL = `
   SELECT ot.id, ot.name, ot.below_json, ot.above_json, ot.width, ot.height, ot.anchor_x, ot.anchor_y,
-         ot.sprite_id, ot.sprite_offset_x, ot.sprite_offset_y, ot.tags_json, ot.light_groups_json,
+         ot.sprite_id, ot.sprite_offset_x, ot.sprite_offset_y, ot.tags_json, ot.lights_json, ot.palettes_json,
          s.sprite_key AS linked_sprite_key,
          s.frame_count AS linked_frame_count, s.frame_duration_ms AS linked_frame_duration_ms
   FROM object_types ot
@@ -61,7 +62,8 @@ function rowToType(row: TypeRow): ObjectTypeDef {
     anchorX: row.anchor_x ?? undefined,
     anchorY: row.anchor_y ?? undefined,
     tags: row.tags_json ? (JSON.parse(row.tags_json) as string[]) : undefined,
-    lightGroups: row.light_groups_json ? (JSON.parse(row.light_groups_json) as LightGroupDef[]) : undefined,
+    lights: row.lights_json ? (JSON.parse(row.lights_json) as LightDef[]) : undefined,
+    palettes: row.palettes_json ? (JSON.parse(row.palettes_json) as PaletteDef[]) : undefined,
   };
 }
 
@@ -78,8 +80,8 @@ export function seedObjectTypesIfEmpty(): void {
   const { n } = db.prepare("SELECT COUNT(*) as n FROM object_types").get() as { n: number };
   if (n > 0) return;
   const insert = db.prepare(`
-    INSERT INTO object_types (id, name, below_json, above_json, width, height, anchor_x, anchor_y, sprite_id, sprite_offset_x, sprite_offset_y, tags_json, light_groups_json)
-    VALUES (@id, @name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @spriteId, @spriteOffsetX, @spriteOffsetY, @tagsJson, @lightGroupsJson)
+    INSERT INTO object_types (id, name, below_json, above_json, width, height, anchor_x, anchor_y, sprite_id, sprite_offset_x, sprite_offset_y, tags_json, lights_json, palettes_json)
+    VALUES (@id, @name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @spriteId, @spriteOffsetX, @spriteOffsetY, @tagsJson, @lightsJson, @palettesJson)
   `);
   const tx = db.transaction(() => {
     for (const type of Object.values(STATIC_OBJECT_TYPES) as ObjectTypeDef[]) {
@@ -97,7 +99,8 @@ export function seedObjectTypesIfEmpty(): void {
         spriteOffsetX: type.sprite?.[0]?.offsetX ?? null,
         spriteOffsetY: type.sprite?.[0]?.offsetY ?? null,
         tagsJson: type.tags ? JSON.stringify(type.tags) : null,
-        lightGroupsJson: type.lightGroups ? JSON.stringify(type.lightGroups) : null,
+        lightsJson: type.lights ? JSON.stringify(type.lights) : null,
+        palettesJson: type.palettes ? JSON.stringify(type.palettes) : null,
       });
     }
   });
@@ -108,8 +111,8 @@ export function seedObjectTypesIfEmpty(): void {
 export function createObjectType(def: ObjectTypeDef): number {
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO object_types (name, below_json, above_json, width, height, anchor_x, anchor_y, sprite_id, sprite_offset_x, sprite_offset_y, tags_json, light_groups_json)
-     VALUES (@name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @spriteId, @spriteOffsetX, @spriteOffsetY, @tagsJson, @lightGroupsJson)`,
+      `INSERT INTO object_types (name, below_json, above_json, width, height, anchor_x, anchor_y, sprite_id, sprite_offset_x, sprite_offset_y, tags_json, lights_json, palettes_json)
+     VALUES (@name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @spriteId, @spriteOffsetX, @spriteOffsetY, @tagsJson, @lightsJson, @palettesJson)`,
     )
     .run({
       name: def.name,
@@ -123,7 +126,8 @@ export function createObjectType(def: ObjectTypeDef): number {
       spriteOffsetX: def.spriteOffsetX ?? null,
       spriteOffsetY: def.spriteOffsetY ?? null,
       tagsJson: def.tags ? JSON.stringify(def.tags) : null,
-      lightGroupsJson: def.lightGroups ? JSON.stringify(def.lightGroups) : null,
+      lightsJson: def.lights ? JSON.stringify(def.lights) : null,
+      palettesJson: def.palettes ? JSON.stringify(def.palettes) : null,
     });
   return Number(lastInsertRowid);
 }
@@ -134,7 +138,7 @@ export function updateObjectType(id: number, def: ObjectTypeDef): void {
      above_json = @aboveJson, width = @width, height = @height,
      anchor_x = @anchorX, anchor_y = @anchorY, sprite_id = @spriteId,
      sprite_offset_x = @spriteOffsetX, sprite_offset_y = @spriteOffsetY, tags_json = @tagsJson,
-     light_groups_json = @lightGroupsJson WHERE id = @id`,
+     lights_json = @lightsJson, palettes_json = @palettesJson WHERE id = @id`,
   ).run({
     id,
     name: def.name,
@@ -148,7 +152,8 @@ export function updateObjectType(id: number, def: ObjectTypeDef): void {
     spriteOffsetX: def.spriteOffsetX ?? null,
     spriteOffsetY: def.spriteOffsetY ?? null,
     tagsJson: def.tags ? JSON.stringify(def.tags) : null,
-    lightGroupsJson: def.lightGroups ? JSON.stringify(def.lightGroups) : null,
+    lightsJson: def.lights ? JSON.stringify(def.lights) : null,
+    palettesJson: def.palettes ? JSON.stringify(def.palettes) : null,
   });
 }
 
