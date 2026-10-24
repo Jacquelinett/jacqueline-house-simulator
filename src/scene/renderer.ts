@@ -995,12 +995,23 @@ export class SceneRenderer {
    * "no separate per-character art to otherwise break the tie with"
    * spirit this already had for pure visibility before sprite keys
    * existed, just also deciding texture now instead of only visibility.
+   *
+   * `activeCharacterCount` is the number of DISTINCT characters currently
+   * running something at all, system-wide — passed in separately rather
+   * than derived from `runningByLabel.size`, since collapsing by label
+   * already loses a character the moment two of them share one label
+   * (two pianos, say): `runningByLabel` would have one entry for that
+   * label, but two characters are genuinely active. Name tags only show
+   * once 2+ characters are active (nothing to disambiguate with just
+   * one) — sprite visibility itself is unaffected, still purely
+   * per-object attribution.
    */
-  protected updateActiveOverlays(runningByLabel: Map<string, OverlayAttribution>) {
+  protected updateActiveOverlays(runningByLabel: Map<string, OverlayAttribution>, activeCharacterCount: number) {
+    const showNameTags = activeCharacterCount > 1;
     for (const overlay of this.activeOverlays) {
       const attribution = overlay.labels.map((l) => runningByLabel.get(l)).find((a): a is OverlayAttribution => a !== undefined);
       overlay.sprite.visible = !!attribution;
-      overlay.nameTag.visible = !!attribution;
+      overlay.nameTag.visible = !!attribution && showNameTags;
       if (attribution) {
         this.resolveOverlayTexture(overlay, attribution.characterSpriteName);
         this.setOverlayNameTag(overlay, attribution.characterName);

@@ -62,7 +62,7 @@ export class HouseViewer extends SceneRenderer {
         characterSpriteName: entry.characterSpriteName,
       });
     }
-    this.updateActiveOverlays(byLabel);
+    this.updateActiveOverlays(byLabel, allStatuses.size);
   }
 
   /** Who (if anyone) is currently running `label`, per the last applyAllStatuses — no "mine wins" tie-break needed here, unlike House.ts's own version, since the viewer has no "mine" at all. */

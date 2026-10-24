@@ -251,7 +251,7 @@ export class House extends SceneRenderer {
       if (existing && existing.characterId === myId) continue; // mine already claimed this label — don't let anyone else overwrite it
       byLabel.set(entry.activityLabel, { characterId, characterName: entry.characterName, characterSpriteName: entry.characterSpriteName });
     }
-    this.updateActiveOverlays(byLabel);
+    this.updateActiveOverlays(byLabel, Object.keys(allStatuses).length);
   }
 
   /**
