@@ -114,7 +114,7 @@ export async function preloadRoomAssets(): Promise<void> {
       if (o.wallVariant) paths.add(o.wallVariant);
     }
     for (const obj of room.objects) {
-      const layers = [...(obj.below ?? []), ...(obj.overlay ?? []), ...(obj.above ?? [])];
+      const layers = [...(obj.below ?? []), ...(obj.sprite ?? []), ...(obj.above ?? [])];
       for (const layer of layers) {
         if (layer.texture) paths.add(layer.texture);
       }
@@ -919,7 +919,7 @@ export class SceneRenderer {
     // (e.g. a case-color overlay) could visually cover the tag.
     const nameTags: Container[] = [];
 
-    for (const layer of obj.overlay ?? []) {
+    for (const layer of obj.sprite ?? []) {
       // No texture loaded yet -> Pixi's own blank/empty texture, stays
       // invisible (see below) until the first updateActiveOverlays call
       // resolves someone's attribution — there's no synchronous "shared

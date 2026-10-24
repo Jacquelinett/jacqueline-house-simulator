@@ -107,12 +107,12 @@ export function migrate(): void {
       color INTEGER NOT NULL
     );
 
-    -- One row per named overlay (spriteKey + optional frame-animation
-    -- fields) — object_types.overlay_id references this by id, so
-    -- multiple types can share one overlay definition instead of each
-    -- embedding an identical inline blob (see server/spriteOverlays.ts,
-    -- admin-main.ts's Sprite Overlays tab). No texture column — a sprite-
-    -- keyed overlay's art is always "<characterSpriteName>_<spriteKey>.png",
+    -- One row per named sprite (spriteKey + optional frame-animation
+    -- fields) — object_types.sprite_id references this by id, so
+    -- multiple types can share one sprite definition instead of each
+    -- embedding an identical inline blob (see server/sprites.ts,
+    -- admin-main.ts's Sprites tab). No texture column — a sprite-
+    -- keyed entry's art is always "<characterSpriteName>_<spriteKey>.png",
     -- falling back to the same convention for DEFAULT_SPRITE_CHARACTER
     -- ("jacqueline") rather than a separately-authored fallback file (see
     -- characterSprites.ts). No frame_width/frame_height either — a
@@ -120,10 +120,10 @@ export function migrate(): void {
     -- slices of its own width, derived at load time from the resolved
     -- texture's natural size (renderer.ts's sliceFrames) rather than typed
     -- in separately. No offset_x/offset_y either — position is a per-
-    -- OBJECT-TYPE concern (object_types.overlay_offset_x/y below), not
+    -- OBJECT-TYPE concern (object_types.sprite_offset_x/y below), not
     -- part of this shared entity, since two types reusing the same
-    -- overlay can still want it positioned differently.
-    CREATE TABLE IF NOT EXISTS sprite_overlays (
+    -- sprite can still want it positioned differently.
+    CREATE TABLE IF NOT EXISTS sprites (
       id INTEGER PRIMARY KEY,
       sprite_key TEXT NOT NULL UNIQUE,
       frame_count INTEGER,
@@ -139,9 +139,9 @@ export function migrate(): void {
       height INTEGER NOT NULL,
       anchor_x REAL,
       anchor_y REAL,
-      overlay_id INTEGER,
-      overlay_offset_x REAL,
-      overlay_offset_y REAL
+      sprite_id INTEGER,
+      sprite_offset_x REAL,
+      sprite_offset_y REAL
     );
 
     -- Mirrors src/scene/rooms.ts's RoomSpec shape (not flattened absolute

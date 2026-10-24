@@ -70,8 +70,8 @@ interface ActivityDef {
   color: number;
 }
 
-/** Mirrors server/spriteOverlays.ts's SpriteOverlayDef — a named, reusable overlay (spriteKey + optional frame-animation fields) object types reference by id instead of embedding inline. */
-interface SpriteOverlayDef {
+/** Mirrors server/sprites.ts's SpriteDef — a named, reusable sprite (spriteKey + optional frame-animation fields) object types reference by id instead of embedding inline. */
+interface SpriteDef {
   id: number;
   spriteKey: string;
   layer: SpriteLayer;
@@ -260,12 +260,12 @@ function setupSyncButton(): void {
 
 // --- Tabs ---
 
-type TabId = "characters" | "activities" | "object-types" | "sprite-overlays" | "rooms";
+type TabId = "characters" | "activities" | "object-types" | "sprites" | "rooms";
 const TABS: { id: TabId; label: string }[] = [
   { id: "characters", label: "Characters" },
   { id: "activities", label: "Activities" },
   { id: "object-types", label: "Objects" },
-  { id: "sprite-overlays", label: "Sprites" },
+  { id: "sprites", label: "Sprites" },
   { id: "rooms", label: "Rooms" },
 ];
 
@@ -565,13 +565,13 @@ async function renderActivities(body: HTMLElement) {
   body.appendChild(addBtn);
 }
 
-// --- Sprite overlays ---
+// --- Sprites ---
 
 /**
- * Edits (or creates, when `id` is null) one named overlay — just spriteKey
+ * Edits (or creates, when `id` is null) one named sprite — just spriteKey
  * (required, doubles as this entity's display name everywhere) + optional
  * frameCount/frameDurationMs. No texture field at all: a sprite-keyed
- * overlay's art is always "<characterSpriteName>_<spriteKey>.png", falling
+ * entry's art is always "<characterSpriteName>_<spriteKey>.png", falling
  * back to the same convention for DEFAULT_SPRITE_CHARACTER (see
  * characterSprites.ts) — there's nothing for the admin to pick from a
  * list, just the key itself. No frameWidth/frameHeight either — a
@@ -580,11 +580,11 @@ async function renderActivities(body: HTMLElement) {
  * actually resolves (renderer.ts's sliceFrames). No offsetX/offsetY either
  * — unlike spriteKey/frame settings (which genuinely describe the art
  * itself), position is a per-OBJECT-TYPE concern now (see
- * openObjectTypeEditModal's own overlay section), the same way below/
+ * openObjectTypeEditModal's own sprite section), the same way below/
  * above's offsets already live per-type rather than on shared art — two
- * types reusing the same overlay can still want it positioned differently.
+ * types reusing the same sprite can still want it positioned differently.
  */
-function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDef | null, onSaved: () => void): void {
+function openSpriteEditModal(id: number | null, existing: SpriteDef | null, onSaved: () => void): void {
   const modal = buildModal(id ? `Edit Sprite: ${existing!.spriteKey}` : "Add Sprite", {});
 
   const form = document.createElement("div");
@@ -647,9 +647,9 @@ function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDe
     }
     try {
       if (id) {
-        await adminFetch(`/api/admin/sprite-overlays/${id}`, { method: "PATCH", body: JSON.stringify(layer) });
+        await adminFetch(`/api/admin/sprites/${id}`, { method: "PATCH", body: JSON.stringify(layer) });
       } else {
-        await adminFetch("/api/admin/sprite-overlays", { method: "POST", body: JSON.stringify(layer) });
+        await adminFetch("/api/admin/sprites", { method: "POST", body: JSON.stringify(layer) });
       }
       modal.close();
       onSaved();
@@ -662,14 +662,14 @@ function openSpriteOverlayEditModal(id: number | null, existing: SpriteOverlayDe
   modal.open();
 }
 
-async function renderSpriteOverlays(body: HTMLElement) {
+async function renderSprites(body: HTMLElement) {
   body.textContent = "";
-  const overlays = await adminFetch<SpriteOverlayDef[]>("/api/admin/sprite-overlays");
+  const sprites = await adminFetch<SpriteDef[]>("/api/admin/sprites");
 
   const table = document.createElement("table");
   table.className = "admin-table";
   table.innerHTML = "<tr><th>Sprite key</th><th>Frames</th><th></th></tr>";
-  for (const o of overlays) {
+  for (const o of sprites) {
     const row = document.createElement("tr");
     const framesText = o.layer.frameCount && o.layer.frameCount > 1 ? `${o.layer.frameCount} @ ${o.layer.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS}ms` : "static";
     row.innerHTML = `<td>${o.spriteKey}</td><td>${framesText}</td>`;
@@ -677,14 +677,14 @@ async function renderSpriteOverlays(body: HTMLElement) {
     const actionCell = document.createElement("td");
     const editBtn = document.createElement("button");
     editBtn.textContent = "Edit";
-    editBtn.onclick = () => openSpriteOverlayEditModal(o.id, o, () => renderSpriteOverlays(body));
+    editBtn.onclick = () => openSpriteEditModal(o.id, o, () => renderSprites(body));
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {
-      if (!confirm(`Delete sprite overlay "${o.spriteKey}"? Any object type still referencing it loses its overlay.`)) return;
+      if (!confirm(`Delete sprite "${o.spriteKey}"? Any object type still referencing it loses its interaction sprite.`)) return;
       try {
-        await adminFetch(`/api/admin/sprite-overlays/${o.id}`, { method: "DELETE" });
-        renderSpriteOverlays(body);
+        await adminFetch(`/api/admin/sprites/${o.id}`, { method: "DELETE" });
+        renderSprites(body);
       } catch (err) {
         showError(err);
       }
@@ -699,7 +699,7 @@ async function renderSpriteOverlays(body: HTMLElement) {
   addBtn.type = "button";
   addBtn.textContent = "Add Sprite";
   addBtn.classList.add("admin-btn-primary");
-  addBtn.onclick = () => openSpriteOverlayEditModal(null, null, () => renderSpriteOverlays(body));
+  addBtn.onclick = () => openSpriteEditModal(null, null, () => renderSprites(body));
   body.appendChild(addBtn);
 }
 
@@ -739,12 +739,12 @@ async function ensureTextureLoaded(path: string | undefined): Promise<void> {
  * One below/above layer's editor — texture-or-color-or-none. No
  * offsetX/offsetY: a below/above layer always renders at (0,0), forced to
  * the object's own width/height (renderer.ts's buildLayer), so there's
- * nothing for an offset to mean there — unlike overlay, which has its own
- * genuine Offset X/Y inputs (see openObjectTypeEditModal's overlay
- * section) since it renders at its resolved texture's native size.
- * Overlay is no longer edited here at all — it's a reference to a named
- * Sprite Overlays-tab entity (see openSpriteOverlayEditModal), picked by
- * spriteKey, not an inline layer.
+ * nothing for an offset to mean there — unlike the interaction sprite,
+ * which has its own genuine Offset X/Y inputs (see openObjectTypeEditModal's
+ * own sprite section) since it renders at its resolved texture's native
+ * size. The interaction sprite is no longer edited here at all — it's a
+ * reference to a named Sprites-tab entity (see openSpriteEditModal), picked
+ * by spriteKey, not an inline layer.
  */
 function buildLayerSection(
   title: string,
@@ -801,20 +801,20 @@ function buildLayerSection(
 }
 
 /**
- * Edits one object type's name/size/below+overlay+above layers/anchor
+ * Edits one object type's name/size/below+sprite+above layers/anchor
  * point. Each of the three layers is editable via buildLayerSection
- * (texture-or-color-or-none, offset, and — overlay only — a spriteKey
- * plus optional frame-animation fields); every current type has at most
- * one entry per slot, so one section per slot (not a dynamic array
- * editor) doesn't lose anything for them. `actions` is no longer a type-
- * level concern at all (see ObjectTypeDef's own comment in rooms.ts).
- * The preview always shows the overlay too (unlike the real game, where
- * it's only visible while someone's actually doing the activity) —
- * there's no "who's doing this" to attribute in a static authoring
- * preview, so it simulates Jacqueline's own art specifically
+ * (texture-or-color-or-none, offset, and — the interaction sprite only —
+ * a spriteKey plus optional frame-animation fields); every current type
+ * has at most one entry per slot, so one section per slot (not a dynamic
+ * array editor) doesn't lose anything for them. `actions` is no longer a
+ * type-level concern at all (see ObjectTypeDef's own comment in rooms.ts).
+ * The preview always shows the interaction sprite too (unlike the real
+ * game, where it's only visible while someone's actually doing the
+ * activity) — there's no "who's doing this" to attribute in a static
+ * authoring preview, so it simulates Jacqueline's own art specifically
  * (PREVIEW_CHARACTER_SPRITE_NAME below), falling back to the layer's
  * plain texture exactly like the real per-character resolution does when
- * no matching file exists. Animated (frameCount > 1) overlays actually
+ * no matching file exists. Animated (frameCount > 1) sprites actually
  * animate here too, via the same sliceFrames the real renderer uses. The
  * preview renders a real floor+wall room corner (sized to the object's own
  * footprint) and repositions the sprite so its anchor point always lands
@@ -829,14 +829,14 @@ async function openObjectTypeEditModal(
   existing: ObjectTypeDef | null,
   assetPaths: string[],
   characterAssetPaths: string[],
-  overlays: SpriteOverlayDef[],
+  sprites: SpriteDef[],
   onSaved: () => void,
 ) {
   // Same staleness fix as openRoomEditModal's own re-fetch — a sprite
-  // overlay created from the Sprite Overlays tab wasn't pickable here
-  // until a full page reload, since this `overlays` parameter is only as
-  // fresh as whatever the caller fetched whenever IT last ran.
-  overlays = await adminFetch<SpriteOverlayDef[]>("/api/admin/sprite-overlays");
+  // created from the Sprites tab wasn't pickable here until a full page
+  // reload, since this `sprites` parameter is only as fresh as whatever
+  // the caller fetched whenever IT last ran.
+  sprites = await adminFetch<SpriteDef[]>("/api/admin/sprites");
 
   const draftType: ObjectTypeDef = existing
     ? { ...existing, below: existing.below ? [...existing.below] : undefined }
@@ -881,64 +881,64 @@ async function openObjectTypeEditModal(
 
   modal.body.appendChild(form);
 
-  // Below/above are still edited inline (buildLayerSection); overlay is
-  // now a reference to a named row managed on the Sprite Overlays tab
-  // (see rooms.ts's ObjectTypeDef.overlayId) — a plain dropdown showing
-  // each one's spriteKey, not the raw id, per CLAUDE.md's "never show a
-  // raw id to the admin" convention.
+  // Below/above are still edited inline (buildLayerSection); the
+  // interaction sprite is now a reference to a named row managed on the
+  // Sprites tab (see rooms.ts's ObjectTypeDef.spriteId) — a plain dropdown
+  // showing each one's spriteKey, not the raw id, per CLAUDE.md's "never
+  // show a raw id to the admin" convention.
   const belowSection = buildLayerSection("Below (base sprite)", draftType.below?.[0], assetPaths, () => deriveSizeFromBelowTexture());
   modal.body.appendChild(belowSection.element);
 
-  const overlayWrap = document.createElement("div");
-  const overlayHeading = document.createElement("h3");
-  overlayHeading.textContent = "Sprite (shown while interacted with)";
-  overlayWrap.appendChild(overlayHeading);
-  const overlayRow = document.createElement("div");
-  overlayRow.className = "admin-form";
-  const overlaySelect = document.createElement("select");
-  const overlayNoneOpt = document.createElement("option");
-  overlayNoneOpt.value = "";
-  overlayNoneOpt.textContent = "(none)";
-  overlaySelect.appendChild(overlayNoneOpt);
-  for (const o of overlays) {
+  const spriteWrap = document.createElement("div");
+  const spriteHeading = document.createElement("h3");
+  spriteHeading.textContent = "Sprite (shown while interacted with)";
+  spriteWrap.appendChild(spriteHeading);
+  const spriteRow = document.createElement("div");
+  spriteRow.className = "admin-form";
+  const spriteSelect = document.createElement("select");
+  const spriteNoneOpt = document.createElement("option");
+  spriteNoneOpt.value = "";
+  spriteNoneOpt.textContent = "(none)";
+  spriteSelect.appendChild(spriteNoneOpt);
+  for (const o of sprites) {
     const opt = document.createElement("option");
     opt.value = String(o.id);
     opt.textContent = o.spriteKey;
-    overlaySelect.appendChild(opt);
+    spriteSelect.appendChild(opt);
   }
-  overlaySelect.value = draftType.overlayId ? String(draftType.overlayId) : "";
-  overlayRow.append(document.createTextNode("Sprite:"), overlaySelect);
-  overlayWrap.appendChild(overlayRow);
-  const overlayHint = document.createElement("div");
-  overlayHint.className = "admin-hint";
-  overlayHint.textContent = "Managed on the Sprites tab — pick which sprite (if any) to use when this object is being interacted with.";
-  overlayWrap.appendChild(overlayHint);
+  spriteSelect.value = draftType.spriteId ? String(draftType.spriteId) : "";
+  spriteRow.append(document.createTextNode("Sprite:"), spriteSelect);
+  spriteWrap.appendChild(spriteRow);
+  const spriteHint = document.createElement("div");
+  spriteHint.className = "admin-hint";
+  spriteHint.textContent = "Managed on the Sprites tab — pick which sprite (if any) to use when this object is being interacted with.";
+  spriteWrap.appendChild(spriteHint);
 
-  // Offset lives here, per-type, not on the Sprite Overlay entity itself —
-  // same reasoning below/above's own offsetX/offsetY already get: a
-  // shared, reusable overlay (e.g. "playPiano") can still need a different
-  // position on different object types that reuse it, exactly the way two
+  // Offset lives here, per-type, not on the Sprite entity itself — same
+  // reasoning below/above's own offsetX/offsetY already get: a shared,
+  // reusable sprite (e.g. "playPiano") can still need a different position
+  // on different object types that reuse it, exactly the way two
   // differently-shaped objects already position their below/above layers
   // independently even when they happen to share art.
-  const overlayOffsetRow = document.createElement("div");
-  overlayOffsetRow.className = "admin-form";
-  const overlayOffsetXInput = document.createElement("input");
-  overlayOffsetXInput.type = "number";
-  overlayOffsetXInput.value = String(draftType.overlayOffsetX ?? 0);
-  overlayOffsetXInput.style.width = "60px";
-  const overlayOffsetYInput = document.createElement("input");
-  overlayOffsetYInput.type = "number";
-  overlayOffsetYInput.value = String(draftType.overlayOffsetY ?? 0);
-  overlayOffsetYInput.style.width = "60px";
-  overlayOffsetRow.append(document.createTextNode("Offset X:"), overlayOffsetXInput, document.createTextNode("Offset Y:"), overlayOffsetYInput);
-  overlayWrap.appendChild(overlayOffsetRow);
+  const spriteOffsetRow = document.createElement("div");
+  spriteOffsetRow.className = "admin-form";
+  const spriteOffsetXInput = document.createElement("input");
+  spriteOffsetXInput.type = "number";
+  spriteOffsetXInput.value = String(draftType.spriteOffsetX ?? 0);
+  spriteOffsetXInput.style.width = "60px";
+  const spriteOffsetYInput = document.createElement("input");
+  spriteOffsetYInput.type = "number";
+  spriteOffsetYInput.value = String(draftType.spriteOffsetY ?? 0);
+  spriteOffsetYInput.style.width = "60px";
+  spriteOffsetRow.append(document.createTextNode("Offset X:"), spriteOffsetXInput, document.createTextNode("Offset Y:"), spriteOffsetYInput);
+  spriteWrap.appendChild(spriteOffsetRow);
 
-  modal.body.appendChild(overlayWrap);
-  overlaySelect.onchange = () => rebuildSprite();
-  overlayOffsetXInput.onchange = () => rebuildSprite();
-  overlayOffsetYInput.onchange = () => rebuildSprite();
-  function getSelectedOverlay(): SpriteOverlayDef | undefined {
-    return overlays.find((o) => String(o.id) === overlaySelect.value);
+  modal.body.appendChild(spriteWrap);
+  spriteSelect.onchange = () => rebuildSprite();
+  spriteOffsetXInput.onchange = () => rebuildSprite();
+  spriteOffsetYInput.onchange = () => rebuildSprite();
+  function getSelectedSprite(): SpriteDef | undefined {
+    return sprites.find((o) => String(o.id) === spriteSelect.value);
   }
 
   const aboveSection = buildLayerSection("Above (rendered on top)", draftType.above?.[0], assetPaths, () => rebuildSprite());
@@ -1029,18 +1029,19 @@ async function openObjectTypeEditModal(
     .fill({ color: 0xff3366 });
   stage.addChild(crosshair);
 
-  // Simulates the overlay layer too, defaulting to DEFAULT_SPRITE_CHARACTER
-  // ("jacqueline") — the actual game decides this per-attribution at
-  // runtime, but there's no "who's doing this" to attribute in a static
-  // authoring preview, so the same universal fallback character the real
-  // renderer uses is the only stand-in that makes sense here too.
-  let overlaySprite: Sprite | null = null;
-  let overlayFrames: Texture[] | null = null;
-  let overlayFrameIndex = 0;
-  let overlayFrameElapsedMs = 0;
+  // Simulates the interaction sprite too, defaulting to
+  // DEFAULT_SPRITE_CHARACTER ("jacqueline") — the actual game decides this
+  // per-attribution at runtime, but there's no "who's doing this" to
+  // attribute in a static authoring preview, so the same universal
+  // fallback character the real renderer uses is the only stand-in that
+  // makes sense here too.
+  let interactionSprite: Sprite | null = null;
+  let interactionFrames: Texture[] | null = null;
+  let interactionFrameIndex = 0;
+  let interactionFrameElapsedMs = 0;
 
   /** Same contract as resolveOverlayTexture in renderer.ts (spriteKey -> "<name>_<key>.png") — checked against the already-fetched characterAssetPaths list instead of attempting-and-catching a 404, since the admin tool has that directory listing up front. No texture field to fall back to anymore — if DEFAULT_SPRITE_CHARACTER has no file for this key either, the preview just shows nothing, same as the real renderer would. */
-  async function resolveOverlayPreviewTexture(layer: SpriteLayer): Promise<string | undefined> {
+  async function resolveInteractionPreviewTexture(layer: SpriteLayer): Promise<string | undefined> {
     if (!layer.spriteKey) return undefined;
     const candidate = characterSpritePath(DEFAULT_SPRITE_CHARACTER, layer.spriteKey);
     if (!characterAssetPaths.includes(candidate)) return undefined;
@@ -1052,13 +1053,13 @@ async function openObjectTypeEditModal(
   // already runs a continuous ticker by default, so this just piggybacks
   // on it rather than needing its own loop.
   app.ticker.add((ticker) => {
-    if (!overlaySprite || !overlayFrames) return;
-    overlayFrameElapsedMs += ticker.deltaMS;
-    const duration = getSelectedOverlay()?.layer.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS;
-    if (overlayFrameElapsedMs >= duration) {
-      overlayFrameElapsedMs -= duration;
-      overlayFrameIndex = (overlayFrameIndex + 1) % overlayFrames.length;
-      overlaySprite.texture = overlayFrames[overlayFrameIndex];
+    if (!interactionSprite || !interactionFrames) return;
+    interactionFrameElapsedMs += ticker.deltaMS;
+    const duration = getSelectedSprite()?.layer.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS;
+    if (interactionFrameElapsedMs >= duration) {
+      interactionFrameElapsedMs -= duration;
+      interactionFrameIndex = (interactionFrameIndex + 1) % interactionFrames.length;
+      interactionSprite.texture = interactionFrames[interactionFrameIndex];
     }
   });
 
@@ -1092,30 +1093,30 @@ async function openObjectTypeEditModal(
     const below = belowSection.getLayer();
     if (below) spriteLayer.addChild(buildLayer(below, width, height));
 
-    // Overlay specifically does NOT go through buildLayer: the real
-    // renderer never resizes it to the object's own width/height (see
-    // renderer.ts's buildObject) — it renders at the resolved texture's
-    // own native size, positioned by offsetX/offsetY alone, which is
-    // what this mirrors instead.
-    overlaySprite = null;
-    overlayFrames = null;
-    const overlayLayer = getSelectedOverlay()?.layer;
-    if (overlayLayer) {
-      const texturePath = await resolveOverlayPreviewTexture(overlayLayer);
+    // The interaction sprite specifically does NOT go through buildLayer:
+    // the real renderer never resizes it to the object's own width/height
+    // (see renderer.ts's buildObject) — it renders at the resolved
+    // texture's own native size, positioned by offsetX/offsetY alone,
+    // which is what this mirrors instead.
+    interactionSprite = null;
+    interactionFrames = null;
+    const interactionLayer = getSelectedSprite()?.layer;
+    if (interactionLayer) {
+      const texturePath = await resolveInteractionPreviewTexture(interactionLayer);
       if (texturePath) {
         const baseTexture = Assets.get<Texture>(assetUrl(texturePath));
         const sprite = new Sprite();
-        if (overlayLayer.frameCount && overlayLayer.frameCount > 1) {
-          overlayFrames = sliceFrames(baseTexture, overlayLayer.frameCount);
-          overlayFrameIndex = 0;
-          overlayFrameElapsedMs = 0;
-          sprite.texture = overlayFrames[0];
+        if (interactionLayer.frameCount && interactionLayer.frameCount > 1) {
+          interactionFrames = sliceFrames(baseTexture, interactionLayer.frameCount);
+          interactionFrameIndex = 0;
+          interactionFrameElapsedMs = 0;
+          sprite.texture = interactionFrames[0];
         } else {
           sprite.texture = baseTexture;
         }
-        sprite.position.set(Number(overlayOffsetXInput.value) || 0, Number(overlayOffsetYInput.value) || 0);
+        sprite.position.set(Number(spriteOffsetXInput.value) || 0, Number(spriteOffsetYInput.value) || 0);
         spriteLayer.addChild(sprite);
-        overlaySprite = sprite;
+        interactionSprite = sprite;
       }
     }
 
@@ -1188,10 +1189,10 @@ async function openObjectTypeEditModal(
       width: Number(widthInput.value),
       height: Number(heightInput.value),
       below: below ? [below] : undefined,
-      overlay: undefined, // derived/read-only, see ObjectTypeDef's own comment — overlayId/overlayOffsetX/Y below are what's actually persisted
-      overlayId: overlaySelect.value ? Number(overlaySelect.value) : null,
-      overlayOffsetX: Number(overlayOffsetXInput.value) || 0,
-      overlayOffsetY: Number(overlayOffsetYInput.value) || 0,
+      sprite: undefined, // derived/read-only, see ObjectTypeDef's own comment — spriteId/spriteOffsetX/Y below are what's actually persisted
+      spriteId: spriteSelect.value ? Number(spriteSelect.value) : null,
+      spriteOffsetX: Number(spriteOffsetXInput.value) || 0,
+      spriteOffsetY: Number(spriteOffsetYInput.value) || 0,
       above: above ? [above] : undefined,
       anchorX,
       anchorY,
@@ -1223,26 +1224,26 @@ async function openObjectTypeEditModal(
 
 async function renderObjectTypes(body: HTMLElement) {
   body.textContent = "";
-  const [types, assetPaths, characterAssetPaths, overlays] = await Promise.all([
+  const [types, assetPaths, characterAssetPaths, sprites] = await Promise.all([
     adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
     adminFetch<string[]>("/api/admin/object-assets"),
     adminFetch<string[]>("/api/admin/character-assets"),
-    adminFetch<SpriteOverlayDef[]>("/api/admin/sprite-overlays"),
+    adminFetch<SpriteDef[]>("/api/admin/sprites"),
   ]);
-  const overlaysById = new Map(overlays.map((o) => [o.id, o]));
+  const spritesById = new Map(sprites.map((o) => [o.id, o]));
 
   const table = document.createElement("table");
   table.className = "admin-table";
   table.innerHTML = "<tr><th>Name</th><th>Size</th><th>Anchor</th><th>Sprite</th><th></th></tr>";
   for (const [id, type] of Object.entries(types)) {
     const row = document.createElement("tr");
-    const overlaySpriteKey = type.overlayId ? overlaysById.get(type.overlayId)?.spriteKey ?? "?" : "—";
-    row.innerHTML = `<td>${type.name}</td><td>${type.width}×${type.height}</td><td>${type.anchorX ?? 0}, ${type.anchorY ?? 0}</td><td>${overlaySpriteKey}</td>`;
+    const spriteKey = type.spriteId ? spritesById.get(type.spriteId)?.spriteKey ?? "?" : "—";
+    row.innerHTML = `<td>${type.name}</td><td>${type.width}×${type.height}</td><td>${type.anchorX ?? 0}, ${type.anchorY ?? 0}</td><td>${spriteKey}</td>`;
 
     const actionCell = document.createElement("td");
     const editBtn = document.createElement("button");
     editBtn.textContent = "Edit";
-    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, characterAssetPaths, overlays, () => renderObjectTypes(body));
+    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, characterAssetPaths, sprites, () => renderObjectTypes(body));
     const deleteBtn = document.createElement("button");
     deleteBtn.textContent = "Delete";
     deleteBtn.onclick = async () => {
@@ -1264,7 +1265,7 @@ async function renderObjectTypes(body: HTMLElement) {
   addBtn.type = "button";
   addBtn.textContent = "Add Object";
   addBtn.classList.add("admin-btn-primary");
-  addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, characterAssetPaths, overlays, () => renderObjectTypes(body));
+  addBtn.onclick = () => openObjectTypeEditModal(null, null, assetPaths, characterAssetPaths, sprites, () => renderObjectTypes(body));
   body.appendChild(addBtn);
 }
 
@@ -2975,7 +2976,7 @@ async function main() {
       renderCharacters(pages.characters),
       renderActivities(pages.activities),
       renderObjectTypes(pages["object-types"]),
-      renderSpriteOverlays(pages["sprite-overlays"]),
+      renderSprites(pages["sprites"]),
       renderRooms(pages.rooms),
     ]);
   } catch (err) {

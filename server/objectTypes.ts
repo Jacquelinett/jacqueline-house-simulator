@@ -1,6 +1,6 @@
 import { db } from "./db";
 import { ObjectTypeDef, SpriteLayer, STATIC_OBJECT_TYPES } from "../src/scene/rooms";
-import { createSpriteOverlay } from "./spriteOverlays";
+import { createSprite } from "./sprites";
 
 interface TypeRow {
   id: number;
@@ -11,38 +11,38 @@ interface TypeRow {
   height: number;
   anchor_x: number | null;
   anchor_y: number | null;
-  overlay_id: number | null;
-  overlay_offset_x: number | null;
-  overlay_offset_y: number | null;
-  overlay_sprite_key: string | null;
-  overlay_frame_count: number | null;
-  overlay_frame_duration_ms: number | null;
+  sprite_id: number | null;
+  sprite_offset_x: number | null;
+  sprite_offset_y: number | null;
+  linked_sprite_key: string | null;
+  linked_frame_count: number | null;
+  linked_frame_duration_ms: number | null;
 }
 
-// Joins sprite_overlays so overlay comes back fully resolved, matching the
-// shape every consumer (renderer.ts/admin-main.ts/viewer) already expects
-// — see ObjectTypeDef.overlay's own comment in rooms.ts on why overlay
-// itself is read-only/derived while overlayId/overlayOffsetX/Y are the
-// real fields. Position (overlay_offset_x/y) is THIS type's own column,
-// not joined from sprite_overlays — two types referencing the same
-// overlay can still position it differently.
+// Joins sprites so the interaction sprite comes back fully resolved,
+// matching the shape every consumer (renderer.ts/admin-main.ts/viewer)
+// already expects — see ObjectTypeDef.sprite's own comment in rooms.ts on
+// why sprite itself is read-only/derived while spriteId/spriteOffsetX/Y
+// are the real fields. Position (sprite_offset_x/y) is THIS type's own
+// column, not joined from sprites — two types referencing the same sprite
+// can still position it differently.
 const SELECT_TYPES_SQL = `
   SELECT ot.id, ot.name, ot.below_json, ot.above_json, ot.width, ot.height, ot.anchor_x, ot.anchor_y,
-         ot.overlay_id, ot.overlay_offset_x, ot.overlay_offset_y,
-         so.sprite_key AS overlay_sprite_key,
-         so.frame_count AS overlay_frame_count, so.frame_duration_ms AS overlay_frame_duration_ms
+         ot.sprite_id, ot.sprite_offset_x, ot.sprite_offset_y,
+         s.sprite_key AS linked_sprite_key,
+         s.frame_count AS linked_frame_count, s.frame_duration_ms AS linked_frame_duration_ms
   FROM object_types ot
-  LEFT JOIN sprite_overlays so ON so.id = ot.overlay_id
+  LEFT JOIN sprites s ON s.id = ot.sprite_id
 `;
 
 function rowToType(row: TypeRow): ObjectTypeDef {
-  const overlay: SpriteLayer | undefined = row.overlay_id
+  const sprite: SpriteLayer | undefined = row.sprite_id
     ? {
-        offsetX: row.overlay_offset_x ?? undefined,
-        offsetY: row.overlay_offset_y ?? undefined,
-        spriteKey: row.overlay_sprite_key ?? undefined,
-        frameCount: row.overlay_frame_count ?? undefined,
-        frameDurationMs: row.overlay_frame_duration_ms ?? undefined,
+        offsetX: row.sprite_offset_x ?? undefined,
+        offsetY: row.sprite_offset_y ?? undefined,
+        spriteKey: row.linked_sprite_key ?? undefined,
+        frameCount: row.linked_frame_count ?? undefined,
+        frameDurationMs: row.linked_frame_duration_ms ?? undefined,
       }
     : undefined;
   return {
@@ -51,10 +51,10 @@ function rowToType(row: TypeRow): ObjectTypeDef {
     width: row.width,
     height: row.height,
     below: row.below_json ? (JSON.parse(row.below_json) as SpriteLayer[]) : undefined,
-    overlay: overlay ? [overlay] : undefined,
-    overlayId: row.overlay_id ?? undefined,
-    overlayOffsetX: row.overlay_offset_x ?? undefined,
-    overlayOffsetY: row.overlay_offset_y ?? undefined,
+    sprite: sprite ? [sprite] : undefined,
+    spriteId: row.sprite_id ?? undefined,
+    spriteOffsetX: row.sprite_offset_x ?? undefined,
+    spriteOffsetY: row.sprite_offset_y ?? undefined,
     above: row.above_json ? (JSON.parse(row.above_json) as SpriteLayer[]) : undefined,
     anchorX: row.anchor_x ?? undefined,
     anchorY: row.anchor_y ?? undefined,
@@ -69,17 +69,17 @@ export function getObjectTypes(): Record<string, ObjectTypeDef> {
   return result;
 }
 
-/** One-time seed from scene/rooms.ts's STATIC_OBJECT_TYPES — explicit ids matching that registry's own literal ids, so existing STATIC_ROOM_SPECS placements (type: STATIC_OBJECT_TYPES.piano.id) resolve against the seeded rows unchanged. A seed type's own overlay (only Piano's, today) gets its own sprite_overlays row created first (spriteKey/frame fields only — position is this type's own column below), same as any admin-authored overlay — there's no bulk/shared seed path for overlays since only one type has ever needed one. */
+/** One-time seed from scene/rooms.ts's STATIC_OBJECT_TYPES — explicit ids matching that registry's own literal ids, so existing STATIC_ROOM_SPECS placements (type: STATIC_OBJECT_TYPES.piano.id) resolve against the seeded rows unchanged. A seed type's own sprite (only Piano's, today) gets its own sprites row created first (spriteKey/frame fields only — position is this type's own column below), same as any admin-authored sprite — there's no bulk/shared seed path for sprites since only one type has ever needed one. */
 export function seedObjectTypesIfEmpty(): void {
   const { n } = db.prepare("SELECT COUNT(*) as n FROM object_types").get() as { n: number };
   if (n > 0) return;
   const insert = db.prepare(`
-    INSERT INTO object_types (id, name, below_json, above_json, width, height, anchor_x, anchor_y, overlay_id, overlay_offset_x, overlay_offset_y)
-    VALUES (@id, @name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @overlayId, @overlayOffsetX, @overlayOffsetY)
+    INSERT INTO object_types (id, name, below_json, above_json, width, height, anchor_x, anchor_y, sprite_id, sprite_offset_x, sprite_offset_y)
+    VALUES (@id, @name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @spriteId, @spriteOffsetX, @spriteOffsetY)
   `);
   const tx = db.transaction(() => {
     for (const type of Object.values(STATIC_OBJECT_TYPES) as ObjectTypeDef[]) {
-      const overlayId = type.overlay?.[0] ? createSpriteOverlay(type.overlay[0]) : null;
+      const spriteId = type.sprite?.[0] ? createSprite(type.sprite[0]) : null;
       insert.run({
         id: type.id,
         name: type.name,
@@ -89,21 +89,21 @@ export function seedObjectTypesIfEmpty(): void {
         height: type.height,
         anchorX: type.anchorX ?? null,
         anchorY: type.anchorY ?? null,
-        overlayId,
-        overlayOffsetX: type.overlay?.[0]?.offsetX ?? null,
-        overlayOffsetY: type.overlay?.[0]?.offsetY ?? null,
+        spriteId,
+        spriteOffsetX: type.sprite?.[0]?.offsetX ?? null,
+        spriteOffsetY: type.sprite?.[0]?.offsetY ?? null,
       });
     }
   });
   tx();
 }
 
-/** `def.id` (if present) is ignored — id omitted from the INSERT so SQLite auto-assigns the next INTEGER PRIMARY KEY. `def.overlay` is ignored too (it's read-only/derived, see ObjectTypeDef's own comment) — only `def.overlayId`/`def.overlayOffsetX`/`def.overlayOffsetY` are persisted. */
+/** `def.id` (if present) is ignored — id omitted from the INSERT so SQLite auto-assigns the next INTEGER PRIMARY KEY. `def.sprite` is ignored too (it's read-only/derived, see ObjectTypeDef's own comment) — only `def.spriteId`/`def.spriteOffsetX`/`def.spriteOffsetY` are persisted. */
 export function createObjectType(def: ObjectTypeDef): number {
   const { lastInsertRowid } = db
     .prepare(
-      `INSERT INTO object_types (name, below_json, above_json, width, height, anchor_x, anchor_y, overlay_id, overlay_offset_x, overlay_offset_y)
-     VALUES (@name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @overlayId, @overlayOffsetX, @overlayOffsetY)`,
+      `INSERT INTO object_types (name, below_json, above_json, width, height, anchor_x, anchor_y, sprite_id, sprite_offset_x, sprite_offset_y)
+     VALUES (@name, @belowJson, @aboveJson, @width, @height, @anchorX, @anchorY, @spriteId, @spriteOffsetX, @spriteOffsetY)`,
     )
     .run({
       name: def.name,
@@ -113,9 +113,9 @@ export function createObjectType(def: ObjectTypeDef): number {
       height: def.height,
       anchorX: def.anchorX ?? null,
       anchorY: def.anchorY ?? null,
-      overlayId: def.overlayId ?? null,
-      overlayOffsetX: def.overlayOffsetX ?? null,
-      overlayOffsetY: def.overlayOffsetY ?? null,
+      spriteId: def.spriteId ?? null,
+      spriteOffsetX: def.spriteOffsetX ?? null,
+      spriteOffsetY: def.spriteOffsetY ?? null,
     });
   return Number(lastInsertRowid);
 }
@@ -124,8 +124,8 @@ export function updateObjectType(id: number, def: ObjectTypeDef): void {
   db.prepare(
     `UPDATE object_types SET name = @name, below_json = @belowJson,
      above_json = @aboveJson, width = @width, height = @height,
-     anchor_x = @anchorX, anchor_y = @anchorY, overlay_id = @overlayId,
-     overlay_offset_x = @overlayOffsetX, overlay_offset_y = @overlayOffsetY WHERE id = @id`,
+     anchor_x = @anchorX, anchor_y = @anchorY, sprite_id = @spriteId,
+     sprite_offset_x = @spriteOffsetX, sprite_offset_y = @spriteOffsetY WHERE id = @id`,
   ).run({
     id,
     name: def.name,
@@ -135,9 +135,9 @@ export function updateObjectType(id: number, def: ObjectTypeDef): void {
     height: def.height,
     anchorX: def.anchorX ?? null,
     anchorY: def.anchorY ?? null,
-    overlayId: def.overlayId ?? null,
-    overlayOffsetX: def.overlayOffsetX ?? null,
-    overlayOffsetY: def.overlayOffsetY ?? null,
+    spriteId: def.spriteId ?? null,
+    spriteOffsetX: def.spriteOffsetX ?? null,
+    spriteOffsetY: def.spriteOffsetY ?? null,
   });
 }
 

@@ -12,24 +12,25 @@ import { ACTIVITIES, findActivityById } from "./activities";
 import { Floor, STATIC_FLOORS } from "./floors";
 
 export interface SpriteLayer {
-  // Below/above only in practice now — overlay resolves its texture
-  // purely from spriteKey below, never this field (see that field's own
-  // comment for why a separately-authored fallback texture is no longer
-  // needed at all).
+  // Below/above only in practice now — the interaction sprite resolves its
+  // texture purely from spriteKey below, never this field (see that
+  // field's own comment for why a separately-authored fallback texture is
+  // no longer needed at all).
   texture?: string; // path to art asset; omitted -> rendered as a placeholder color box
   color?: number; // placeholder fill used when texture is omitted
-  // Overlay-only now — below/above are always rendered at (0,0), forced
-  // to the object's own width/height (see renderer.ts's buildLayer), so
-  // there's nothing for an offset to mean there. Overlay has no
-  // width/height of its own (renders at its resolved texture's native
-  // size), so IT genuinely needs positioning — carried on
-  // ObjectTypeDef.overlayOffsetX/overlayOffsetY (a per-TYPE field, not
-  // this shared layer shape) and mirrored onto this resolved layer's
-  // offsetX/offsetY by server/objectTypes.ts for renderer.ts to read.
+  // Interaction-sprite-only now — below/above are always rendered at
+  // (0,0), forced to the object's own width/height (see renderer.ts's
+  // buildLayer), so there's nothing for an offset to mean there. The
+  // interaction sprite has no width/height of its own (renders at its
+  // resolved texture's native size), so IT genuinely needs positioning —
+  // carried on ObjectTypeDef.spriteOffsetX/spriteOffsetY (a per-TYPE
+  // field, not this shared layer shape) and mirrored onto this resolved
+  // layer's offsetX/offsetY by server/objectTypes.ts for renderer.ts to
+  // read.
   offsetX?: number;
   offsetY?: number;
-  // Overlay-only in practice (see ObjectTypeDef.overlay) — when set, this
-  // layer's actual texture is resolved per-character at render time
+  // Interaction-sprite-only in practice (see ObjectTypeDef.sprite) — when
+  // set, this layer's actual texture is resolved per-character at render time
   // (src/scene/characterSprites.ts: "<spriteName>_<spriteKey>.png"),
   // falling back to the SAME convention applied to DEFAULT_SPRITE_CHARACTER
   // ("jacqueline") when the attributed character has no spriteName set, or
@@ -89,7 +90,7 @@ export interface ObjectDef {
   // showing it's in use). Array for future animation frames/variants — for
   // now typically just one entry. offsetX/offsetY relative to the object's
   // own (0,0) top-left, same as any other SpriteLayer.
-  overlay?: SpriteLayer[];
+  sprite?: SpriteLayer[];
   // Carried through from the type's own anchorX/anchorY (see
   // ObjectTypeDef) purely so the admin tool's placement code can read it
   // off the same resolved ObjectDef it already has in hand, instead of a
@@ -124,20 +125,20 @@ export interface ObjectTypeDef {
   height: number;
   below?: SpriteLayer[];
   // Always derived/read-only — resolved server-side (server/objectTypes.ts)
-  // by joining whichever sprite_overlays row overlayId points at (for
+  // by joining whichever sprites row spriteId points at (for
   // spriteKey/frameCount/frameDurationMs) with THIS type's own
-  // overlayOffsetX/Y (for position), never written back directly.
-  // overlayId/overlayOffsetX/overlayOffsetY are the real fields: both read
+  // spriteOffsetX/Y (for position), never written back directly.
+  // spriteId/spriteOffsetX/spriteOffsetY are the real fields: both read
   // (what this type currently has, if any) and write (set these on
   // create/update) go through them, so multiple types can reference the
-  // same named overlay (e.g. "playPiano") while each still positioning it
+  // same named sprite (e.g. "playPiano") while each still positioning it
   // independently — the same way below/above's own offsetX/offsetY are
-  // already per-type rather than shared, see server/spriteOverlays.ts and
-  // admin-main.ts's Sprite Overlays tab.
-  overlay?: SpriteLayer[];
-  overlayId?: number | null;
-  overlayOffsetX?: number;
-  overlayOffsetY?: number;
+  // already per-type rather than shared, see server/sprites.ts and
+  // admin-main.ts's Sprites tab.
+  sprite?: SpriteLayer[];
+  spriteId?: number | null;
+  spriteOffsetX?: number;
+  spriteOffsetY?: number;
   above?: SpriteLayer[];
   // Deliberately no `actions` here — what an object DOES is purely a
   // per-placement concern now (see ObjectPlacement.actions), not
@@ -184,7 +185,7 @@ const STATIC_OBJECT_TYPES = {
     height: 64,
     below: [{ texture: "/objects/piano_base.png" }],
     above: [{ texture: "/objects/piano_top.png" }],
-    overlay: [{ offsetX: 32, offsetY: 0, spriteKey: "playPiano" }],
+    sprite: [{ offsetX: 32, offsetY: 0, spriteKey: "playPiano" }],
   },
   workLaptop: {
     id: 2,
@@ -268,7 +269,7 @@ function resolveObjectPlacement(placement: ObjectPlacement): ObjectDef {
     width: type.width,
     height: type.height,
     below: type.below,
-    overlay: type.overlay,
+    sprite: type.sprite,
     above: type.above,
     actions: placement.actions,
     anchorX: type.anchorX,
