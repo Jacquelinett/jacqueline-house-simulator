@@ -260,6 +260,52 @@ function setupSyncButton(): void {
 
 // --- Tabs ---
 
+/**
+ * Generic tab-bar + page-toggle builder — the same show/hide-by-`.active`
+ * pattern this file used to hand-write at the top-level tab bar and a
+ * second time for the Rooms tab's per-floor sub-tabs. Pulled out once a
+ * THIRD near-identical copy was needed for the room editor modal's own
+ * Info/Objects/Connections tabs — see CLAUDE.md's reuse-over-duplication
+ * principle. Neither the bar nor any page is appended anywhere by this
+ * helper; the caller decides where each goes (a top-level tab's pages are
+ * siblings of the bar in `#admin-app`, a modal's tab pages live inside the
+ * modal's own scrolling wrapper, etc).
+ */
+function buildTabStrip<T extends string>(
+  tabs: { id: T; label: string }[],
+  initial: T,
+  pageClass: string,
+  onShow?: (id: T) => void,
+): { bar: HTMLElement; pages: Record<T, HTMLElement>; show(id: T): void } {
+  const bar = document.createElement("div");
+  const pages = {} as Record<T, HTMLElement>;
+  const buttons = {} as Record<T, HTMLButtonElement>;
+
+  function show(id: T) {
+    for (const tab of tabs) {
+      pages[tab.id].classList.toggle("active", tab.id === id);
+      buttons[tab.id].classList.toggle("active", tab.id === id);
+    }
+    onShow?.(id);
+  }
+
+  for (const tab of tabs) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = tab.label;
+    btn.onclick = () => show(tab.id);
+    bar.appendChild(btn);
+    buttons[tab.id] = btn;
+
+    const page = document.createElement("div");
+    page.className = pageClass;
+    pages[tab.id] = page;
+  }
+
+  show(initial);
+  return { bar, pages, show };
+}
+
 type TabId = "characters" | "activities" | "object-types" | "sprites" | "rooms";
 const TABS: { id: TabId; label: string }[] = [
   { id: "characters", label: "Characters" },
@@ -270,34 +316,10 @@ const TABS: { id: TabId; label: string }[] = [
 ];
 
 function setupTabs(): Record<TabId, HTMLElement> {
-  const tabBar = document.createElement("div");
-  tabBar.id = "admin-tab-bar";
-  app.appendChild(tabBar);
-
-  const pages = {} as Record<TabId, HTMLElement>;
-  const buttons = {} as Record<TabId, HTMLButtonElement>;
-
-  for (const tab of TABS) {
-    const btn = document.createElement("button");
-    btn.textContent = tab.label;
-    btn.onclick = () => showTab(tab.id);
-    tabBar.appendChild(btn);
-    buttons[tab.id] = btn;
-
-    const page = document.createElement("div");
-    page.className = "admin-tab-page";
-    app.appendChild(page);
-    pages[tab.id] = page;
-  }
-
-  function showTab(id: TabId) {
-    for (const tab of TABS) {
-      pages[tab.id].classList.toggle("active", tab.id === id);
-      buttons[tab.id].classList.toggle("active", tab.id === id);
-    }
-  }
-  showTab("characters");
-
+  const { bar, pages } = buildTabStrip(TABS, "characters", "admin-tab-page");
+  bar.id = "admin-tab-bar";
+  app.appendChild(bar);
+  for (const tab of TABS) app.appendChild(pages[tab.id]);
   return pages;
 }
 
@@ -1429,11 +1451,24 @@ function buildVariantSelect(assetPaths: string[], selected: string): HTMLSelectE
 }
 
 /**
- * Edits one room in isolation: a local draft array of its objects, a
- * preview that re-renders from that draft on every change (never from the
- * server), and a Save button gated on the draft actually differing from
- * what was loaded. Cancel/closing the modal without saving discards the
- * draft entirely — nothing reaches the server until Save.
+ * Edits one room: name/size/walls (Info tab), its objects (Objects tab),
+ * and its outgoing connections (Connections tab) — merged from two
+ * previously-separate modals (this one plus the old openRoomConnectionsModal)
+ * now that the preview they each built separately is shared between them.
+ * `initialTab` lets a caller land directly on whichever tab matches how it
+ * was opened (the floor tree's name-click defaults to "info"; nothing
+ * currently opens straight to "connections", but the param stays general).
+ *
+ * Info/Objects stay staged-draft-plus-Save, exactly as before: a local
+ * draft array of objects and a `roomFields` draft, a preview that
+ * re-renders from those drafts on every change (never from the server),
+ * and a Save button gated on either draft actually differing from what
+ * was loaded. Connections stay immediate-PATCH-per-action, exactly as
+ * the old Connections modal: there's nothing connections-related for
+ * Save to commit, and closing this modal ANY way (Save, Cancel, the ×)
+ * always refreshes the caller via onSaved — needed because a connection
+ * change can move this room onto a different floor's tree even if the
+ * admin never touches Save at all.
  */
 async function openRoomEditModal(
   room: RoomSpecWire,
@@ -1444,6 +1479,7 @@ async function openRoomEditModal(
   floorAssetPaths: string[],
   wallAssetPaths: string[],
   onSaved: () => void,
+  initialTab: "info" | "objects" | "connections" = "info",
 ) {
   // Re-fetch fresh rather than trusting the parameters' caller
   // (renderRooms, see its own fetch) — renderRooms only re-fetches
@@ -1464,10 +1500,10 @@ async function openRoomEditModal(
 
   // Computed once (not per keystroke) — resolveRooms() is cheap pure math
   // over the FULL room list, same reuse already established by
-  // openRoomConnectionsModal's own assertNoCycle. A goTo action's target
-  // can go stale the same way a dangling connectedTo entry can (see
-  // renderer.ts's setViewedRoom, which now fails gracefully instead of
-  // crashing, but silently — this surfaces it at edit time instead).
+  // assertNoCycle below. A goTo action's target can go stale the same way
+  // a dangling connectedTo entry can (see renderer.ts's setViewedRoom,
+  // which now fails gracefully instead of crashing, but silently — this
+  // surfaces it at edit time instead).
   const reachableRoomIds = new Set(resolveRooms(roomSpecsFromWire(allRooms), floors).map((r) => r.id));
   function warnForGoTo(roomId: number): string | null {
     if (reachableRoomIds.has(roomId)) return null;
@@ -1500,16 +1536,24 @@ async function openRoomEditModal(
   }
 
   const modal = buildModal(`Edit Room: ${room.name}`, { size: "large", resizable: true });
+  modal.body.classList.add("admin-room-editor-body");
+
+  // Pinned area: never scrolls, stays visible no matter which tab is open
+  // or how far its content is scrolled (see .admin-room-editor-body's own
+  // CSS comment) — this is what used to be two separate per-modal preview
+  // builders (this room alone, or this room plus synthesized neighbors in
+  // the old Connections modal), now one shared preview the Info/Objects/
+  // Connections tabs all render into.
+  const previewArea = document.createElement("div");
+  previewArea.className = "admin-room-editor-preview";
+  modal.body.appendChild(previewArea);
 
   const previewContainer = document.createElement("div");
   previewContainer.id = "admin-preview-canvas";
-  modal.body.appendChild(previewContainer);
+  previewArea.appendChild(previewContainer);
 
-  // Same control as the room connections modal (openRoomConnectionsModal) —
-  // identical range/default/step, just wired to this modal's own
-  // currentRenderer/renderPreview below.
-  const zoomRow = document.createElement("div");
-  zoomRow.className = "admin-form";
+  const previewControls = document.createElement("div");
+  previewControls.className = "admin-form";
   const zoomInput = document.createElement("input");
   zoomInput.type = "range";
   zoomInput.min = "0.5";
@@ -1518,17 +1562,47 @@ async function openRoomEditModal(
   zoomInput.value = "1.5"; // matches AdminPreviewRenderer's own default scale
   const zoomValueLabel = document.createElement("span");
   zoomValueLabel.textContent = `${zoomInput.value}x`;
-  zoomRow.append(document.createTextNode("Zoom:"), zoomInput, zoomValueLabel);
-  modal.body.appendChild(zoomRow);
   zoomInput.oninput = () => {
     zoomValueLabel.textContent = `${zoomInput.value}x`;
     currentRenderer?.setScale(Number(zoomInput.value));
   };
 
+  // Merges the room editor's own single-room preview with the old
+  // Connections modal's "room plus synthesized neighbors" preview — see
+  // buildPreviewRoomSet below for which one actually renders.
+  const showNeighborsLabel = document.createElement("label");
+  const showNeighborsCheckbox = document.createElement("input");
+  showNeighborsCheckbox.type = "checkbox";
+  showNeighborsLabel.append(showNeighborsCheckbox, document.createTextNode(" Show connected rooms"));
+  showNeighborsCheckbox.onchange = () => renderPreview(); // neighbor set changing is structural, not a live move
+
+  previewControls.append(document.createTextNode("Zoom:"), zoomInput, zoomValueLabel, showNeighborsLabel);
+  previewArea.appendChild(previewControls);
+
   const hint = document.createElement("div");
   hint.className = "admin-hint";
-  hint.textContent = "Preview reflects unsaved changes below — nothing is written until you press Save.";
-  modal.body.appendChild(hint);
+  hint.textContent = "Preview reflects unsaved Info/Objects changes — nothing there is written until you press Save. Connections save immediately, with no separate Save step.";
+  previewArea.appendChild(hint);
+
+  // Scrollable area: the tab bar + whichever tab's content is active.
+  const tabArea = document.createElement("div");
+  tabArea.className = "admin-room-editor-tabs";
+  modal.body.appendChild(tabArea);
+
+  const { bar: roomTabBar, pages: roomTabPages } = buildTabStrip(
+    [
+      { id: "info" as const, label: "Info" },
+      { id: "objects" as const, label: "Objects" },
+      { id: "connections" as const, label: "Connections" },
+    ],
+    initialTab,
+    "admin-subtab-page",
+  );
+  roomTabBar.className = "admin-subtab-bar";
+  tabArea.appendChild(roomTabBar);
+  tabArea.appendChild(roomTabPages.info);
+  tabArea.appendChild(roomTabPages.objects);
+  tabArea.appendChild(roomTabPages.connections);
 
   // Room-level fields (size + wall visibility) — a separate draft from the
   // objects draft above, since they're independent concerns, but saved
@@ -1554,7 +1628,7 @@ async function openRoomEditModal(
 
   const roomPropsForm = document.createElement("div");
   roomPropsForm.className = "admin-form";
-  modal.body.appendChild(roomPropsForm);
+  roomTabPages.info.appendChild(roomPropsForm);
 
   const nameInput = document.createElement("input");
   nameInput.value = roomFields.name;
@@ -1580,7 +1654,7 @@ async function openRoomEditModal(
   // checkboxes read much easier with room to breathe.
   const wallVisibilityForm = document.createElement("div");
   wallVisibilityForm.className = "admin-form";
-  modal.body.appendChild(wallVisibilityForm);
+  roomTabPages.info.appendChild(wallVisibilityForm);
 
   const showLeftWallLabel = document.createElement("label");
   const showLeftWallCheckbox = document.createElement("input");
@@ -1623,7 +1697,7 @@ async function openRoomEditModal(
   // as the wall-visibility checkboxes, not part of buildAddRoomForm().
   const roomVisibilityForm = document.createElement("div");
   roomVisibilityForm.className = "admin-form";
-  modal.body.appendChild(roomVisibilityForm);
+  roomTabPages.info.appendChild(roomVisibilityForm);
 
   const visibleLabel = document.createElement("label");
   const visibleCheckbox = document.createElement("input");
@@ -1670,7 +1744,7 @@ async function openRoomEditModal(
   const tileModeCheckbox = document.createElement("input");
   tileModeCheckbox.type = "checkbox";
   tileModeLabel.append(tileModeCheckbox, document.createTextNode(" Tile mode (enter grid coordinates instead of raw pixels)"));
-  modal.body.appendChild(tileModeLabel);
+  roomTabPages.objects.appendChild(tileModeLabel);
 
   // Separate mode from tile mode above (that one's just an input-
   // interpretation toggle, not an interaction mode) — this one hijacks
@@ -1682,16 +1756,20 @@ async function openRoomEditModal(
   const wallEditModeCheckbox = document.createElement("input");
   wallEditModeCheckbox.type = "checkbox";
   wallEditModeLabel.append(wallEditModeCheckbox, document.createTextNode(" Wall edit mode (hover a wall segment, click to add an exception)"));
-  modal.body.appendChild(wallEditModeLabel);
+  roomTabPages.objects.appendChild(wallEditModeLabel);
 
   const table = document.createElement("table");
   table.className = "admin-table";
-  modal.body.appendChild(table);
+  roomTabPages.objects.appendChild(table);
 
   const addForm = document.createElement("form");
   addForm.className = "admin-form";
-  modal.body.appendChild(addForm);
+  roomTabPages.objects.appendChild(addForm);
 
+  // Footer stays outside the tabs, in modal.body directly — Save commits
+  // Info/Objects changes regardless of which tab happens to be active,
+  // and Connections has nothing for it to commit (see this function's own
+  // doc comment).
   const footer = document.createElement("div");
   footer.className = "admin-form";
   const saveBtn = document.createElement("button");
@@ -1729,9 +1807,44 @@ async function openRoomEditModal(
   }
 
   /**
+   * `room` (reflecting live, uncommitted roomFields/draft edits) alone, or
+   * also its connected neighbors when showNeighborsCheckbox is checked —
+   * merges what used to be two separate preview builders (this modal's own
+   * single-room preview, and the old Connections modal's "room plus
+   * synthesized neighbor copies") into one shared one. The anchor room's
+   * own connectedTo is always stripped (nothing else exists to pan to from
+   * here, which is the point); when neighbors are shown, each gets a
+   * SYNTHESIZED single-entry connectedTo pointing back at `room` instead —
+   * `direction` on room's own entry names the TARGET's edge, so the
+   * target's forced entry needs PAIR_DIRECTION[entry.direction] (room's
+   * own touching edge) to correctly invert which side is "attaching to"
+   * which, and lateralOffset negated (not just direction flipped) — this
+   * is exactly rooms.ts's positionNeighbor() "reverse" branch. Verified
+   * against the real global resolveRooms() output with a standalone script
+   * before relying on it here (this exact inversion, including the
+   * PAIR_DIRECTION step) — relative positions matched exactly. `room` is
+   * placed first in the array specifically because SceneRenderer defaults
+   * viewedRoomId to the array's first room — giving "one room in focus,
+   * neighbors dimmed but visible" for free.
+   */
+  function buildPreviewRoomSet(): RoomSpecWire[] {
+    const anchorRoom: RoomSpecWire = { ...room, ...roomFields, objects: draft, connectedTo: undefined };
+    if (!showNeighborsCheckbox.checked) return [anchorRoom];
+    const forcedNeighbors = (room.connectedTo ?? []).flatMap((entry) => {
+      const neighbor = allRooms.find((r) => r.id === entry.roomId);
+      if (!neighbor) return [];
+      const lateralOffset = -(entry.lateralOffset ?? 0);
+      return [{ ...neighbor, connectedTo: [{ roomId: room.id, direction: PAIR_DIRECTION[entry.direction], gapTiles: entry.gapTiles, lateralOffset }] }];
+    });
+    return [anchorRoom, ...forcedNeighbors];
+  }
+
+  /**
    * Full scene rebuild — only for changes a live move can't express (type,
-   * enabled, add/remove). x/y-only edits use moveObject() instead (see
-   * applyPosition below), which never tears down the canvas.
+   * enabled, add/remove, or the neighbor set itself changing). x/y-only
+   * edits use moveObject() instead (see applyPosition below), which never
+   * tears down the canvas; gap/lateral-offset-only connection edits use
+   * repositionNeighbors() below, for the same reason.
    *
    * Self-contained error handling (not left to callers) on purpose: every
    * call site below fires this without awaiting/catching it, so a thrown
@@ -1745,34 +1858,32 @@ async function openRoomEditModal(
       currentApp?.destroy();
       previewContainer.textContent = "";
 
-      // Single-room spec, connectedTo stripped — nothing else exists to
-      // connect to, and nothing else exists to pan to, which is the point.
-      // Without this, any room that normally connects to another one
-      // (most of them — only office/bedroom/basement have no connectedTo
-      // at all) sent resolveRooms() chasing a connectedTo.roomId that
-      // doesn't exist in this one-room array, throwing inside setRooms()
-      // before the Pixi app ever got far enough to render anything.
-      setRooms(roomSpecsFromWire([{ ...room, ...roomFields, objects: draft, connectedTo: undefined }]), []);
-      // Only NOW does roomDefs reflect this room's own real objects —
-      // preloadRoomAssets() at startup only ever saw STATIC_ROOM_SPECS'
-      // seed data (setRooms() is never called with real server data until
-      // a room editor is actually opened), so an object type whose own
-      // texture was never separately touched via the Object Types editor
-      // (the only other thing that calls ensureTextureLoaded for an
-      // object's own art) would never have been loaded at all — buildObject
-      // below calls Assets.get() synchronously, which warns/fails for
-      // anything that was never Assets.load()-ed first. Safe to call on
-      // every render (not just the first): Assets.load() is itself
-      // idempotent, so already-loaded textures resolve instantly from
-      // cache rather than re-fetching.
+      // [] for floors, not the real floor list — this preview is `room`
+      // (possibly plus a stripped-down synthetic neighbor set), which the
+      // real floors' base rooms almost never reach, and resolveRooms() now
+      // excludes anything unreachable from a floor's base room. Passing []
+      // opts out of that filtering entirely (see resolveRooms's own
+      // comment) so this intentionally-partial subset still resolves.
+      setRooms(roomSpecsFromWire(buildPreviewRoomSet()), []);
+      // Only NOW does roomDefs reflect this room's own real objects (and
+      // any shown neighbors' own objects) — preloadRoomAssets() at startup
+      // only ever saw STATIC_ROOM_SPECS' seed data (setRooms() is never
+      // called with real server data until a room editor is actually
+      // opened), so an object type whose own texture was never separately
+      // touched via the Objects editor (the only other thing that calls
+      // ensureTextureLoaded for an object's own art) would never have been
+      // loaded at all — buildObject below calls Assets.get() synchronously,
+      // which warns/fails for anything that was never Assets.load()-ed
+      // first. Safe to call on every render (not just the first):
+      // Assets.load() is itself idempotent, so already-loaded textures
+      // resolve instantly from cache rather than re-fetching.
       await preloadRoomAssets();
 
       currentApp = new Application();
-      await currentApp.init({ width: 420, height: 320, background: 0x222228 });
+      await currentApp.init({ width: 480, height: 380, background: 0x222228 });
       previewContainer.appendChild(currentApp.canvas);
       currentRenderer = new AdminPreviewRenderer(currentApp, () => {}, highlightRow);
       currentRenderer.setScale(Number(zoomInput.value));
-      console.log("[admin] renderPreview rebuilt OK, currentRenderer set:", !!currentRenderer);
       // renderPreview() tears down and rebuilds the whole canvas on every
       // field change (including the ones wall edit mode's own menu makes),
       // so a brand-new AdminPreviewRenderer never has wall-edit-mode's
@@ -1785,6 +1896,29 @@ async function openRoomEditModal(
       if (wallEditModeCheckbox.checked) currentRenderer.enableWallEditMode(openWallSegmentMenu);
     } catch (err) {
       console.error("[admin] renderPreview failed", err);
+      showError(err);
+    }
+  }
+
+  /**
+   * Gap/lateral-offset-only connection edits only ever move an already-shown
+   * neighbor — the set of rooms in the scene doesn't change — so this
+   * recomputes positions via the engine's own resolveRooms() (cheap, pure
+   * math) and repositions each neighbor's existing container directly via
+   * moveRoom(), the same "never tear down the canvas for a position-only
+   * change" fix applied to this modal's own object x/y fields (the
+   * "blip"). A no-op while neighbors aren't shown — nothing in the scene
+   * to reposition.
+   */
+  function repositionNeighbors() {
+    if (!showNeighborsCheckbox.checked) return;
+    try {
+      const resolved = resolveRooms(roomSpecsFromWire(buildPreviewRoomSet()), []); // see renderPreview's own comment on why []
+      for (const r of resolved) {
+        if (r.id === room.id) continue; // room itself is the fixed local anchor, never moves
+        currentRenderer?.moveRoom(r.id, r.x, r.y);
+      }
+    } catch (err) {
       showError(err);
     }
   }
@@ -2126,231 +2260,41 @@ async function openRoomEditModal(
     };
   }
 
-  saveBtn.onclick = async () => {
-    // The `|| saveBtn.disabled` half matters more than the isDirty() check
-    // here — isDirty() alone doesn't change until the save below actually
-    // completes, so a second click fired while the first is still awaiting
-    // its PATCH/POST/DELETE calls would otherwise sail straight through,
-    // firing every one of them a second time (duplicate objects on the
-    // server) and then racing renderRooms(body) via two overlapping
-    // onSaved() calls (see renderRooms's own comment on that race).
-    // saveBtn.disabled is set synchronously, before any await, so even a
-    // same-tick double-click can't slip through.
-    if (!isDirty() || saveBtn.disabled) return;
-    saveBtn.disabled = true;
-    try {
-      if (isRoomFieldsDirty()) {
-        await adminFetch(`/api/admin/rooms/${room.id}`, {
-          method: "PATCH",
-          body: JSON.stringify({ ...room, ...roomFields }),
-        });
-      }
-      const draftIds = new Set(draft.filter((o): o is ObjectPlacementWire & { id: number } => o.id !== undefined).map((o) => o.id));
-      for (const obj of draft) {
-        if (obj.id === undefined) {
-          await adminFetch(`/api/admin/rooms/${room.id}/objects`, { method: "POST", body: JSON.stringify(obj) });
-          continue;
-        }
-        const orig = original.find((o) => o.id === obj.id);
-        if (!orig) {
-          await adminFetch(`/api/admin/rooms/${room.id}/objects`, { method: "POST", body: JSON.stringify(obj) });
-        } else if (JSON.stringify(orig) !== JSON.stringify(obj)) {
-          await adminFetch(`/api/admin/rooms/${room.id}/objects/${obj.id}`, { method: "PATCH", body: JSON.stringify(obj) });
-        }
-      }
-      for (const orig of original) {
-        if (orig.id !== undefined && !draftIds.has(orig.id)) {
-          await adminFetch(`/api/admin/rooms/${room.id}/objects/${orig.id}`, { method: "DELETE" });
-        }
-      }
-      modal.close();
-      onSaved();
-    } catch (err) {
-      showError(err);
-      saveBtn.disabled = false; // let the admin retry; the dirty state didn't change
-    }
-  };
+  // --- Connections tab ---
+  //
+  // Edits `room`'s own outgoing connections — "a room only has to worry
+  // about what it connects to, not which room connects to it," so this
+  // never looks at any OTHER room's connectedTo array, only room's own
+  // (room.connectedTo is a plain list, read and written directly). A room
+  // can connect to several other rooms; see ConnectedToEntry's own comment
+  // for why only entries[0] affects room's actual position, further
+  // entries are additional declared attachments.
+  //
+  // Every target room, once claimed by ANY connectedTo entry anywhere in
+  // the graph (by this room or any other) or assigned as a floor's base
+  // room, is excluded from the "pick a room to connect to" picker —
+  // getUsedRoomIds() enforces this globally.
+  //
+  // Every action here is an immediate PATCH (no staged draft, unlike
+  // Info/Objects above) — simple enough that a draft isn't needed; every
+  // write only ever touches room's own record.
 
-  cancelBtn.onclick = () => modal.close();
-  modal.onClose(() => currentApp?.destroy());
+  const connectionsErrorEl = document.createElement("div");
+  connectionsErrorEl.className = "admin-error";
+  connectionsErrorEl.style.display = "none";
+  roomTabPages.connections.appendChild(connectionsErrorEl);
 
-  renderTable();
-  renderAddForm();
-  updateSaveState();
-  await renderPreview();
-  modal.open();
-}
-
-// --- Room connections ---
-
-const EDGE_LABELS: Record<ConnectionDirection, string> = {
-  behindLeft: "Top-Left Wall",
-  behindRight: "Top-Right Wall",
-  frontLeft: "Bottom-Left (open)",
-  frontRight: "Bottom-Right (open)",
-};
-const EDGE_ORDER: ConnectionDirection[] = ["behindLeft", "behindRight", "frontLeft", "frontRight"];
-
-/**
- * Edits `room`'s own outgoing connections — "a room only has to worry
- * about what it connects to, not which room connects to it," so this
- * never looks at any OTHER room's connectedTo array, only room's own
- * (room.connectedTo is a plain list, read and written directly — no
- * reverse/incoming lookup like an earlier version of this had). A room
- * can connect to several other rooms; see ConnectedToEntry's own comment
- * for why only entries[0] affects room's actual position, further entries
- * are additional declared attachments.
- *
- * Every target room, once claimed by ANY connectedTo entry anywhere in
- * the graph (by this room or any other) or assigned as a floor's base
- * room, is excluded from the "pick a room to connect to" picker —
- * getUsedRoomIds() enforces this globally, so no two connections ever
- * claim the same target (this is also what stops the same room being
- * connected twice to one room by accident).
- *
- * Every action is an immediate PATCH (no staged draft, unlike the object
- * editor) — simple enough now that a draft isn't needed; every write only
- * ever touches room's own record.
- */
-async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWire[], floors: Floor[], onSaved: () => void) {
-  const modal = buildModal(`Connections: ${room.name}`, { size: "large" });
-
-  const previewContainer = document.createElement("div");
-  previewContainer.id = "admin-preview-canvas";
-  modal.body.appendChild(previewContainer);
-
-  const zoomRow = document.createElement("div");
-  zoomRow.className = "admin-form";
-  const zoomInput = document.createElement("input");
-  zoomInput.type = "range";
-  zoomInput.min = "0.5";
-  zoomInput.max = "2.5";
-  zoomInput.step = "0.1";
-  zoomInput.value = "1.5"; // matches AdminPreviewRenderer's own default scale
-  const zoomValueLabel = document.createElement("span");
-  zoomValueLabel.textContent = `${zoomInput.value}x`;
-  zoomRow.append(document.createTextNode("Zoom:"), zoomInput, zoomValueLabel);
-  modal.body.appendChild(zoomRow);
-  zoomInput.oninput = () => {
-    zoomValueLabel.textContent = `${zoomInput.value}x`;
-    currentRenderer?.setScale(Number(zoomInput.value));
-  };
-
-  const hint = document.createElement("div");
-  hint.className = "admin-hint";
-  hint.textContent = "Each action below saves immediately — there's no separate Save step.";
-  modal.body.appendChild(hint);
-
-  const errorEl = document.createElement("div");
-  errorEl.className = "admin-error";
-  errorEl.style.display = "none";
-  modal.body.appendChild(errorEl);
-
-  function showInlineError(err: unknown) {
-    errorEl.textContent = err instanceof Error ? err.message : String(err);
-    errorEl.style.display = "";
+  function showConnectionsError(err: unknown) {
+    connectionsErrorEl.textContent = err instanceof Error ? err.message : String(err);
+    connectionsErrorEl.style.display = "";
   }
-  function clearInlineError() {
-    errorEl.style.display = "none";
+  function clearConnectionsError() {
+    connectionsErrorEl.style.display = "none";
   }
 
-  const table = document.createElement("table");
-  table.className = "admin-table";
-  modal.body.appendChild(table);
-
-  let currentApp: Application | null = null;
-  let currentRenderer: AdminPreviewRenderer | null = null;
-
-  /**
-   * `room` plus every room it connects to, so the preview actually shows
-   * what's attached instead of just the one isolated room. `room` itself
-   * is forced to be the local anchor (connectedTo stripped) and each of
-   * its own targets gets a SYNTHESIZED single-entry connectedTo pointing
-   * back at `room` instead — `direction` on room's own entry names the
-   * TARGET's edge, so the target's forced entry needs
-   * PAIR_DIRECTION[entry.direction] (room's own touching edge) to
-   * correctly invert which side is "attaching to" which. Verified against
-   * the real global resolveRooms() output with a standalone script before
-   * relying on it here (this exact inversion, including the
-   * PAIR_DIRECTION step) — relative positions matched exactly. `room` is
-   * placed first in the array specifically because SceneRenderer defaults
-   * viewedRoomId to the array's first room — giving the "one room in
-   * focus, neighbors dimmed but visible" rendering the real game already
-   * has, for free, instead of needing a new public focus method.
-   */
-  function buildPreviewRoomSet(): RoomSpecWire[] {
-    const forcedRoom: RoomSpecWire = { ...room, connectedTo: undefined };
-    const forcedNeighbors = (room.connectedTo ?? []).flatMap((entry) => {
-      const neighbor = allRooms.find((r) => r.id === entry.roomId);
-      if (!neighbor) return [];
-      // Inverting room's own entry to describe the SAME connection from
-      // neighbor's side needs its lateralOffset negated, not just its
-      // direction flipped — this is exactly rooms.ts's positionNeighbor()
-      // "reverse" branch (flip direction to PAIR_DIRECTION, negate
-      // lateralOffset, keep gapTiles), derived the same way there: solving
-      // placeRelativeTo() for the anchor's position given the far room's
-      // produces the paired direction with a sign-flipped lateralOffset in
-      // all four cases. Previously copied verbatim, which happened to
-      // still match the real resolveRooms() output when this was
-      // first verified — because that check used lateralOffset: 0, where
-      // negation is a no-op — so the preview silently rendered every
-      // nonzero lateral offset mirrored on every connection direction.
-      const lateralOffset = -(entry.lateralOffset ?? 0);
-      return [{ ...neighbor, connectedTo: [{ roomId: room.id, direction: PAIR_DIRECTION[entry.direction], gapTiles: entry.gapTiles, lateralOffset }] }];
-    });
-    return [forcedRoom, ...forcedNeighbors];
-  }
-
-  async function renderPreview() {
-    currentApp?.destroy();
-    previewContainer.textContent = "";
-    try {
-      // [] for floors, not the real floor list — this preview is `room`
-      // plus a stripped-down synthetic neighbor set, which the real floors'
-      // base rooms almost never reach, and resolveRooms() now excludes
-      // anything unreachable from a floor's base room. Passing [] opts out
-      // of that filtering entirely (see resolveRooms's own comment) so this
-      // intentionally-partial subset still resolves.
-      setRooms(roomSpecsFromWire(buildPreviewRoomSet()), []);
-      // Same gap/fix as the object editor's own renderPreview() — see its
-      // own comment. This preview shows room + its real neighbors, so it
-      // needs every one of their objects' own textures loaded too, not
-      // just whatever STATIC_ROOM_SPECS' seed data happened to reference
-      // at startup.
-      await preloadRoomAssets();
-      currentApp = new Application();
-      await currentApp.init({ width: 480, height: 380, background: 0x222228 });
-      previewContainer.appendChild(currentApp.canvas);
-      currentRenderer = new AdminPreviewRenderer(currentApp, () => {}, () => {});
-      currentRenderer.setScale(Number(zoomInput.value));
-    } catch (err) {
-      showError(err);
-    }
-  }
-
-  /**
-   * Gap/lateral-offset edits only ever move an already-shown neighbor —
-   * the set of rooms in the scene doesn't change — so this recomputes
-   * positions via the engine's own resolveRooms() (cheap, pure math) and
-   * repositions each neighbor's existing container directly via
-   * moveRoom(), the same "never tear down the canvas for a position-only
-   * change" fix already applied to the room object editor's x/y fields
-   * (the "blip"). Connect/disconnect still go through the full
-   * renderPreview() rebuild — those actually add/remove a whole room's
-   * worth of containers, a genuinely structural change, same split as the
-   * object editor's type/enabled changes.
-   */
-  function repositionNeighbors() {
-    try {
-      const resolved = resolveRooms(roomSpecsFromWire(buildPreviewRoomSet()), []); // see renderPreview's own comment on why []
-      for (const r of resolved) {
-        if (r.id === room.id) continue; // room itself is the fixed local anchor, never moves
-        currentRenderer?.moveRoom(r.id, r.x, r.y);
-      }
-    } catch (err) {
-      showError(err);
-    }
-  }
+  const connectionsTable = document.createElement("table");
+  connectionsTable.className = "admin-table";
+  roomTabPages.connections.appendChild(connectionsTable);
 
   /**
    * Missing-room check reusing the engine's own resolveRooms() against the
@@ -2371,21 +2315,16 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
 
   /**
    * Throws (cycle/missing-room rejection, or a failed PATCH) rather than
-   * swallowing its own error, specifically so the caller — openConnectPicker
-   * below — can keep its dialog open and show the failure right there. It
-   * used to call showInlineError() on the parent modal itself and `return`,
-   * but openConnectPicker's confirm handler closed its own picker dialog
-   * unconditionally right afterward — closing right on top of an error that
-   * WAS being shown, just on a modal now hidden behind the one that just
-   * closed. Looked exactly like "nothing happened, no explanation."
+   * swallowing its own error, specifically so the caller — openAddConnectionPicker
+   * below — can keep its dialog open and show the failure right there.
    */
   async function addConnection(targetRoomId: number, direction: ConnectionDirection, gapTiles: number, lateralOffset: number): Promise<void> {
     const newConnectedTo = [...(room.connectedTo ?? []), { roomId: targetRoomId, direction, gapTiles, lateralOffset }];
     assertNoCycle(newConnectedTo);
     await adminFetch(`/api/admin/rooms/${room.id}/connections`, { method: "PATCH", body: JSON.stringify({ connectedTo: newConnectedTo }) });
     room.connectedTo = newConnectedTo; // keep the local allRooms copy in sync, no refetch needed
-    clearInlineError();
-    renderTable();
+    clearConnectionsError();
+    renderConnectionsTable();
     await renderPreview();
   }
 
@@ -2394,14 +2333,14 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     try {
       assertNoCycle(newConnectedTo);
     } catch (err) {
-      showInlineError(err);
+      showConnectionsError(err);
       return;
     }
     try {
       await adminFetch(`/api/admin/rooms/${room.id}/connections`, { method: "PATCH", body: JSON.stringify({ connectedTo: newConnectedTo }) });
       room.connectedTo = newConnectedTo;
-      clearInlineError();
-      renderTable();
+      clearConnectionsError();
+      renderConnectionsTable();
       repositionNeighbors();
     } catch (err) {
       showError(err);
@@ -2414,8 +2353,8 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     try {
       await adminFetch(`/api/admin/rooms/${room.id}/connections`, { method: "PATCH", body: JSON.stringify({ connectedTo: payloadConnectedTo }) });
       room.connectedTo = payloadConnectedTo;
-      clearInlineError();
-      renderTable();
+      clearConnectionsError();
+      renderConnectionsTable();
       await renderPreview();
     } catch (err) {
       showError(err);
@@ -2435,7 +2374,7 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
   function openAddConnectionPicker() {
     const candidates = pickableRooms();
     if (candidates.length === 0) {
-      showInlineError(new Error("No unclaimed rooms left to connect to."));
+      showConnectionsError(new Error("No unclaimed rooms left to connect to."));
       return;
     }
 
@@ -2555,11 +2494,11 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     return row;
   }
 
-  /** A flat list of room's own connections — no more grouping by room's own 4 edges, since `direction` names the TARGET's edge, not room's; room doesn't track/display "which of my edges" at all. */
-  function renderTable() {
-    table.innerHTML = "<tr><th>Connects to</th><th>Their edge</th><th>Gap</th><th>Lateral offset</th><th></th></tr>";
+  /** A flat list of room's own connections — no grouping by room's own 4 edges, since `direction` names the TARGET's edge, not room's; room doesn't track/display "which of my edges" at all. */
+  function renderConnectionsTable() {
+    connectionsTable.innerHTML = "<tr><th>Connects to</th><th>Their edge</th><th>Gap</th><th>Lateral offset</th><th></th></tr>";
     (room.connectedTo ?? []).forEach((entry, entryIndex) => {
-      table.appendChild(buildConnectionRow(entryIndex, entry));
+      connectionsTable.appendChild(buildConnectionRow(entryIndex, entry));
     });
     const addRow = document.createElement("tr");
     addRow.appendChild(document.createElement("td"));
@@ -2573,17 +2512,80 @@ async function openRoomConnectionsModal(room: RoomSpecWire, allRooms: RoomSpecWi
     addBtn.onclick = () => openAddConnectionPicker();
     addCell.appendChild(addBtn);
     addRow.appendChild(addCell);
-    table.appendChild(addRow);
+    connectionsTable.appendChild(addRow);
   }
 
+  saveBtn.onclick = async () => {
+    // The `|| saveBtn.disabled` half matters more than the isDirty() check
+    // here — isDirty() alone doesn't change until the save below actually
+    // completes, so a second click fired while the first is still awaiting
+    // its PATCH/POST/DELETE calls would otherwise sail straight through,
+    // firing every one of them a second time (duplicate objects on the
+    // server) and then racing renderRooms(body) via two overlapping
+    // onSaved() calls (see renderRooms's own comment on that race).
+    // saveBtn.disabled is set synchronously, before any await, so even a
+    // same-tick double-click can't slip through.
+    if (!isDirty() || saveBtn.disabled) return;
+    saveBtn.disabled = true;
+    try {
+      if (isRoomFieldsDirty()) {
+        await adminFetch(`/api/admin/rooms/${room.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ ...room, ...roomFields }),
+        });
+      }
+      const draftIds = new Set(draft.filter((o): o is ObjectPlacementWire & { id: number } => o.id !== undefined).map((o) => o.id));
+      for (const obj of draft) {
+        if (obj.id === undefined) {
+          await adminFetch(`/api/admin/rooms/${room.id}/objects`, { method: "POST", body: JSON.stringify(obj) });
+          continue;
+        }
+        const orig = original.find((o) => o.id === obj.id);
+        if (!orig) {
+          await adminFetch(`/api/admin/rooms/${room.id}/objects`, { method: "POST", body: JSON.stringify(obj) });
+        } else if (JSON.stringify(orig) !== JSON.stringify(obj)) {
+          await adminFetch(`/api/admin/rooms/${room.id}/objects/${obj.id}`, { method: "PATCH", body: JSON.stringify(obj) });
+        }
+      }
+      for (const orig of original) {
+        if (orig.id !== undefined && !draftIds.has(orig.id)) {
+          await adminFetch(`/api/admin/rooms/${room.id}/objects/${orig.id}`, { method: "DELETE" });
+        }
+      }
+      modal.close();
+    } catch (err) {
+      showError(err);
+      saveBtn.disabled = false; // let the admin retry; the dirty state didn't change
+    }
+  };
+
+  cancelBtn.onclick = () => modal.close();
+  // Always refresh the caller on close, not just on a successful Save —
+  // Connections changes PATCH immediately (see this function's own doc
+  // comment) and can move this room onto a different floor's tree even if
+  // Save is never clicked, so onSaved() can't be conditional on that.
   modal.onClose(() => {
     currentApp?.destroy();
     onSaved();
   });
+
   renderTable();
+  renderAddForm();
+  updateSaveState();
+  renderConnectionsTable();
   await renderPreview();
   modal.open();
 }
+
+// --- Room connections ---
+
+const EDGE_LABELS: Record<ConnectionDirection, string> = {
+  behindLeft: "Top-Left Wall",
+  behindRight: "Top-Right Wall",
+  frontLeft: "Bottom-Left (open)",
+  frontRight: "Bottom-Right (open)",
+};
+const EDGE_ORDER: ConnectionDirection[] = ["behindLeft", "behindRight", "frontLeft", "frontRight"];
 
 /** Rooms nothing else connects to (plus not already another floor's own base room) — `exemptFloorLevel` keeps one floor's own current base room selectable in its own edit dropdown even though it'd otherwise count as "another floor's base room" against itself. */
 function pickableBaseRooms(rooms: RoomSpecWire[], floors: Floor[], exemptFloorLevel?: number): RoomSpecWire[] {
@@ -2708,34 +2710,91 @@ function renderFloorsSection(body: HTMLElement, rooms: RoomSpecWire[], floors: F
   body.appendChild(floorForm);
 }
 
+// Collapsed state survives this session's renderRooms() rebuilds (same
+// "remember it, don't persist it" pattern lastActiveRoomSubTab below
+// already uses) so re-running renderRooms() after any save doesn't
+// silently re-expand everything the admin just collapsed.
+const collapsedTreeRooms = new Set<number>();
+
 /**
  * One `<li>` per node, nested `<ul>`s for children — a plain indented tree,
  * not a graphical chart, consistent with the rest of this tool's plain-table
- * style. The tree is what manages connections now — clicking a room's own
- * label opens its connections editor directly, rather than a separate
- * "Connections" button living on the room list below (see buildRoomsTable,
- * which is for editing the room itself).
+ * style. Clicking a room's own label opens the merged room editor modal
+ * (defaulting to its Info tab — Connections is one tab-click away inside
+ * it); a trailing "×" deletes the room, same confirm() guard the room
+ * list already used; a leading chevron (only when the node has children)
+ * collapses/expands its subtree. No native `<details>/<summary>` — there's
+ * no precedent for it anywhere in this codebase, and a plain chevron +
+ * click handler composes more simply with the delete button already
+ * needed on the same row than fighting `<summary>`'s own default
+ * marker/layout would.
  */
-function buildTreeNodeEl(node: FloorTreeNode, onRoomClick: (room: FloorTreeNode["room"]) => void): HTMLLIElement {
+function buildTreeNodeEl(
+  node: FloorTreeNode,
+  onRoomClick: (room: FloorTreeNode["room"]) => void,
+  onRoomDelete: (room: FloorTreeNode["room"]) => void,
+): HTMLLIElement {
   const li = document.createElement("li");
+  const row = document.createElement("span");
+  row.className = "admin-tree-row";
+
+  const hasChildren = node.children.length > 0;
+  let childList: HTMLUListElement | null = null; // assigned below; the chevron's onclick (defined now) closes over this binding, not its value
+
+  if (hasChildren) {
+    const collapsed = collapsedTreeRooms.has(node.room.id);
+    const chevron = document.createElement("button");
+    chevron.type = "button";
+    chevron.className = "admin-tree-chevron";
+    chevron.textContent = collapsed ? "▸" : "▾";
+    chevron.onclick = () => {
+      const nowCollapsed = childList!.style.display !== "none";
+      childList!.style.display = nowCollapsed ? "none" : "";
+      chevron.textContent = nowCollapsed ? "▸" : "▾";
+      if (nowCollapsed) collapsedTreeRooms.add(node.room.id);
+      else collapsedTreeRooms.delete(node.room.id);
+    };
+    row.appendChild(chevron);
+  }
+
   const label = document.createElement("span");
   label.className = "admin-tree-room";
   label.textContent = node.room.name;
   label.onclick = () => onRoomClick(node.room);
-  li.appendChild(label);
-  if (node.children.length > 0) {
-    const ul = document.createElement("ul");
-    for (const child of node.children) ul.appendChild(buildTreeNodeEl(child, onRoomClick));
-    li.appendChild(ul);
+  row.appendChild(label);
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "admin-tree-delete";
+  deleteBtn.textContent = "×";
+  deleteBtn.title = `Delete "${node.room.name}"`;
+  deleteBtn.onclick = (e) => {
+    e.stopPropagation(); // otherwise this would also bubble up into the label's own onclick above
+    onRoomDelete(node.room);
+  };
+  row.appendChild(deleteBtn);
+
+  li.appendChild(row);
+
+  if (hasChildren) {
+    childList = document.createElement("ul");
+    childList.style.display = collapsedTreeRooms.has(node.room.id) ? "none" : "";
+    for (const child of node.children) childList.appendChild(buildTreeNodeEl(child, onRoomClick, onRoomDelete));
+    li.appendChild(childList);
   }
+
   return li;
 }
 
-function buildTreeChartEl(node: FloorTreeNode, onRoomClick: (room: FloorTreeNode["room"]) => void): HTMLElement {
+function buildTreeChartEl(
+  node: FloorTreeNode,
+  onRoomClick: (room: FloorTreeNode["room"]) => void,
+  onRoomDelete: (room: FloorTreeNode["room"]) => void,
+): HTMLElement {
   const container = document.createElement("div");
   container.className = "admin-tree";
   const ul = document.createElement("ul");
-  ul.appendChild(buildTreeNodeEl(node, onRoomClick));
+  ul.appendChild(buildTreeNodeEl(node, onRoomClick, onRoomDelete));
   container.appendChild(ul);
   return container;
 }
@@ -2778,11 +2837,22 @@ async function renderRooms(body: HTMLElement) {
   body.textContent = "";
   renderFloorsSection(body, rooms, floors);
 
-  // Unorganized rooms have no floor tree to click for connections (there's
-  // nothing to draw a tree from yet), so they're the one case that still
-  // needs a Connections button on the row itself — every room already on a
-  // floor manages connections via its tree item instead (see buildTreeNodeEl).
-  function buildRoomsTable(roomsForTab: RoomSpecWire[], showConnectionsButton: boolean): HTMLElement {
+  async function deleteRoom(room: RoomSpecWire) {
+    if (!confirm(`Delete room "${room.name}" and all its objects?`)) return;
+    try {
+      await adminFetch(`/api/admin/rooms/${room.id}`, { method: "DELETE" });
+      renderRooms(body);
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  // Unorganized-only now — every room already on a floor manages editing/
+  // connections/delete via its tree item instead (see buildTreeNodeEl). A
+  // room unreachable from any floor's base room has no tree to draw at
+  // all, so this table (with its own Connections button — the only way to
+  // attach a brand-new room to the graph) is the one remaining room list.
+  function buildRoomsTable(roomsForTab: RoomSpecWire[]): HTMLElement {
     const table = document.createElement("table");
     table.className = "admin-table";
     table.innerHTML = "<tr><th>Room</th><th>Size</th><th>Objects</th><th></th></tr>";
@@ -2793,28 +2863,15 @@ async function renderRooms(body: HTMLElement) {
       const actionCell = document.createElement("td");
       const editBtn = document.createElement("button");
       editBtn.textContent = "Edit";
-      editBtn.onclick = () => openRoomEditModal(room, objectTypes, activities, rooms, floors, floorAssetPaths, wallAssetPaths, () => renderRooms(body));
-      const buttons = [editBtn];
-      if (showConnectionsButton) {
-        const connectionsBtn = document.createElement("button");
-        connectionsBtn.type = "button";
-        connectionsBtn.textContent = `Connections (${room.connectedTo?.length ?? 0})`;
-        connectionsBtn.onclick = () => openRoomConnectionsModal(room, rooms, floors, () => renderRooms(body));
-        buttons.push(connectionsBtn);
-      }
+      editBtn.onclick = () => openRoomEditModal(room, objectTypes, activities, rooms, floors, floorAssetPaths, wallAssetPaths, () => renderRooms(body), "info");
+      const connectionsBtn = document.createElement("button");
+      connectionsBtn.type = "button";
+      connectionsBtn.textContent = `Connections (${room.connectedTo?.length ?? 0})`;
+      connectionsBtn.onclick = () => openRoomEditModal(room, objectTypes, activities, rooms, floors, floorAssetPaths, wallAssetPaths, () => renderRooms(body), "connections");
       const deleteBtn = document.createElement("button");
       deleteBtn.textContent = "Delete";
-      deleteBtn.onclick = async () => {
-        if (!confirm(`Delete room "${room.name}" and all its objects?`)) return;
-        try {
-          await adminFetch(`/api/admin/rooms/${room.id}`, { method: "DELETE" });
-          renderRooms(body);
-        } catch (err) {
-          showError(err);
-        }
-      };
-      buttons.push(deleteBtn);
-      actionCell.append(...buttons);
+      deleteBtn.onclick = () => deleteRoom(room);
+      actionCell.append(editBtn, connectionsBtn, deleteBtn);
       row.appendChild(actionCell);
 
       table.appendChild(row);
@@ -2874,10 +2931,6 @@ async function renderRooms(body: HTMLElement) {
   // room — any connection counts, not just the one that determines
   // position), never a field you set directly — connect a room to
   // anything already on a floor and it moves there on its own next render.
-  const subTabBar = document.createElement("div");
-  subTabBar.className = "admin-subtab-bar";
-  body.appendChild(subTabBar);
-
   interface SubTab {
     id: string;
     label: string;
@@ -2886,34 +2939,16 @@ async function renderRooms(body: HTMLElement) {
   const sortedFloors = [...floors].sort((a, b) => b.level - a.level);
   const subTabs: SubTab[] = [...sortedFloors.map((f): SubTab => ({ id: `floor-${f.level}`, label: f.label, floor: f })), { id: "unorganized", label: "Unorganized", floor: null }];
 
-  const subPages: Record<string, HTMLElement> = {};
-  const subButtons: Record<string, HTMLButtonElement> = {};
-  for (const tab of subTabs) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.textContent = tab.label;
-    btn.onclick = () => showSubTab(tab.id);
-    subTabBar.appendChild(btn);
-    subButtons[tab.id] = btn;
-
-    const page = document.createElement("div");
-    page.className = "admin-subtab-page";
-    body.appendChild(page);
-    subPages[tab.id] = page;
-  }
-
-  function showSubTab(id: string) {
-    lastActiveRoomSubTab = id;
-    for (const tab of subTabs) {
-      subPages[tab.id].classList.toggle("active", tab.id === id);
-      subButtons[tab.id].classList.toggle("active", tab.id === id);
-    }
-  }
   // Restore whichever tab was active before this rebuild, if it still
   // exists (a floor could've been removed) — otherwise fall back to the
   // first tab, same as before.
   const initialSubTab = subTabs.find((t) => t.id === lastActiveRoomSubTab) ? lastActiveRoomSubTab! : (subTabs[0]?.id ?? "unorganized");
-  showSubTab(initialSubTab);
+  const { bar: subTabBar, pages: subPages } = buildTabStrip(subTabs, initialSubTab, "admin-subtab-page", (id) => {
+    lastActiveRoomSubTab = id;
+  });
+  subTabBar.className = "admin-subtab-bar";
+  body.appendChild(subTabBar);
+  for (const tab of subTabs) body.appendChild(subPages[tab.id]);
 
   const membership = computeFloorMembership(rooms, floors);
   for (const tab of subTabs) {
@@ -2922,19 +2957,21 @@ async function renderRooms(body: HTMLElement) {
       const tree = buildFloorTree(tab.floor.baseRoomId, rooms);
       if (tree) {
         page.appendChild(
-          buildTreeChartEl(tree, (treeRoom) => {
-            const room = rooms.find((r) => r.id === treeRoom.id)!;
-            openRoomConnectionsModal(room, rooms, floors, () => renderRooms(body));
-          }),
+          buildTreeChartEl(
+            tree,
+            (treeRoom) => {
+              const room = rooms.find((r) => r.id === treeRoom.id)!;
+              openRoomEditModal(room, objectTypes, activities, rooms, floors, floorAssetPaths, wallAssetPaths, () => renderRooms(body), "info");
+            },
+            (treeRoom) => deleteRoom(rooms.find((r) => r.id === treeRoom.id)!),
+          ),
         );
       }
+    } else {
+      const roomsForTab = rooms.filter((r) => (membership.get(r.id) ?? null) === null);
+      page.appendChild(buildRoomsTable(roomsForTab));
+      page.appendChild(buildAddRoomForm());
     }
-    const roomsForTab = rooms.filter((r) => {
-      const level = membership.get(r.id) ?? null;
-      return tab.floor ? level === tab.floor.level : level === null;
-    });
-    page.appendChild(buildRoomsTable(roomsForTab, !tab.floor));
-    if (!tab.floor) page.appendChild(buildAddRoomForm());
   }
 }
 

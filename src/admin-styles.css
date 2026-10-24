@@ -143,6 +143,46 @@ body {
   background: var(--surface);
 }
 
+/* Wraps a tree row's optional chevron + the room-name label + the delete
+   button on one line — default button styling (#admin-app button) is too
+   boxy for a chevron/delete pair sitting inline with text, so both get
+   their own minimal, borderless look here instead. */
+.admin-tree-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.admin-tree-chevron {
+  background: none;
+  border: none;
+  color: var(--text);
+  opacity: 0.6;
+  padding: 2px 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.admin-tree-chevron:hover {
+  opacity: 1;
+}
+
+.admin-tree-delete {
+  background: none;
+  border: none;
+  color: var(--text);
+  opacity: 0.5;
+  padding: 2px 6px;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.admin-tree-delete:hover {
+  opacity: 1;
+  color: var(--error);
+}
+
 .admin-table {
   width: 100%;
   border-collapse: collapse;
@@ -273,6 +313,31 @@ body {
 #admin-preview-canvas canvas {
   display: block;
   max-width: 100%;
+}
+
+/* The room editor modal's body splits into a pinned preview (never
+   scrolls) and a tab area that scrolls on its own — overriding
+   .modal-body's own single-scrolling-region layout so the preview stays
+   visible regardless of which tab is open or how far its content is
+   scrolled. .modal-body's own overflow-y:auto stays as an inert
+   fallback; in practice flexbox sizes these two children to fit, so
+   admin-room-editor-tabs is the one that actually scrolls. */
+.admin-room-editor-body {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.admin-room-editor-preview {
+  flex-shrink: 0;
+}
+
+.admin-room-editor-tabs {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 @keyframes admin-row-flash {
