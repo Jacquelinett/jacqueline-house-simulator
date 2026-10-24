@@ -158,6 +158,12 @@ export interface ObjectTypeDef {
   // and nothing outside the admin tool ever reads this.
   anchorX?: number;
   anchorY?: number;
+  // Admin-tool-only: freeform labels for scanning/filtering a now-large
+  // catalog (the Objects tab's search/sort) — never read by the renderer,
+  // House.ts, or viewer.ts. Same inline-JSON-column convention as below/
+  // above rather than a separate table, since tags are a plain string list
+  // with nothing else to join against.
+  tags?: string[];
 }
 
 /**

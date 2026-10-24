@@ -259,6 +259,25 @@ body {
   vertical-align: middle;
 }
 
+/* The Objects/Sprites tabs' per-row thumbnail — crisp pixel art, not
+   browser-smoothed, since these are the same small pixel-art textures the
+   real scene renders. */
+.admin-thumb {
+  display: block;
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-soft);
+}
+
+.admin-thumb-color {
+  width: 32px;
+  height: 32px;
+}
+
 .admin-form {
   display: flex;
   flex-wrap: wrap;

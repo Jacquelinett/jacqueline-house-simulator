@@ -141,7 +141,8 @@ export function migrate(): void {
       anchor_y REAL,
       sprite_id INTEGER,
       sprite_offset_x REAL,
-      sprite_offset_y REAL
+      sprite_offset_y REAL,
+      tags_json TEXT
     );
 
     -- Mirrors src/scene/rooms.ts's RoomSpec shape (not flattened absolute
@@ -242,6 +243,15 @@ export function migrate(): void {
   // goes inert.
   try {
     db.exec("ALTER TABLE objects ADD COLUMN clickable INTEGER NOT NULL DEFAULT 1");
+  } catch {
+    // already applied
+  }
+
+  // Same gotcha, same fix — tags_json added after object_types already
+  // existed on the live install. NULL (no tags) is the correct default
+  // for every existing type, unlike the two booleans above.
+  try {
+    db.exec("ALTER TABLE object_types ADD COLUMN tags_json TEXT");
   } catch {
     // already applied
   }

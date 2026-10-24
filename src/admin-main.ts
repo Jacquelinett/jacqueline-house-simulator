@@ -684,38 +684,73 @@ function openSpriteEditModal(id: number | null, existing: SpriteDef | null, onSa
   modal.open();
 }
 
+/** Same fallback DEFAULT_SPRITE_CHARACTER convention the object-type editor's own preview simulates — a sprite's real art is per-character, but the default character's own file (if it exists) is close enough for a list thumbnail. No `<img>` at all if even that file doesn't exist, rather than a broken-image icon. */
+function buildSpriteThumbnail(sprite: SpriteDef, characterAssetPaths: string[]): HTMLElement | null {
+  if (!sprite.spriteKey) return null;
+  const path = characterSpritePath(DEFAULT_SPRITE_CHARACTER, sprite.spriteKey);
+  if (!characterAssetPaths.includes(path)) return null;
+  const img = document.createElement("img");
+  img.src = assetUrl(path);
+  img.className = "admin-thumb";
+  return img;
+}
+
 async function renderSprites(body: HTMLElement) {
   body.textContent = "";
-  const sprites = await adminFetch<SpriteDef[]>("/api/admin/sprites");
+  const [sprites, characterAssetPaths] = await Promise.all([
+    adminFetch<SpriteDef[]>("/api/admin/sprites"),
+    adminFetch<string[]>("/api/admin/character-assets"),
+  ]);
+
+  const controls = document.createElement("div");
+  controls.className = "admin-form";
+  const searchInput = document.createElement("input");
+  searchInput.type = "search";
+  searchInput.placeholder = "Search sprite key...";
+  controls.appendChild(searchInput);
+  body.appendChild(controls);
 
   const table = document.createElement("table");
   table.className = "admin-table";
-  table.innerHTML = "<tr><th>Sprite key</th><th>Frames</th><th></th></tr>";
-  for (const o of sprites) {
-    const row = document.createElement("tr");
-    const framesText = o.layer.frameCount && o.layer.frameCount > 1 ? `${o.layer.frameCount} @ ${o.layer.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS}ms` : "static";
-    row.innerHTML = `<td>${o.spriteKey}</td><td>${framesText}</td>`;
-
-    const actionCell = document.createElement("td");
-    const editBtn = document.createElement("button");
-    editBtn.textContent = "Edit";
-    editBtn.onclick = () => openSpriteEditModal(o.id, o, () => renderSprites(body));
-    const deleteBtn = document.createElement("button");
-    deleteBtn.textContent = "Delete";
-    deleteBtn.onclick = async () => {
-      if (!confirm(`Delete sprite "${o.spriteKey}"? Any object type still referencing it loses its interaction sprite.`)) return;
-      try {
-        await adminFetch(`/api/admin/sprites/${o.id}`, { method: "DELETE" });
-        renderSprites(body);
-      } catch (err) {
-        showError(err);
-      }
-    };
-    actionCell.append(editBtn, deleteBtn);
-    row.appendChild(actionCell);
-    table.appendChild(row);
-  }
   body.appendChild(table);
+
+  function renderTable() {
+    const query = searchInput.value.trim().toLowerCase();
+    const entries = sprites.filter((o) => !query || o.spriteKey.toLowerCase().includes(query)).sort((a, b) => a.spriteKey.localeCompare(b.spriteKey));
+
+    table.innerHTML = "<tr><th></th><th>Sprite key</th><th>Frames</th><th></th></tr>";
+    for (const o of entries) {
+      const row = document.createElement("tr");
+      const thumbCell = document.createElement("td");
+      const thumb = buildSpriteThumbnail(o, characterAssetPaths);
+      if (thumb) thumbCell.appendChild(thumb);
+      row.appendChild(thumbCell);
+
+      const framesText = o.layer.frameCount && o.layer.frameCount > 1 ? `${o.layer.frameCount} @ ${o.layer.frameDurationMs ?? DEFAULT_OVERLAY_FRAME_DURATION_MS}ms` : "static";
+      row.insertAdjacentHTML("beforeend", `<td>${o.spriteKey}</td><td>${framesText}</td>`);
+
+      const actionCell = document.createElement("td");
+      const editBtn = document.createElement("button");
+      editBtn.textContent = "Edit";
+      editBtn.onclick = () => openSpriteEditModal(o.id, o, () => renderSprites(body));
+      const deleteBtn = document.createElement("button");
+      deleteBtn.textContent = "Delete";
+      deleteBtn.onclick = async () => {
+        if (!confirm(`Delete sprite "${o.spriteKey}"? Any object type still referencing it loses its interaction sprite.`)) return;
+        try {
+          await adminFetch(`/api/admin/sprites/${o.id}`, { method: "DELETE" });
+          renderSprites(body);
+        } catch (err) {
+          showError(err);
+        }
+      };
+      actionCell.append(editBtn, deleteBtn);
+      row.appendChild(actionCell);
+      table.appendChild(row);
+    }
+  }
+  searchInput.oninput = renderTable;
+  renderTable();
 
   const addBtn = document.createElement("button");
   addBtn.type = "button";
@@ -881,6 +916,15 @@ async function openObjectTypeEditModal(
   nameInput.placeholder = "Name";
   nameInput.value = draftType.name;
   form.append(document.createTextNode("Name:"), nameInput);
+
+  // Plain comma-separated text rather than a dedicated tag-chip widget —
+  // admin-only, used purely for the Objects tab's own search/sort (see
+  // renderObjectTypes), never read by the renderer/House.ts/viewer.ts, so
+  // there's no reason to build a heavier input for it.
+  const tagsInput = document.createElement("input");
+  tagsInput.placeholder = "tag1, tag2";
+  tagsInput.value = (draftType.tags ?? []).join(", ");
+  form.append(document.createTextNode("Tags:"), tagsInput);
 
   // Disabled, not freely typed — derived from the below (base sprite)
   // texture's own loaded pixel size (see deriveSizeFromBelowTexture below),
@@ -1205,6 +1249,10 @@ async function openObjectTypeEditModal(
     }
     const below = belowSection.getLayer();
     const above = aboveSection.getLayer();
+    const tags = tagsInput.value
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
     const payload: ObjectTypeDef = {
       ...draftType,
       name,
@@ -1218,6 +1266,7 @@ async function openObjectTypeEditModal(
       above: above ? [above] : undefined,
       anchorX,
       anchorY,
+      tags: tags.length ? tags : undefined,
     };
     try {
       if (id) {
@@ -1244,44 +1293,116 @@ async function openObjectTypeEditModal(
   modal.open();
 }
 
+/** A small crisp-pixel thumbnail of a type's `below` texture, or a plain color swatch if it only has a placeholder color, or nothing at all if it has neither — same fallback chain buildLayer() itself uses. Admin-list-only (never shown in the real game/viewer), so a plain `<img>` is enough — no need for the full Pixi layer-building path. */
+function buildTypeThumbnail(type: ObjectTypeDef): HTMLElement {
+  const below = type.below?.[0];
+  if (below?.texture) {
+    const img = document.createElement("img");
+    img.src = assetUrl(below.texture);
+    img.className = "admin-thumb";
+    return img;
+  }
+  const swatch = document.createElement("div");
+  swatch.className = "admin-thumb admin-thumb-color";
+  swatch.style.background = `#${(below?.color ?? 0x888888).toString(16).padStart(6, "0")}`;
+  return swatch;
+}
+
+/** Which room(s) (by name) place at least one object of this type — for the Objects tab's search box and a per-row "used in" hint. Built from the already-fetched room list rather than a new endpoint, per CLAUDE.md's "not needed anywhere else" reasoning for admin-only cross-references. */
+function roomsUsingType(rooms: RoomSpecWire[], typeId: number): string[] {
+  return rooms.filter((r) => r.objects.some((o) => o.type === typeId)).map((r) => r.name);
+}
+
 async function renderObjectTypes(body: HTMLElement) {
   body.textContent = "";
-  const [types, assetPaths, characterAssetPaths, sprites] = await Promise.all([
+  const [types, assetPaths, characterAssetPaths, sprites, rooms] = await Promise.all([
     adminFetch<Record<string, ObjectTypeDef>>("/api/admin/object-types"),
     adminFetch<string[]>("/api/admin/object-assets"),
     adminFetch<string[]>("/api/admin/character-assets"),
     adminFetch<SpriteDef[]>("/api/admin/sprites"),
+    adminFetch<RoomSpecWire[]>("/api/admin/rooms"),
   ]);
   const spritesById = new Map(sprites.map((o) => [o.id, o]));
 
+  const controls = document.createElement("div");
+  controls.className = "admin-form";
+  const searchInput = document.createElement("input");
+  searchInput.type = "search";
+  searchInput.placeholder = "Search name, tag, or room...";
+  const sortSelect = document.createElement("select");
+  for (const [value, label] of [
+    ["name", "Sort: Name"],
+    ["tag", "Sort: Tag"],
+  ] as const) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = label;
+    sortSelect.appendChild(opt);
+  }
+  controls.append(searchInput, sortSelect);
+  body.appendChild(controls);
+
   const table = document.createElement("table");
   table.className = "admin-table";
-  table.innerHTML = "<tr><th>Name</th><th>Size</th><th>Anchor</th><th>Sprite</th><th></th></tr>";
-  for (const [id, type] of Object.entries(types)) {
-    const row = document.createElement("tr");
-    const spriteKey = type.spriteId ? spritesById.get(type.spriteId)?.spriteKey ?? "?" : "—";
-    row.innerHTML = `<td>${type.name}</td><td>${type.width}×${type.height}</td><td>${type.anchorX ?? 0}, ${type.anchorY ?? 0}</td><td>${spriteKey}</td>`;
-
-    const actionCell = document.createElement("td");
-    const editBtn = document.createElement("button");
-    editBtn.textContent = "Edit";
-    editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, characterAssetPaths, sprites, () => renderObjectTypes(body));
-    const deleteBtn = document.createElement("button");
-    deleteBtn.textContent = "Delete";
-    deleteBtn.onclick = async () => {
-      if (!confirm(`Delete object type "${type.name}"? Any room placement still referencing it will stop rendering.`)) return;
-      try {
-        await adminFetch(`/api/admin/object-types/${id}`, { method: "DELETE" });
-        renderObjectTypes(body);
-      } catch (err) {
-        showError(err);
-      }
-    };
-    actionCell.append(editBtn, deleteBtn);
-    row.appendChild(actionCell);
-    table.appendChild(row);
-  }
   body.appendChild(table);
+
+  function renderTable() {
+    const query = searchInput.value.trim().toLowerCase();
+    let entries = Object.entries(types).map(([id, type]) => ({ id, type, usedIn: roomsUsingType(rooms, Number(id)) }));
+    if (query) {
+      entries = entries.filter(
+        ({ type, usedIn }) =>
+          type.name.toLowerCase().includes(query) ||
+          (type.tags ?? []).some((t) => t.toLowerCase().includes(query)) ||
+          usedIn.some((r) => r.toLowerCase().includes(query)),
+      );
+    }
+    entries.sort((a, b) => {
+      if (sortSelect.value === "tag") {
+        const tagA = a.type.tags?.[0] ?? "";
+        const tagB = b.type.tags?.[0] ?? "";
+        if (tagA !== tagB) return tagA.localeCompare(tagB);
+      }
+      return a.type.name.localeCompare(b.type.name);
+    });
+
+    table.innerHTML = "<tr><th></th><th>Name</th><th>Tags</th><th>Size</th><th>Anchor</th><th>Sprite</th><th>Used in</th><th></th></tr>";
+    for (const { id, type, usedIn } of entries) {
+      const row = document.createElement("tr");
+      const spriteKey = type.spriteId ? spritesById.get(type.spriteId)?.spriteKey ?? "?" : "—";
+
+      const thumbCell = document.createElement("td");
+      thumbCell.appendChild(buildTypeThumbnail(type));
+      row.appendChild(thumbCell);
+
+      row.insertAdjacentHTML(
+        "beforeend",
+        `<td>${type.name}</td><td>${(type.tags ?? []).join(", ")}</td><td>${type.width}×${type.height}</td><td>${type.anchorX ?? 0}, ${type.anchorY ?? 0}</td><td>${spriteKey}</td><td>${usedIn.join(", ") || "—"}</td>`,
+      );
+
+      const actionCell = document.createElement("td");
+      const editBtn = document.createElement("button");
+      editBtn.textContent = "Edit";
+      editBtn.onclick = () => openObjectTypeEditModal(id, type, assetPaths, characterAssetPaths, sprites, () => renderObjectTypes(body));
+      const deleteBtn = document.createElement("button");
+      deleteBtn.textContent = "Delete";
+      deleteBtn.onclick = async () => {
+        if (!confirm(`Delete object type "${type.name}"? Any room placement still referencing it will stop rendering.`)) return;
+        try {
+          await adminFetch(`/api/admin/object-types/${id}`, { method: "DELETE" });
+          renderObjectTypes(body);
+        } catch (err) {
+          showError(err);
+        }
+      };
+      actionCell.append(editBtn, deleteBtn);
+      row.appendChild(actionCell);
+      table.appendChild(row);
+    }
+  }
+  searchInput.oninput = renderTable;
+  sortSelect.onchange = renderTable;
+  renderTable();
 
   const addBtn = document.createElement("button");
   addBtn.type = "button";
